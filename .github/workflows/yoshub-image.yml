@@ -1,0 +1,156 @@
+name: Yoshub Sub2API image
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_latest:
+        description: Publish the latest-yoshub tag
+        required: false
+        type: boolean
+        default: true
+  push:
+    tags:
+      - 'yoshub-v*'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: yoshub-sub2api-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/hdwwww/yoshub-sub2api
+
+jobs:
+  build:
+    name: Build and publish amd64 image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Resolve image metadata
+        id: vars
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::12}"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="$GITHUB_REF_NAME"
+            PUBLISH_LATEST=true
+          else
+            VERSION="yoshub.${SHORT_SHA}"
+            PUBLISH_LATEST="${{ inputs.publish_latest }}"
+          fi
+          SAFE_VERSION="${VERSION//\//-}"
+          {
+            echo "short_sha=$SHORT_SHA"
+            echo "build_date=$BUILD_DATE"
+            echo "version=$VERSION"
+            echo "safe_version=$SAFE_VERSION"
+            echo "publish_latest=$PUBLISH_LATEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check immutable commit image
+        id: image
+        shell: bash
+        run: |
+          IMAGE_REF="${IMAGE_NAME}:${{ steps.vars.outputs.short_sha }}"
+          if LABELS="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Image.Config.Labels}}' 2>/dev/null)"; then
+            REVISION="$(jq -r '."org.opencontainers.image.revision" // empty' <<<"$LABELS")"
+            if [[ "$REVISION" != "$GITHUB_SHA" ]]; then
+              echo "Image revision mismatch for ${IMAGE_REF}: expected ${GITHUB_SHA}, got ${REVISION:-missing}" >&2
+              exit 1
+            fi
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract image metadata
+        id: meta
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.vars.outputs.short_sha }}
+            type=raw,value=${{ steps.vars.outputs.safe_version }}
+            type=raw,value=latest-yoshub,enable=${{ steps.vars.outputs.publish_latest == 'true' }}
+          labels: |
+            org.opencontainers.image.title=yoshub-sub2api
+            org.opencontainers.image.description=Yoshub Sub2API image
+            org.opencontainers.image.source=https://github.com/HDWWWW/yoshub-sub2api
+            org.opencontainers.image.url=https://github.com/HDWWWW/yoshub-sub2api
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push image
+        if: steps.image.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.vars.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.vars.outputs.build_date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
+
+      - name: Promote existing image tags
+        if: steps.image.outputs.exists == 'true'
+        shell: bash
+        run: |
+          SOURCE="${IMAGE_NAME}:${{ steps.vars.outputs.short_sha }}"
+          TAGS=(--tag "${IMAGE_NAME}:${{ steps.vars.outputs.safe_version }}")
+          if [[ "${{ steps.vars.outputs.publish_latest }}" == "true" ]]; then
+            TAGS+=(--tag "${IMAGE_NAME}:latest-yoshub")
+          fi
+          docker buildx imagetools create "${TAGS[@]}" "$SOURCE"
+
+      - name: Verify immutable image revision
+        shell: bash
+        run: |
+          IMAGE_REF="${IMAGE_NAME}:${{ steps.vars.outputs.short_sha }}"
+          LABELS="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Image.Config.Labels}}')"
+          REVISION="$(jq -r '."org.opencontainers.image.revision" // empty' <<<"$LABELS")"
+          if [[ "$REVISION" != "$GITHUB_SHA" ]]; then
+            echo "Published image revision mismatch for ${IMAGE_REF}: expected ${GITHUB_SHA}, got ${REVISION:-missing}" >&2
+            exit 1
+          fi
+
+      - name: Image summary
+        shell: bash
+        run: |
+          {
+            echo "### Yoshub Sub2API image"
+            echo '```'
+            echo "${IMAGE_NAME}:${{ steps.vars.outputs.short_sha }}"
+            echo "${IMAGE_NAME}:${{ steps.vars.outputs.safe_version }}"
+            if [[ "${{ steps.vars.outputs.publish_latest }}" == "true" ]]; then
+              echo "${IMAGE_NAME}:latest-yoshub"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
