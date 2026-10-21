@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # =============================================================================
 # Sub2API Multi-Stage Dockerfile
 # =============================================================================
@@ -7,10 +6,10 @@
 # Stage 3: Final minimal image
 # =============================================================================
 
-ARG NODE_IMAGE=node:24-alpine
-ARG GOLANG_IMAGE=golang:1.27.2-alpine
-ARG ALPINE_IMAGE=alpine:3.21
-ARG POSTGRES_IMAGE=postgres:18-alpine
+ARG NODE_IMAGE=node:24.22.1-alpine@sha256:6a1c190e17215d844926b0677f4bf87273ff7d5e54db06d3b5b5863ab0b09a3d
+ARG GOLANG_IMAGE=golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd
+ARG ALPINE_IMAGE=alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+ARG POSTGRES_IMAGE=postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
 ARG NPM_CONFIG_REGISTRY=
@@ -114,7 +113,8 @@ LABEL org.opencontainers.image.source="https://github.com/Wei-Shaw/sub2api"
 
 # Install runtime dependencies
 RUN apk add --no-cache \
-    ca-certificates \
+    'ca-certificates>=20261020-r0' \
+    curl \
     tzdata \
     su-exec \
     libpq \
