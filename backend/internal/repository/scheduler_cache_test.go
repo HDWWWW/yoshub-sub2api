@@ -1,12 +1,26 @@
 package repository
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSchedulerMetadataPreservesSameAccountRetryBudget(t *testing.T) {
+	for _, count := range []int{0, 1, 7, 10} {
+		account := service.Account{ID: 42, Type: service.AccountTypeOAuth, Platform: service.PlatformOpenAI, Extra: map[string]any{"same_account_retry_count": count}}
+		full, metadata, err := marshalSchedulerCacheAccount(account)
+		require.NoError(t, err)
+		for _, payload := range [][]byte{full, metadata} {
+			var cached service.Account
+			require.NoError(t, json.Unmarshal(payload, &cached))
+			require.Equal(t, count, cached.GetPoolModeRetryCount())
+		}
+	}
+}
 
 func TestFilterSchedulerCredentialsKeepsSubscriptionPlanType(t *testing.T) {
 	filtered := filterSchedulerCredentials(map[string]any{

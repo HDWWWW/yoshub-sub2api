@@ -49,6 +49,24 @@ func TestGeminiForward_SameAccountRetriesFollowConfig(t *testing.T) {
 	}
 }
 
+func TestGeminiForward_AccountRetriesOverrideGlobalConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, retries := range []int{0, 1} {
+		for _, fw := range geminiSingleCheckForwarders {
+			t.Run(fmt.Sprintf("%s/retries=%d", fw.name, retries), func(t *testing.T) {
+				svc, upstream, _ := newGeminiSingleCheckService(geminiSequenceUpstreamResponse{status: http.StatusServiceUnavailable, body: geminiRetryTest503Body})
+				svc.cfg.Gateway.MaxSameAccountRetriesGemini = 4
+				account := geminiSameAccountRetryTestAccount()
+				account.Extra = map[string]any{"same_account_retry_count": retries}
+				err, _ := fw.forward(t, svc, account)
+				var failoverErr *UpstreamFailoverError
+				require.ErrorAs(t, err, &failoverErr)
+				require.Equal(t, retries+1, upstream.calls)
+			})
+		}
+	}
+}
+
 func TestGeminiClaudeCompat_SignatureDowngradeDoesNotConsumeSameAccountRetries(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	forward := func(svc *GeminiMessagesCompatService) (*ForwardResult, error) {

@@ -330,6 +330,34 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 }
 
 describe('EditAccountModal', () => {
+  it.each([0, 1, 4, 10])('shows and saves %s same-account retries for OAuth, including zero', async (count) => {
+    const account = buildOpenAIOAuthParentAccount()
+    account.extra = { same_account_retry_count: 3, custom_base_url: 'https://upstream.example' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const input = wrapper.get<HTMLInputElement>('[data-testid="same-account-retry-count"]')
+    expect(input.element.value).toBe('3')
+    await input.setValue(count)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    const saved = updateAccountMock.mock.calls[0]?.[1]
+    expect(saved.extra).toMatchObject({ same_account_retry_count: count, custom_base_url: 'https://upstream.example' })
+    await wrapper.setProps({ account: { ...account, extra: saved.extra } })
+    expect(input.element.value).toBe(String(count))
+    wrapper.unmount()
+  })
+
+  it('shows the default without pool mode and preserves a legacy pool override', async () => {
+    const wrapper = mountModal(buildAccount())
+    expect(wrapper.get<HTMLInputElement>('[data-testid="same-account-retry-count"]').element.value).toBe('1')
+    const account = buildAccount()
+    account.credentials.pool_mode = true
+    account.credentials.pool_mode_retry_count = 5
+    await wrapper.setProps({ account })
+    expect(wrapper.get<HTMLInputElement>('[data-testid="same-account-retry-count"]').element.value).toBe('5')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     authIsSimpleMode.value = true
   })

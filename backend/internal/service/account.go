@@ -1240,18 +1240,22 @@ func (a *Account) IsPoolMode() bool {
 }
 
 const (
-	defaultPoolModeRetryCount = 3
+	defaultPoolModeRetryCount = 1
 	maxPoolModeRetryCount     = 10
 )
 
-// GetPoolModeRetryCount 返回池模式同账号重试次数。
-// 未配置或配置非法时回退为默认值 3；小于 0 按 0 处理；过大则截断到 10。
+// GetPoolModeRetryCount 返回账号级同账号重试次数（保留旧方法名兼容调用方）。
+// 所有账号类型优先读取 extra.same_account_retry_count，再兼容池模式旧配置。
+// 未配置或配置非法时回退为默认值 1；小于 0 按 0 处理；过大则截断到 10。
 func (a *Account) GetPoolModeRetryCount() int {
-	if a == nil || !a.IsPoolMode() || a.Credentials == nil {
+	if a == nil {
 		return defaultPoolModeRetryCount
 	}
-	raw, ok := a.Credentials["pool_mode_retry_count"]
-	if !ok || raw == nil {
+	raw := a.Extra["same_account_retry_count"]
+	if raw == nil && a.IsPoolMode() {
+		raw = a.Credentials["pool_mode_retry_count"]
+	}
+	if raw == nil {
 		return defaultPoolModeRetryCount
 	}
 	count := parsePoolModeRetryCount(raw)

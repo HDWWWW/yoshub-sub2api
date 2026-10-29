@@ -36,7 +36,7 @@ const geminiStickySessionTTL = time.Hour
 
 const (
 	// 未注入配置时的同账号重试次数，与 gateway.max_same_account_retries_gemini 默认值一致
-	geminiDefaultSameAccountRetries = 4
+	geminiDefaultSameAccountRetries = 1
 	geminiRetryBaseDelay            = 1 * time.Second
 	geminiRetryMaxDelay             = 16 * time.Second
 )
@@ -718,7 +718,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	// checkedPolicy 是循环内对当前 resp 的错误策略检查结果，未检查时为 nil。
 	var checkedPolicy *ErrorPolicyResult
 	signatureRetryStage := 0
-	maxAttempts := s.geminiMaxAttemptsPerAccount()
+	maxAttempts := s.geminiMaxAttemptsPerAccount(account)
 	// 签名降级重发不占用同号重试次数：每进入一个降级阶段，循环上限随之顺延一次。
 	for attempt := 1; attempt <= maxAttempts+signatureRetryStage; attempt++ {
 		checkedPolicy = nil
@@ -1272,7 +1272,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	var resp *http.Response
 	// checkedPolicy 是循环内对当前 resp 的错误策略检查结果，未检查时为 nil。
 	var checkedPolicy *ErrorPolicyResult
-	maxAttempts := s.geminiMaxAttemptsPerAccount()
+	maxAttempts := s.geminiMaxAttemptsPerAccount(account)
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		checkedPolicy = nil
 		upstreamReq, idHeader, err := buildReq(ctx)
@@ -1676,7 +1676,10 @@ func (s *GeminiMessagesCompatService) cachedContentPassthroughInLoop(ctx context
 }
 
 // geminiMaxAttemptsPerAccount 返回可重试上游错误在单个账号上的最大请求次数（首次请求 + 同账号重试）。
-func (s *GeminiMessagesCompatService) geminiMaxAttemptsPerAccount() int {
+func (s *GeminiMessagesCompatService) geminiMaxAttemptsPerAccount(account *Account) int {
+	if account != nil && (account.Extra["same_account_retry_count"] != nil || account.IsPoolMode()) {
+		return account.GetPoolModeRetryCount() + 1
+	}
 	if s == nil || s.cfg == nil {
 		return geminiDefaultSameAccountRetries + 1
 	}

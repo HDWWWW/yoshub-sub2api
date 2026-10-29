@@ -859,6 +859,7 @@ export default {
       poolModeHint: 'Enable when upstream is an account pool; errors won\'t mark local account status',
       poolModeInfo:
         'When enabled, upstream 429/403/401 errors will auto-retry without marking the account as rate-limited or errored. Suitable for upstream pointing to another sub2api instance.',
+      sameAccountRetryCountHint: 'Additional scheduling retries on this account after a failed attempt, excluding the first request. Default {default}, range 0–{max}; 0 disables same-account retries. Applies to OAuth and API Key accounts, including transient OpenAI 429s. Protocol compatibility repairs are handled separately.',
       poolModeRetryCount: 'Same-Account Retries',
       poolModeRetryCountHint:
         'Only applies in pool mode. Use 0 to disable in-place retry. Default {default}, maximum {max}.',

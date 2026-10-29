@@ -169,10 +169,9 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		var lastRetryResp *http.Response
 		var lastRetryBody []byte
 
-		// MODEL_CAPACITY_EXHAUSTED 使用独立的重试参数（60 次，固定 1s 间隔）
-		maxAttempts := antigravitySmartRetryMaxAttempts
+		// Smart and capacity retries use the account budget; zero skips them.
+		maxAttempts := p.account.GetPoolModeRetryCount()
 		if isModelCapacityExhausted {
-			maxAttempts = antigravityModelCapacityRetryMaxAttempts
 			waitDuration = antigravityModelCapacityRetryWait
 
 			// 全局去重：如果其他 goroutine 已在重试同一模型且尚在 cooldown 中，直接返回 503
@@ -295,7 +294,7 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		// 直接返回 503 让 Handler 层的单账号退避循环做最终处理。
 		if resp.StatusCode == http.StatusServiceUnavailable && isSingleAccountRetry(p.ctx) {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d smart_retry_exhausted_single_account attempts=%d model=%s account=%d body=%s (return 503 directly)",
-				p.prefix, resp.StatusCode, antigravitySmartRetryMaxAttempts, modelName, p.account.ID, truncateForLog(retryBody, 200))
+				p.prefix, resp.StatusCode, maxAttempts, modelName, p.account.ID, truncateForLog(retryBody, 200))
 			return &smartRetryResult{
 				action: smartRetryActionBreakWithResp,
 				resp: &http.Response{
@@ -342,7 +341,7 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 // 约束：
 //   - 单次等待不超过 antigravitySingleAccountSmartRetryMaxWait
 //   - 总累计等待不超过 antigravitySingleAccountSmartRetryTotalMaxWait
-//   - 最多重试 antigravitySingleAccountSmartRetryMaxAttempts 次
+//   - 按账号配置限制重试次数（默认 1 次）
 func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 	p antigravityRetryLoopParams,
 	resp *http.Response,
@@ -365,8 +364,9 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 	var lastRetryResp *http.Response
 	var lastRetryBody []byte
 	totalWaited := time.Duration(0)
+	maxAttempts := p.account.GetPoolModeRetryCount()
 
-	for attempt := 1; attempt <= antigravitySingleAccountSmartRetryMaxAttempts; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// 检查累计等待是否超限
 		if totalWaited+waitDuration > antigravitySingleAccountSmartRetryTotalMaxWait {
 			remaining := antigravitySingleAccountSmartRetryTotalMaxWait - totalWaited
@@ -379,7 +379,7 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		}
 
 		logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d single_account_503_retry attempt=%d/%d delay=%v total_waited=%v model=%s account=%d",
-			p.prefix, resp.StatusCode, attempt, antigravitySingleAccountSmartRetryMaxAttempts, waitDuration, totalWaited, modelName, p.account.ID)
+			p.prefix, resp.StatusCode, attempt, maxAttempts, waitDuration, totalWaited, modelName, p.account.ID)
 
 		timer := time.NewTimer(waitDuration)
 		select {
@@ -401,7 +401,7 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 		if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d single_account_503_retry_success attempt=%d/%d total_waited=%v",
-				p.prefix, retryResp.StatusCode, attempt, antigravitySingleAccountSmartRetryMaxAttempts, totalWaited)
+				p.prefix, retryResp.StatusCode, attempt, maxAttempts, totalWaited)
 			// 关闭之前的响应
 			if lastRetryResp != nil {
 				_ = lastRetryResp.Body.Close()
@@ -412,7 +412,7 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		// 网络错误时继续重试
 		if retryErr != nil || retryResp == nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s single_account_503_retry: network_error attempt=%d/%d error=%v",
-				p.prefix, attempt, antigravitySingleAccountSmartRetryMaxAttempts, retryErr)
+				p.prefix, attempt, maxAttempts, retryErr)
 			continue
 		}
 
@@ -425,7 +425,7 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		_ = retryResp.Body.Close()
 
 		// 解析新的重试信息，更新下次等待时间
-		if attempt < antigravitySingleAccountSmartRetryMaxAttempts && lastRetryBody != nil {
+		if attempt < maxAttempts && lastRetryBody != nil {
 			_, _, newWaitDuration, _, _ := shouldTriggerAntigravitySmartRetry(p.account, lastRetryBody)
 			if newWaitDuration > 0 {
 				waitDuration = newWaitDuration
@@ -446,7 +446,7 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		retryBody = respBody
 	}
 	logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d single_account_503_retry_exhausted attempts=%d total_waited=%v model=%s account=%d body=%s (return 503 directly)",
-		p.prefix, resp.StatusCode, antigravitySingleAccountSmartRetryMaxAttempts, totalWaited, modelName, p.account.ID, truncateForLog(retryBody, 200))
+		p.prefix, resp.StatusCode, maxAttempts, totalWaited, modelName, p.account.ID, truncateForLog(retryBody, 200))
 
 	return &smartRetryResult{
 		action: smartRetryActionBreakWithResp,

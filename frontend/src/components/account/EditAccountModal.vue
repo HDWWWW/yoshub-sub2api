@@ -546,25 +546,7 @@
               {{ t('admin.accounts.poolModeInfo') }}
             </p>
           </div>
-          <div v-if="poolModeEnabled" class="mt-3">
-            <label class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</label>
-            <input
-              v-model.number="poolModeRetryCount"
-              type="number"
-              min="0"
-              :max="MAX_POOL_MODE_RETRY_COUNT"
-              step="1"
-              class="input"
-            />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{
-                t('admin.accounts.poolModeRetryCountHint', {
-                  default: DEFAULT_POOL_MODE_RETRY_COUNT,
-                  max: MAX_POOL_MODE_RETRY_COUNT
-                })
-              }}
-            </p>
-          </div>
+
           <div v-if="poolModeEnabled" class="mt-3">
             <label class="input-label">{{ t('admin.accounts.poolModeRetryStatusCodes') }}</label>
             <input
@@ -1516,25 +1498,7 @@
               {{ t('admin.accounts.poolModeInfo') }}
             </p>
           </div>
-          <div v-if="poolModeEnabled" class="mt-3">
-            <label class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</label>
-            <input
-              v-model.number="poolModeRetryCount"
-              type="number"
-              min="0"
-              :max="MAX_POOL_MODE_RETRY_COUNT"
-              step="1"
-              class="input"
-            />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{
-                t('admin.accounts.poolModeRetryCountHint', {
-                  default: DEFAULT_POOL_MODE_RETRY_COUNT,
-                  max: MAX_POOL_MODE_RETRY_COUNT
-                })
-              }}
-            </p>
-          </div>
+
           <div v-if="poolModeEnabled" class="mt-3">
             <label class="input-label">{{ t('admin.accounts.poolModeRetryStatusCodes') }}</label>
             <input
@@ -1931,6 +1895,21 @@
         :platform="account.platform"
         :type="account.type"
       />
+
+      <div>
+        <label for="same-account-retry-count" class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</label>
+        <input
+          id="same-account-retry-count"
+          v-model.number="poolModeRetryCount"
+          data-testid="same-account-retry-count"
+          type="number"
+          min="0"
+          :max="MAX_POOL_MODE_RETRY_COUNT"
+          step="1"
+          class="input"
+        />
+        <p class="input-hint">{{ t('admin.accounts.sameAccountRetryCountHint', { default: DEFAULT_POOL_MODE_RETRY_COUNT, max: MAX_POOL_MODE_RETRY_COUNT }) }}</p>
+      </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
@@ -3379,6 +3358,7 @@
 </template>
 
 <script setup lang="ts">
+import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT, normalizeSameAccountRetryCount, readSameAccountRetryCount } from '@/components/account/sameAccountRetry'
 import { ref, reactive, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -3827,8 +3807,8 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
-const DEFAULT_POOL_MODE_RETRY_COUNT = 3
-const MAX_POOL_MODE_RETRY_COUNT = 10
+const DEFAULT_POOL_MODE_RETRY_COUNT = DEFAULT_SAME_ACCOUNT_RETRY_COUNT
+const MAX_POOL_MODE_RETRY_COUNT = MAX_SAME_ACCOUNT_RETRY_COUNT
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
 const GROK_CLIENT_TOOL_CACHE_EXTRA_KEY = 'grok_client_tool_cache_enabled'
 const poolModeEnabled = ref(false)
@@ -4531,19 +4511,7 @@ const expiresAtInput = computed({
 })
 
 // Watchers
-const normalizePoolModeRetryCount = (value: number) => {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_POOL_MODE_RETRY_COUNT
-  }
-  const normalized = Math.trunc(value)
-  if (normalized < 0) {
-    return 0
-  }
-  if (normalized > MAX_POOL_MODE_RETRY_COUNT) {
-    return MAX_POOL_MODE_RETRY_COUNT
-  }
-  return normalized
-}
+const normalizePoolModeRetryCount = normalizeSameAccountRetryCount
 
 const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) => {
   const parsed = splitModelMappingObject(rawMapping)
@@ -5021,6 +4989,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     customErrorCodesEnabled.value = false
     selectedErrorCodes.value = []
   }
+  poolModeRetryCount.value = readSameAccountRetryCount(newAccount)
   editApiKey.value = ''
 }
 
@@ -6388,6 +6357,11 @@ const handleSubmit = async () => {
         delete newExtra.upstream_request_id_header
       }
       updatePayload.extra = newExtra
+    }
+
+    updatePayload.extra = {
+      ...((updatePayload.extra || props.account.extra || {}) as Record<string, unknown>),
+      same_account_retry_count: normalizePoolModeRetryCount(poolModeRetryCount.value)
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {

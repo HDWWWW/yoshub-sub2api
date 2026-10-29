@@ -36,9 +36,8 @@ const (
 
 	// MODEL_CAPACITY_EXHAUSTED 专用重试参数
 	// 模型容量不足时，所有账号共享同一容量池，切换账号无意义
-	// 使用固定 1s 间隔重试，最多重试 60 次
-	antigravityModelCapacityRetryMaxAttempts = 60
-	antigravityModelCapacityRetryWait        = 1 * time.Second
+	// 使用固定 1s 间隔重试，次数受账号配置限制
+	antigravityModelCapacityRetryWait = 1 * time.Second
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
@@ -51,7 +50,7 @@ const (
 	// 单账号 503 退避重试：Service 层原地重试的最大次数
 	// 在 handleSmartRetry 中，对于 shouldRateLimitModel（长延迟 ≥ 7s）的情况，
 	// 多账号模式下会设限流+切换账号；但单账号模式下改为原地等待+重试。
-	antigravitySingleAccountSmartRetryMaxAttempts = 3
+	antigravitySingleAccountSmartRetryMaxAttempts = defaultPoolModeRetryCount
 
 	// 单账号 503 退避重试：原地重试时单次最大等待时间
 	// 防止上游返回过长的 retryDelay 导致请求卡住太久

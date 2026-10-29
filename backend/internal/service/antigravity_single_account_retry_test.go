@@ -51,8 +51,8 @@ func TestIsSingleAccountRetry_False_WrongType(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSingleAccountRetryConstants(t *testing.T) {
-	require.Equal(t, 3, antigravitySingleAccountSmartRetryMaxAttempts,
-		"单账号原地重试最多 3 次")
+	require.Equal(t, 1, antigravitySingleAccountSmartRetryMaxAttempts,
+		"单账号原地重试默认 1 次")
 	require.Equal(t, 15*time.Second, antigravitySingleAccountSmartRetryMaxWait,
 		"单次最大等待 15s")
 	require.Equal(t, 30*time.Second, antigravitySingleAccountSmartRetryTotalMaxWait,
@@ -644,6 +644,7 @@ func TestHandleSingleAccountRetryInPlace_NetworkError_ContinuesRetry(t *testing.
 	account := &Account{
 		ID:          14,
 		Name:        "acc-net-retry",
+		Extra:       map[string]any{"same_account_retry_count": 2},
 		Type:        AccountTypeOAuth,
 		Platform:    PlatformAntigravity,
 		Concurrency: 1,
@@ -806,6 +807,7 @@ func TestHandleSmartRetry_503_SingleAccount_RetryInPlace_ThenSuccess_E2E(t *test
 	}
 
 	account := &Account{
+		Extra:       map[string]any{"same_account_retry_count": 2},
 		ID:          30,
 		Name:        "acc-e2e",
 		Type:        AccountTypeOAuth,
