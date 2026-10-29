@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# Use the Dockerfile frontend bundled with current BuildKit for local builds.
 # =============================================================================
 # Sub2API Multi-Stage Dockerfile
 # =============================================================================
