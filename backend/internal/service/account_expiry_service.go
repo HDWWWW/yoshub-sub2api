@@ -7,19 +7,13 @@ import (
 	"time"
 )
 
-// AccountExpiryPriorityRepository atomically updates priorities and publishes scheduler changes.
-type AccountExpiryPriorityRepository interface {
-	SyncAccountExpiryPriorities(ctx context.Context, now time.Time) (int64, error)
-}
-
-// AccountExpiryService maintains expiry priorities and pauses expired accounts.
+// AccountExpiryService periodically pauses expired accounts when auto-pause is enabled.
 type AccountExpiryService struct {
-	accountRepo  AccountRepository
-	priorityRepo AccountExpiryPriorityRepository
-	interval     time.Duration
-	stopCh       chan struct{}
-	stopOnce     sync.Once
-	wg           sync.WaitGroup
+	accountRepo AccountRepository
+	interval    time.Duration
+	stopCh      chan struct{}
+	stopOnce    sync.Once
+	wg          sync.WaitGroup
 }
 
 func NewAccountExpiryService(accountRepo AccountRepository, interval time.Duration) *AccountExpiryService {
@@ -33,9 +27,6 @@ func NewAccountExpiryService(accountRepo AccountRepository, interval time.Durati
 func (s *AccountExpiryService) Start() {
 	if s == nil || s.accountRepo == nil || s.interval <= 0 {
 		return
-	}
-	if s.priorityRepo != nil {
-		log.Printf("[AccountExpiry] Automatic expiry priority enabled (interval=%s)", s.interval)
 	}
 	s.wg.Add(1)
 	go func() {
@@ -66,18 +57,6 @@ func (s *AccountExpiryService) Stop() {
 }
 
 func (s *AccountExpiryService) runOnce() {
-	// Use separate deadlines so either maintenance task can still run when the other fails.
-	if s.priorityRepo != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		updated, err := s.priorityRepo.SyncAccountExpiryPriorities(ctx, time.Now())
-		cancel()
-		if err != nil {
-			log.Printf("[AccountExpiry] Sync expiry priorities failed: %v", err)
-		} else if updated > 0 {
-			log.Printf("[AccountExpiry] Updated expiry priorities for %d accounts", updated)
-		}
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

@@ -1492,8 +1492,6 @@ type TLSProfileConfig struct {
 
 // GatewaySchedulingConfig accounts scheduling configuration.
 type GatewaySchedulingConfig struct {
-	// AccountExpiryPriorityEnabled automatically ranks account priorities by expiry every minute.
-	AccountExpiryPriorityEnabled bool `mapstructure:"account_expiry_priority_enabled"`
 	// 粘性会话排队配置
 	StickySessionMaxWaiting  int           `mapstructure:"sticky_session_max_waiting"`
 	StickySessionWaitTimeout time.Duration `mapstructure:"sticky_session_wait_timeout"`
@@ -2561,7 +2559,6 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.fallback_max_waiting", 100)
 	viper.SetDefault("gateway.scheduling.fallback_selection_mode", "last_used")
 	viper.SetDefault("gateway.scheduling.prefer_soonest_reset", false)
-	viper.SetDefault("gateway.scheduling.account_expiry_priority_enabled", false)
 	viper.SetDefault("gateway.scheduling.load_batch_enabled", true)
 	viper.SetDefault("gateway.scheduling.load_batch_cache_ttl_ms", 200)
 	viper.SetDefault("gateway.scheduling.snapshot_mget_chunk_size", 128)

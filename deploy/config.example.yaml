@@ -560,10 +560,6 @@ gateway:
     # 负载感知选择时优先用尽「会话窗口最早重置」的账号；false 保持
     # 原有「优先级 → 负载率 → LRU」行为（默认）。
     prefer_soonest_reset: false
-    # Automatically rewrite account priorities every minute: earliest unexpired account first.
-    # Undated accounts follow dated accounts; expired accounts are last. Equal dates share a rank.
-    # Environment: GATEWAY_SCHEDULING_ACCOUNT_EXPIRY_PRIORITY_ENABLED=true
-    account_expiry_priority_enabled: false
     # Enable batch load calculation for scheduling
     # 启用调度批量负载计算
     load_batch_enabled: true

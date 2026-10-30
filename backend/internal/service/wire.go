@@ -398,15 +398,8 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 }
 
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
-func ProvideAccountExpiryService(accountRepo AccountRepository, cfg *config.Config) *AccountExpiryService {
+func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
-	if cfg != nil && cfg.Gateway.Scheduling.AccountExpiryPriorityEnabled {
-		var ok bool
-		svc.priorityRepo, ok = accountRepo.(AccountExpiryPriorityRepository)
-		if !ok {
-			panic("account repository does not support automatic expiry priorities")
-		}
-	}
 	svc.Start()
 	return svc
 }
