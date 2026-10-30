@@ -24,6 +24,23 @@ func resetViperWithJWTSecret(t *testing.T) {
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
 }
 
+func TestLoadUngroupedTokenRefreshInterval(t *testing.T) {
+	for _, tc := range []struct {
+		name, env string
+		want      int
+	}{
+		{"default", "", 5}, {"override", "12", 12}, {"disabled", "0", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			t.Setenv("TOKEN_REFRESH_UNGROUPED_CHECK_INTERVAL_SECONDS", tc.env)
+			cfg, err := Load()
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.TokenRefresh.UngroupedCheckIntervalSeconds)
+		})
+	}
+}
+
 func TestLoadDefaultModelsListReadMaxBytes(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()

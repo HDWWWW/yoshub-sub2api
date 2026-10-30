@@ -669,6 +669,9 @@ log:
 # Token refresh behavior
 # token 刷新行为控制
 token_refresh:
+  # Scan ungrouped OpenAI OAuth accounts, refresh tokens and persist quota windows.
+  # 未分组 OpenAI OAuth 账号刷新令牌并读取额度的间隔（秒）；0 关闭。沿用现有分组与账号预设。
+  ungrouped_check_interval_seconds: 5
   # Candidate accounts loaded per cursor page (maximum 1000)
   # 每个游标分页加载的候选账号数量（最大 1000）
   candidate_page_size: 200

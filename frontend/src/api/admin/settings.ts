@@ -14,6 +14,22 @@ import type {
 } from "@/types";
 import type { RechargeBonusTier } from "@/utils/rechargeBonus";
 
+export interface HappyFirstTokenSettings {
+  enabled: boolean;
+  min_delay_ms: number;
+  max_delay_ms: number;
+}
+
+export async function getHappyFirstTokenSettings(): Promise<HappyFirstTokenSettings> {
+  const { data } = await apiClient.get<HappyFirstTokenSettings>("/admin/settings/happy-first-token");
+  return data;
+}
+
+export async function updateHappyFirstTokenSettings(settings: HappyFirstTokenSettings): Promise<HappyFirstTokenSettings> {
+  const { data } = await apiClient.put<HappyFirstTokenSettings>("/admin/settings/happy-first-token", settings);
+  return data;
+}
+
 export interface DefaultSubscriptionSetting {
   group_id: number;
   validity_days: number;

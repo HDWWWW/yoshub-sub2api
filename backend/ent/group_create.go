@@ -738,6 +738,34 @@ func (_c *GroupCreate) SetNillableForceOpenaiFast(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetForceOpenaiUltrafast sets the "force_openai_ultrafast" field.
+func (_c *GroupCreate) SetForceOpenaiUltrafast(v bool) *GroupCreate {
+	_c.mutation.SetForceOpenaiUltrafast(v)
+	return _c
+}
+
+// SetNillableForceOpenaiUltrafast sets the "force_openai_ultrafast" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableForceOpenaiUltrafast(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetForceOpenaiUltrafast(*v)
+	}
+	return _c
+}
+
+// SetFilterOpenaiServiceTier sets the "filter_openai_service_tier" field.
+func (_c *GroupCreate) SetFilterOpenaiServiceTier(v bool) *GroupCreate {
+	_c.mutation.SetFilterOpenaiServiceTier(v)
+	return _c
+}
+
+// SetNillableFilterOpenaiServiceTier sets the "filter_openai_service_tier" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableFilterOpenaiServiceTier(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetFilterOpenaiServiceTier(*v)
+	}
+	return _c
+}
+
 // SetFreeOpenaiFast sets the "free_openai_fast" field.
 func (_c *GroupCreate) SetFreeOpenaiFast(v bool) *GroupCreate {
 	_c.mutation.SetFreeOpenaiFast(v)
@@ -1183,6 +1211,14 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultForceOpenaiFast
 		_c.mutation.SetForceOpenaiFast(v)
 	}
+	if _, ok := _c.mutation.ForceOpenaiUltrafast(); !ok {
+		v := group.DefaultForceOpenaiUltrafast
+		_c.mutation.SetForceOpenaiUltrafast(v)
+	}
+	if _, ok := _c.mutation.FilterOpenaiServiceTier(); !ok {
+		v := group.DefaultFilterOpenaiServiceTier
+		_c.mutation.SetFilterOpenaiServiceTier(v)
+	}
 	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
 		v := group.DefaultFreeOpenaiFast
 		_c.mutation.SetFreeOpenaiFast(v)
@@ -1394,6 +1430,12 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ForceOpenaiFast(); !ok {
 		return &ValidationError{Name: "force_openai_fast", err: errors.New(`ent: missing required field "Group.force_openai_fast"`)}
+	}
+	if _, ok := _c.mutation.ForceOpenaiUltrafast(); !ok {
+		return &ValidationError{Name: "force_openai_ultrafast", err: errors.New(`ent: missing required field "Group.force_openai_ultrafast"`)}
+	}
+	if _, ok := _c.mutation.FilterOpenaiServiceTier(); !ok {
+		return &ValidationError{Name: "filter_openai_service_tier", err: errors.New(`ent: missing required field "Group.filter_openai_service_tier"`)}
 	}
 	if _, ok := _c.mutation.FreeOpenaiFast(); !ok {
 		return &ValidationError{Name: "free_openai_fast", err: errors.New(`ent: missing required field "Group.free_openai_fast"`)}
@@ -1694,6 +1736,14 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
 		_node.ForceOpenaiFast = value
+	}
+	if value, ok := _c.mutation.ForceOpenaiUltrafast(); ok {
+		_spec.SetField(group.FieldForceOpenaiUltrafast, field.TypeBool, value)
+		_node.ForceOpenaiUltrafast = value
+	}
+	if value, ok := _c.mutation.FilterOpenaiServiceTier(); ok {
+		_spec.SetField(group.FieldFilterOpenaiServiceTier, field.TypeBool, value)
+		_node.FilterOpenaiServiceTier = value
 	}
 	if value, ok := _c.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
@@ -2798,6 +2848,30 @@ func (u *GroupUpsert) SetForceOpenaiFast(v bool) *GroupUpsert {
 // UpdateForceOpenaiFast sets the "force_openai_fast" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateForceOpenaiFast() *GroupUpsert {
 	u.SetExcluded(group.FieldForceOpenaiFast)
+	return u
+}
+
+// SetForceOpenaiUltrafast sets the "force_openai_ultrafast" field.
+func (u *GroupUpsert) SetForceOpenaiUltrafast(v bool) *GroupUpsert {
+	u.Set(group.FieldForceOpenaiUltrafast, v)
+	return u
+}
+
+// UpdateForceOpenaiUltrafast sets the "force_openai_ultrafast" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateForceOpenaiUltrafast() *GroupUpsert {
+	u.SetExcluded(group.FieldForceOpenaiUltrafast)
+	return u
+}
+
+// SetFilterOpenaiServiceTier sets the "filter_openai_service_tier" field.
+func (u *GroupUpsert) SetFilterOpenaiServiceTier(v bool) *GroupUpsert {
+	u.Set(group.FieldFilterOpenaiServiceTier, v)
+	return u
+}
+
+// UpdateFilterOpenaiServiceTier sets the "filter_openai_service_tier" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateFilterOpenaiServiceTier() *GroupUpsert {
+	u.SetExcluded(group.FieldFilterOpenaiServiceTier)
 	return u
 }
 
@@ -4075,6 +4149,34 @@ func (u *GroupUpsertOne) SetForceOpenaiFast(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateForceOpenaiFast() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateForceOpenaiFast()
+	})
+}
+
+// SetForceOpenaiUltrafast sets the "force_openai_ultrafast" field.
+func (u *GroupUpsertOne) SetForceOpenaiUltrafast(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetForceOpenaiUltrafast(v)
+	})
+}
+
+// UpdateForceOpenaiUltrafast sets the "force_openai_ultrafast" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateForceOpenaiUltrafast() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateForceOpenaiUltrafast()
+	})
+}
+
+// SetFilterOpenaiServiceTier sets the "filter_openai_service_tier" field.
+func (u *GroupUpsertOne) SetFilterOpenaiServiceTier(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetFilterOpenaiServiceTier(v)
+	})
+}
+
+// UpdateFilterOpenaiServiceTier sets the "filter_openai_service_tier" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateFilterOpenaiServiceTier() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateFilterOpenaiServiceTier()
 	})
 }
 
@@ -5549,6 +5651,34 @@ func (u *GroupUpsertBulk) SetForceOpenaiFast(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateForceOpenaiFast() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateForceOpenaiFast()
+	})
+}
+
+// SetForceOpenaiUltrafast sets the "force_openai_ultrafast" field.
+func (u *GroupUpsertBulk) SetForceOpenaiUltrafast(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetForceOpenaiUltrafast(v)
+	})
+}
+
+// UpdateForceOpenaiUltrafast sets the "force_openai_ultrafast" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateForceOpenaiUltrafast() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateForceOpenaiUltrafast()
+	})
+}
+
+// SetFilterOpenaiServiceTier sets the "filter_openai_service_tier" field.
+func (u *GroupUpsertBulk) SetFilterOpenaiServiceTier(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetFilterOpenaiServiceTier(v)
+	})
+}
+
+// UpdateFilterOpenaiServiceTier sets the "filter_openai_service_tier" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateFilterOpenaiServiceTier() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateFilterOpenaiServiceTier()
 	})
 }
 

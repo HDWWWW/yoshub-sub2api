@@ -23,3 +23,35 @@ func TestGroupMapperExposesForceOpenAIFastOnlyToAdmins(t *testing.T) {
 	require.Contains(t, string(adminJSON), `"force_openai_fast":true`)
 	require.Contains(t, string(adminJSON), `"free_openai_fast":true`)
 }
+
+func TestGroupMapperExposesForceOpenAIUltrafastOnlyToAdmins(t *testing.T) {
+	group := &service.Group{
+		ID: 7, Name: "fast", Platform: service.PlatformOpenAI, Status: service.StatusActive, ForceOpenAIUltrafast: true, FreeOpenAIFast: true,
+	}
+
+	userJSON, err := json.Marshal(GroupFromService(group))
+	require.NoError(t, err)
+	require.NotContains(t, string(userJSON), "force_openai_ultrafast")
+	require.NotContains(t, string(userJSON), "free_openai_fast")
+
+	adminJSON, err := json.Marshal(GroupFromServiceAdmin(group))
+	require.NoError(t, err)
+	require.Contains(t, string(adminJSON), `"force_openai_ultrafast":true`)
+	require.Contains(t, string(adminJSON), `"free_openai_fast":true`)
+}
+
+func TestGroupMapperExposesFilterOpenAIServiceTierOnlyToAdmins(t *testing.T) {
+	group := &service.Group{
+		ID: 7, Name: "fast", Platform: service.PlatformOpenAI, Status: service.StatusActive, FilterOpenAIServiceTier: true, FreeOpenAIFast: true,
+	}
+
+	userJSON, err := json.Marshal(GroupFromService(group))
+	require.NoError(t, err)
+	require.NotContains(t, string(userJSON), "filter_openai_service_tier")
+	require.NotContains(t, string(userJSON), "free_openai_fast")
+
+	adminJSON, err := json.Marshal(GroupFromServiceAdmin(group))
+	require.NoError(t, err)
+	require.Contains(t, string(adminJSON), `"filter_openai_service_tier":true`)
+	require.Contains(t, string(adminJSON), `"free_openai_fast":true`)
+}

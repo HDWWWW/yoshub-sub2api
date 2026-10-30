@@ -1268,11 +1268,15 @@ export default {
         enableAnyway: '仍然开启'
       },
       openaiFast: {
-        title: 'OpenAI Fast 模式',
+        title: 'OpenAI 加速模式',
         force: '强制使用 Fast（priority）',
         hint: '开启后，此分组的 OpenAI 请求会强制写入 service_tier=priority；全局 Fast/Flex 策略仍可过滤或拦截。保存后新请求立即生效，已建立的 WebSocket 会话需重连。',
-        free: '免费 Fast',
-        freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。'
+        forceUltrafast: '强制使用 Ultrafast',
+        ultrafastHint: '开启后强制使用 Ultrafast 档位，并自动关闭强制 Fast。需要上游模型与账号支持；全局档位策略仍然生效。保存后新请求生效，已有 WebSocket 会话需重连。',
+        filter: '过滤 service_tier',
+        filterHint: '移除请求中的 service_tier 字段，覆盖 Fast、Ultrafast 和 Flex 等档位；自动关闭两种强制模式。全局拦截规则仍有效，最终档位由上游默认设置决定。',
+        free: '免费 Fast / Ultrafast',
+        freeHint: '该分组的 Fast 和 Ultrafast 请求仍使用对应加速档位，客户实际费用按同一请求的 Standard 价格计算。'
       },
       invalidRequestFallback: {
         title: '无效请求兜底分组',

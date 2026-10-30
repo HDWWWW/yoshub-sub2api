@@ -10,6 +10,37 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (h *SettingHandler) GetHappyFirstTokenSettings(c *gin.Context) {
+	settings, err := h.settingService.GetHappyFirstTokenSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
+func (h *SettingHandler) UpdateHappyFirstTokenSettings(c *gin.Context) {
+	var req struct {
+		Enabled    *bool `json:"enabled" binding:"required"`
+		MinDelayMS *int  `json:"min_delay_ms" binding:"required"`
+		MaxDelayMS *int  `json:"max_delay_ms" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "enabled, min_delay_ms and max_delay_ms are required")
+		return
+	}
+	settings := service.HappyFirstTokenSettings{Enabled: *req.Enabled, MinDelayMS: *req.MinDelayMS, MaxDelayMS: *req.MaxDelayMS}
+	if err := settings.Validate(); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.settingService.UpdateHappyFirstTokenSettings(c.Request.Context(), settings); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
 // GetAdminAPIKey 获取管理员 API Key 状态
 // GET /api/v1/admin/settings/admin-api-key
 func (h *SettingHandler) GetAdminAPIKey(c *gin.Context) {

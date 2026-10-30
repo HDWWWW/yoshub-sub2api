@@ -648,6 +648,8 @@ type TokenRefreshConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 	// 检查间隔（分钟）
 	CheckIntervalMinutes int `mapstructure:"check_interval_minutes"`
+	// 未分组 OpenAI OAuth 账号的刷新和额度同步间隔（秒）；0 表示关闭。
+	UngroupedCheckIntervalSeconds int `mapstructure:"ungrouped_check_interval_seconds"`
 	// 提前刷新时间（小时），在token过期前多久开始刷新
 	RefreshBeforeExpiryHours float64 `mapstructure:"refresh_before_expiry_hours"`
 	// 最大重试次数
@@ -2609,7 +2611,8 @@ func setDefaults() {
 
 	// TokenRefresh
 	viper.SetDefault("token_refresh.enabled", true)
-	viper.SetDefault("token_refresh.check_interval_minutes", 5)        // 每5分钟检查一次
+	viper.SetDefault("token_refresh.check_interval_minutes", 5) // 每5分钟检查一次
+	viper.SetDefault("token_refresh.ungrouped_check_interval_seconds", 5)
 	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // 提前30分钟刷新（适配Google 1小时token）
 	viper.SetDefault("token_refresh.max_retries", 3)                   // 最多重试3次
 	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // 重试退避基础2秒

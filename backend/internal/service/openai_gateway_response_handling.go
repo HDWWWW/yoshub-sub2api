@@ -109,6 +109,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		c.Header("X-Accel-Buffering", "no")
 	}
 
+	stopResponseSignals := s.startOpenAIResponseSignals(ctx, c, account, resp.Header, startTime, 0)
+	defer stopResponseSignals()
 	w := c.Writer
 	flusher, ok := w.(http.Flusher)
 	if !ok {

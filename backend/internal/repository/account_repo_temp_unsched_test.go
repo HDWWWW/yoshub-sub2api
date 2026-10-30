@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -344,6 +345,34 @@ func TestAccountRepository_ListOAuthRefreshCandidatePage_ReconciliationExcludesA
 		"reconciliation must be able to find structurally invalid OAuth rows")
 	require.Contains(t, normalized, "ORDER BY id ASC")
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountRepository_ListOAuthRefreshCandidatePage_UngroupedOnly(t *testing.T) {
+	for _, ungrouped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ungrouped_%t", ungrouped), func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			var capturedSQL string
+			mock.ExpectQuery("SELECT id").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			repo := newAccountRepositoryWithSQL(nil, captureQuerySQL{db: db, captured: &capturedSQL}, nil)
+			_, err = repo.ListOAuthRefreshCandidatePage(context.Background(), service.OAuthRefreshPageOptions{
+				Platforms: []string{service.PlatformOpenAI}, Limit: 200, ActiveOnly: true,
+				RequireRefreshToken: true, ExcludeRetryCooldown: true, UngroupedOnly: ungrouped,
+			})
+			require.NoError(t, err)
+			normalized := normalizeSQLWhitespace(capturedSQL)
+			if ungrouped {
+				require.Contains(t, normalized, "NOT EXISTS (SELECT 1 FROM account_groups WHERE account_groups.account_id = accounts.id)")
+			} else {
+				require.NotContains(t, normalized, "account_groups", "ordinary expiry maintenance must still include assigned accounts")
+			}
+			require.Contains(t, normalized, "status = 'active'")
+			require.Contains(t, normalized, "type = 'oauth'")
+			require.Contains(t, normalized, "token refresh retry exhausted:%")
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 type captureQuerySQL struct {

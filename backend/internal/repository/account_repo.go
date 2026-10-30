@@ -1359,6 +1359,10 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 		query += `
 			AND status = 'active'`
 	}
+	if options.UngroupedOnly {
+		query += `
+			AND NOT EXISTS (SELECT 1 FROM account_groups WHERE account_groups.account_id = accounts.id)`
+	}
 	if options.IncludeSetupToken {
 		query += `
 			AND type IN ('oauth', 'setup-token')`

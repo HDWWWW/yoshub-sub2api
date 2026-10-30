@@ -2350,3 +2350,41 @@ func TestAdminService_CreateGroup_CodexModelsManifestConfigDisabledAccepted(t *t
 	require.Equal(t, []int64{1, 2}, group.CodexModelsManifestConfig.AccountIDs)
 	require.False(t, repo.created.CodexModelsManifestConfig.Enabled)
 }
+
+func TestAdminGroupSpeedModesValidatePersistAndInvalidate(t *testing.T) {
+	for _, mode := range []string{"priority", "ultrafast", "filter"} {
+		t.Run(mode, func(t *testing.T) {
+			repo := &groupRepoStubForAdmin{}
+			invalidator := &authCacheInvalidatorStub{}
+			svc := &adminServiceImpl{groupRepo: repo, authCacheInvalidator: invalidator}
+			group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{Name: "speed", Platform: PlatformOpenAI, RateMultiplier: 1,
+				ForceOpenAIFast: mode == "priority", ForceOpenAIUltrafast: mode == "ultrafast", FilterOpenAIServiceTier: mode == "filter", FreeOpenAIFast: true})
+			require.NoError(t, err)
+			require.Equal(t, mode == "ultrafast", group.ForceOpenAIUltrafast)
+			require.Equal(t, mode == "filter", group.FilterOpenAIServiceTier)
+			repo.getByID = &Group{ID: 7, Name: "speed", Platform: PlatformOpenAI, Status: StatusActive, ForceOpenAIFast: true}
+			fast, ultra, filter := mode == "priority", mode == "ultrafast", mode == "filter"
+			updated, err := svc.UpdateGroup(context.Background(), 7, &UpdateGroupInput{ForceOpenAIFast: &fast, ForceOpenAIUltrafast: &ultra, FilterOpenAIServiceTier: &filter})
+			require.NoError(t, err)
+			require.Equal(t, ultra, updated.ForceOpenAIUltrafast)
+			require.Equal(t, filter, updated.FilterOpenAIServiceTier)
+			require.Contains(t, invalidator.groupIDs, int64(7))
+			repo.getByID = updated
+			changed, err := svc.UpdateGroup(context.Background(), 7, &UpdateGroupInput{Platform: PlatformAnthropic})
+			require.NoError(t, err)
+			require.False(t, changed.ForceOpenAIFast || changed.ForceOpenAIUltrafast || changed.FilterOpenAIServiceTier)
+		})
+	}
+	for _, flags := range [][3]bool{{true, true, false}, {true, false, true}, {false, true, true}, {true, true, true}} {
+		repo := &groupRepoStubForAdmin{}
+		svc := &adminServiceImpl{groupRepo: repo}
+		_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{Name: "conflict", Platform: PlatformOpenAI, RateMultiplier: 1,
+			ForceOpenAIFast: flags[0], ForceOpenAIUltrafast: flags[1], FilterOpenAIServiceTier: flags[2]})
+		require.ErrorContains(t, err, "mutually exclusive")
+		require.Nil(t, repo.created)
+		repo.getByID = &Group{ID: 7, Name: "speed", Platform: PlatformOpenAI, Status: StatusActive}
+		_, err = svc.UpdateGroup(context.Background(), 7, &UpdateGroupInput{ForceOpenAIFast: &flags[0], ForceOpenAIUltrafast: &flags[1], FilterOpenAIServiceTier: &flags[2]})
+		require.ErrorContains(t, err, "mutually exclusive")
+		require.Nil(t, repo.updated)
+	}
+}

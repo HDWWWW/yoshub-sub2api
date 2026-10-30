@@ -598,6 +598,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/happy-first-token',
+    name: 'AdminHappyFirstToken',
+    component: () => import('@/views/admin/HappyFirstTokenView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Happy First Response',
+      titleKey: 'happyFirstToken.title',
+      descriptionKey: 'happyFirstToken.description'
+    }
+  },
+  {
     path: '/admin/risk-control',
     name: 'AdminRiskControl',
     component: () => import('@/views/admin/RiskControlView.vue'),

@@ -81,6 +81,10 @@ type TokenRefreshService struct {
 	providerGates map[string]*tokenRefreshRateGate
 	providerPools map[string]*tokenRefreshConcurrencyGate
 
+	ungroupedMu      sync.Mutex
+	ungroupedAfterID int64
+	ungroupedQuota   ungroupedOpenAIQuotaReader
+
 	// Test-only duration seam; production uses TokenRefreshConfig seconds.
 	attemptTimeoutOverride time.Duration
 }
@@ -207,6 +211,11 @@ func (s *TokenRefreshService) Start() {
 
 	s.wg.Add(1)
 	go s.refreshLoop()
+	if interval := s.ungroupedRefreshInterval(); interval > 0 && s.ungroupedQuota != nil {
+		s.wg.Add(1)
+		go s.ungroupedRefreshLoop(interval)
+		slog.Info("token_refresh.ungrouped_started", "interval_seconds", interval.Seconds())
+	}
 
 	slog.Info("token_refresh.service_started",
 		"check_interval_minutes", s.cfg.CheckIntervalMinutes,

@@ -1888,6 +1888,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		c.Header("x-request-id", v)
 	}
 
+	heartbeatInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
+		heartbeatInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
+	}
+	stopResponseSignals := s.startOpenAIResponseSignals(ctx, c, account, resp.Header, startTime, heartbeatInterval)
+	defer stopResponseSignals()
 	w := c.Writer
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -1949,17 +1955,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	//      且心跳字节已由 OpenAICompactKeepaliveAdjustedWrittenSize 排除，
 	//      所以 pre-output failover 的能力完全不受影响（#3887 的记账在此复用）。
 	//
-	// 用 startOpenAISSEKeepalive 而不是 StartOpenAICompactSSEKeepalive：后者会检查
-	// compact 标记，而这里是普通 /v1/responses 透传。走到这一行时上游已回
-	// text/event-stream、SSE 响应头也已设好，处于流式上下文是确定的。
-	stopKeepalive := func() {}
-	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
-		stopKeepalive = startOpenAISSEKeepalive(c,
-			time.Duration(s.cfg.Gateway.StreamKeepaliveInterval)*time.Second)
-	}
-	// 任何返回路径都要停拍。Stop 与心跳 goroutine 之间有互斥锁，
-	// 返回后不会再有字节写出。
-	defer stopKeepalive()
+	// 心跳与可选的快乐首字通知由上面的 startOpenAIResponseSignals 共同管理，
+	// 在取得 w 之前安装 writer 包装器，保证正常写回与通知之间互斥。
+	stopKeepalive := stopResponseSignals
 	// flushPending 表示已写入但未到 SSE 空行边界的脏状态；defer 兜底函数退出前的残留，断连后不再 Flush。
 	flushPending := false
 	pendingSSEEventType := ""

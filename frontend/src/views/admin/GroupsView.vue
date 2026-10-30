@@ -1587,10 +1587,39 @@
               data-testid="create-force-openai-fast"
               :aria-label="t('admin.groups.openaiFast.force')"
               v-model="createForm.force_openai_fast"
+              @update:model-value="(enabled) => { if (enabled) { createForm.force_openai_ultrafast = false; createForm.filter_openai_service_tier = false } }"
             />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiFast.hint") }}
+          </p>
+          <div class="flex items-center justify-between gap-4 mt-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.forceUltrafast") }}
+            </label>
+            <Toggle
+              data-testid="create-force-openai-ultrafast"
+              :aria-label="t('admin.groups.openaiFast.forceUltrafast')"
+              v-model="createForm.force_openai_ultrafast"
+              @update:model-value="(enabled) => { if (enabled) { createForm.force_openai_fast = false; createForm.filter_openai_service_tier = false } }"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiFast.ultrafastHint") }}
+          </p>
+          <div class="flex items-center justify-between gap-4 mt-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.filter") }}
+            </label>
+            <Toggle
+              data-testid="create-filter-openai-service-tier"
+              :aria-label="t('admin.groups.openaiFast.filter')"
+              v-model="createForm.filter_openai_service_tier"
+              @update:model-value="(enabled) => { if (enabled) { createForm.force_openai_fast = false; createForm.force_openai_ultrafast = false } }"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiFast.filterHint") }}
           </p>
           <div class="flex items-center justify-between gap-4 mt-4">
             <label class="text-sm text-gray-600 dark:text-gray-400">
@@ -3251,10 +3280,39 @@
               data-testid="edit-force-openai-fast"
               :aria-label="t('admin.groups.openaiFast.force')"
               v-model="editForm.force_openai_fast"
+              @update:model-value="(enabled) => { if (enabled) { editForm.force_openai_ultrafast = false; editForm.filter_openai_service_tier = false } }"
             />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiFast.hint") }}
+          </p>
+          <div class="flex items-center justify-between gap-4 mt-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.forceUltrafast") }}
+            </label>
+            <Toggle
+              data-testid="edit-force-openai-ultrafast"
+              :aria-label="t('admin.groups.openaiFast.forceUltrafast')"
+              v-model="editForm.force_openai_ultrafast"
+              @update:model-value="(enabled) => { if (enabled) { editForm.force_openai_fast = false; editForm.filter_openai_service_tier = false } }"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiFast.ultrafastHint") }}
+          </p>
+          <div class="flex items-center justify-between gap-4 mt-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.filter") }}
+            </label>
+            <Toggle
+              data-testid="edit-filter-openai-service-tier"
+              :aria-label="t('admin.groups.openaiFast.filter')"
+              v-model="editForm.filter_openai_service_tier"
+              @update:model-value="(enabled) => { if (enabled) { editForm.force_openai_fast = false; editForm.force_openai_ultrafast = false } }"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiFast.filterHint") }}
           </p>
           <div class="flex items-center justify-between gap-4 mt-4">
             <label class="text-sm text-gray-600 dark:text-gray-400">
@@ -4982,6 +5040,8 @@ const createForm = reactive({
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   force_openai_fast: false,
+  force_openai_ultrafast: false,
+  filter_openai_service_tier: false,
   free_openai_fast: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
@@ -5349,6 +5409,8 @@ const editForm = reactive({
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   force_openai_fast: false,
+  force_openai_ultrafast: false,
+  filter_openai_service_tier: false,
   free_openai_fast: false,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
@@ -5841,6 +5903,8 @@ const closeCreateModal = () => {
   createForm.video_model_prices = createVideoModelPricesForm();
   createForm.long_context_pricing_enabled = true;
   createForm.force_openai_fast = false;
+  createForm.force_openai_ultrafast = false;
+  createForm.filter_openai_service_tier = false;
   createForm.free_openai_fast = false;
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
@@ -5966,6 +6030,14 @@ const handleCreateGroup = async () => {
       force_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
         createForm.force_openai_fast,
+      ),
+      force_openai_ultrafast: normalizeGroupOpenAIFast(
+        createForm.platform,
+        createForm.force_openai_ultrafast,
+      ),
+      filter_openai_service_tier: normalizeGroupOpenAIFast(
+        createForm.platform,
+        createForm.filter_openai_service_tier,
       ),
       free_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
@@ -6115,7 +6187,9 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.monthly_limit_usd = group.monthly_limit_usd;
   editForm.long_context_pricing_enabled =
     group.long_context_pricing_enabled ?? true;
-  editForm.force_openai_fast = group.force_openai_fast ?? false;
+  editForm.filter_openai_service_tier = group.filter_openai_service_tier ?? false;
+  editForm.force_openai_ultrafast = !editForm.filter_openai_service_tier && (group.force_openai_ultrafast ?? false);
+  editForm.force_openai_fast = !editForm.filter_openai_service_tier && !editForm.force_openai_ultrafast && (group.force_openai_fast ?? false);
   editForm.free_openai_fast = group.free_openai_fast ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
@@ -6251,6 +6325,8 @@ const closeEditModal = () => {
   editForm.video_model_prices = createVideoModelPricesForm();
   editForm.long_context_pricing_enabled = true;
   editForm.force_openai_fast = false;
+  editForm.force_openai_ultrafast = false;
+  editForm.filter_openai_service_tier = false;
   editForm.free_openai_fast = false;
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
@@ -6310,6 +6386,14 @@ const handleUpdateGroup = async () => {
       force_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,
         editForm.force_openai_fast,
+      ),
+      force_openai_ultrafast: normalizeGroupOpenAIFast(
+        editForm.platform,
+        editForm.force_openai_ultrafast,
+      ),
+      filter_openai_service_tier: normalizeGroupOpenAIFast(
+        editForm.platform,
+        editForm.filter_openai_service_tier,
       ),
       free_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,

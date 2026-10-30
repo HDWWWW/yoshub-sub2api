@@ -144,7 +144,7 @@ func groupBillsOpenAIFastAtStandard(apiKey *APIKey, account *Account, serviceTie
 		return false
 	}
 	switch normalizeBillingServiceTier(serviceTier) {
-	case "priority", "fast":
+	case "priority", "fast", "ultrafast":
 		return true
 	default:
 		return false

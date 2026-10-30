@@ -647,10 +647,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	rawTier := requestView.ServiceTier
-	if openAIGroupForcesFast(ctx, account) {
-		rawTier = OpenAIFastTierPriority
-		if requestView.ServiceTier != OpenAIFastTierPriority {
-			markPatchSet("service_tier", OpenAIFastTierPriority)
+	if tier := openAIGroupForcedServiceTier(ctx, account); tier != "" {
+		rawTier = tier
+		if requestView.ServiceTier != tier {
+			markPatchSet("service_tier", tier)
 		}
 	}
 	if rawTier != "" {
@@ -677,6 +677,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 			}
 		}
+	} else if openAIGroupFiltersServiceTier(ctx, account) {
+		markPatchDelete("service_tier")
 	} else if s.shouldForceOpenAIFastPriorityForMissingTier(ctx, account, upstreamModel) {
 		markPatchSet("service_tier", OpenAIFastTierPriority)
 	}

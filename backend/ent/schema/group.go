@@ -253,9 +253,15 @@ func (Group) Fields() []ent.Field {
 		field.Bool("force_openai_fast").
 			Default(false).
 			Comment("是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority"),
+		field.Bool("force_openai_ultrafast").
+			Default(false).
+			Comment("是否强制此 OpenAI/Composite 分组请求使用 service_tier=ultrafast"),
+		field.Bool("filter_openai_service_tier").
+			Default(false).
+			Comment("是否移除此 OpenAI/Composite 分组请求中的 service_tier"),
 		field.Bool("free_openai_fast").
 			Default(false).
-			Comment("是否让此 OpenAI/Composite 分组的 Fast 请求按 Standard 价格计费"),
+			Comment("是否让此 OpenAI/Composite 分组的 Fast/Ultrafast 请求按 Standard 价格计费"),
 		field.Bool("require_oauth_only").
 			Default(false).
 			Comment("仅允许非 apikey 类型账号关联到此分组"),

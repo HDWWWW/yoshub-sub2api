@@ -1270,11 +1270,15 @@ export default {
         enableAnyway: 'Enable anyway'
       },
       openaiFast: {
-        title: 'OpenAI Fast mode',
+        title: 'OpenAI speed mode',
         force: 'Force Fast (priority)',
         hint: 'Forces service_tier=priority on OpenAI requests in this group. The global Fast/Flex policy can still filter or block it. New requests update immediately after saving; existing WebSocket sessions must reconnect.',
-        free: 'Free Fast',
-        freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'
+        forceUltrafast: 'Force Ultrafast',
+        ultrafastHint: 'Forces the Ultrafast tier and turns off Force Fast. Requires upstream model and account support; global tier policies still apply. New requests update after saving; existing WebSocket sessions must reconnect.',
+        filter: 'Filter service_tier',
+        filterHint: 'Removes service_tier, including Fast, Ultrafast and Flex. Turns off both forced modes. Global block rules still apply; the upstream default determines the final tier.',
+        free: 'Free Fast / Ultrafast',
+        freeHint: 'Fast and Ultrafast requests in this group keep their respective speed tier, but customers are charged the equivalent Standard price.'
       },
       invalidRequestFallback: {
         title: 'Invalid Request Fallback Group',

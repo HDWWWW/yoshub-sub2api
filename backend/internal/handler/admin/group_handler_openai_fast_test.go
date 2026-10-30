@@ -25,3 +25,41 @@ func TestGroupRequestsDecodeForceOpenAIFast(t *testing.T) {
 	require.Nil(t, omitted.ForceOpenAIFast)
 	require.Nil(t, omitted.FreeOpenAIFast)
 }
+
+func TestGroupRequestsDecodeForceOpenAIUltrafast(t *testing.T) {
+	var createReq CreateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"name":"fast","force_openai_ultrafast":true,"free_openai_fast":true}`), &createReq))
+	require.True(t, createReq.ForceOpenAIUltrafast)
+	require.True(t, createReq.FreeOpenAIFast)
+
+	var updateReq UpdateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"force_openai_ultrafast":false,"free_openai_fast":false}`), &updateReq))
+	require.NotNil(t, updateReq.ForceOpenAIUltrafast)
+	require.False(t, *updateReq.ForceOpenAIUltrafast)
+	require.NotNil(t, updateReq.FreeOpenAIFast)
+	require.False(t, *updateReq.FreeOpenAIFast)
+
+	var omitted UpdateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{}`), &omitted))
+	require.Nil(t, omitted.ForceOpenAIUltrafast)
+	require.Nil(t, omitted.FreeOpenAIFast)
+}
+
+func TestGroupRequestsDecodeFilterOpenAIServiceTier(t *testing.T) {
+	var createReq CreateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"name":"fast","filter_openai_service_tier":true,"free_openai_fast":true}`), &createReq))
+	require.True(t, createReq.FilterOpenAIServiceTier)
+	require.True(t, createReq.FreeOpenAIFast)
+
+	var updateReq UpdateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"filter_openai_service_tier":false,"free_openai_fast":false}`), &updateReq))
+	require.NotNil(t, updateReq.FilterOpenAIServiceTier)
+	require.False(t, *updateReq.FilterOpenAIServiceTier)
+	require.NotNil(t, updateReq.FreeOpenAIFast)
+	require.False(t, *updateReq.FreeOpenAIFast)
+
+	var omitted UpdateGroupRequest
+	require.NoError(t, json.Unmarshal([]byte(`{}`), &omitted))
+	require.Nil(t, omitted.FilterOpenAIServiceTier)
+	require.Nil(t, omitted.FreeOpenAIFast)
+}

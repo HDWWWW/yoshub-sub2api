@@ -12,12 +12,16 @@ const {
   getUsageSummary,
   getCapacitySummary,
   getLiveCapability,
+  createGroup,
+  updateGroup,
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   getModelAllowlistCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
   getCapacitySummary: vi.fn(),
   getLiveCapability: vi.fn(),
+  createGroup: vi.fn(),
+  updateGroup: vi.fn(),
 }));
 
 vi.mock("@/api/admin", () => ({
@@ -29,8 +33,8 @@ vi.mock("@/api/admin", () => ({
       getUsageSummary,
       getCapacitySummary,
       getLiveCapability,
-      create: vi.fn(),
-      update: vi.fn(),
+      create: createGroup,
+      update: updateGroup,
       delete: vi.fn(),
       duplicate: vi.fn(),
       updateSortOrder: vi.fn(),
@@ -79,6 +83,8 @@ const sourceGroup = {
   monthly_limit_usd: null,
   long_context_pricing_enabled: true,
   force_openai_fast: false,
+  force_openai_ultrafast: false,
+  filter_openai_service_tier: false,
   free_openai_fast: false,
   model_pricing: [],
   profit_control_enabled: false,
@@ -154,6 +160,13 @@ const BaseDialogStub = defineComponent({
   template: '<div v-if="show"><slot /><slot name="footer" /></div>',
 });
 
+const ReasoningEffortPolicyFieldsStub = defineComponent({
+  setup(_, { expose }) {
+    expose({ validate: () => true, resetValidation: () => undefined });
+    return () => h("div");
+  },
+});
+
 const CodexManifestAccountsFieldStub = defineComponent({
   name: "CodexManifestAccountsField",
   props: {
@@ -220,7 +233,7 @@ const mountView = () =>
         GroupCapacityBadge: true,
         GroupRateMultipliersModal: true,
         GroupRPMOverridesModal: true,
-        ReasoningEffortPolicyFields: true,
+        ReasoningEffortPolicyFields: ReasoningEffortPolicyFieldsStub,
         CodexManifestAccountsField: CodexManifestAccountsFieldStub,
         PricingEntryCard: true,
         VueDraggable: true,
@@ -236,6 +249,8 @@ describe("GroupsView Codex manifest binding", () => {
     getUsageSummary.mockReset();
     getCapacitySummary.mockReset();
     getLiveCapability.mockReset();
+    createGroup.mockReset().mockResolvedValue(sourceGroup);
+    updateGroup.mockReset().mockResolvedValue(sourceGroup);
 
     listGroups.mockResolvedValue({
       items: [sourceGroup],
@@ -285,4 +300,50 @@ describe("GroupsView Codex manifest binding", () => {
 
     wrapper.unmount();
   });
+
+  for (const form of ["create", "edit"] as const) {
+    it(`${form}: switches modes exclusively and submits free Ultrafast`, async () => {
+      const wrapper = mountView();
+      await flushPromises();
+      if (form === "create") {
+        await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
+        const vm = wrapper.vm as unknown as { createForm: { platform: string; name: string } };
+        vm.createForm.platform = "openai";
+        vm.createForm.name = "speed-test";
+      } else {
+        await wrapper.findAll("button").find((b) => b.text().includes("common.edit"))!.trigger("click");
+      }
+      await flushPromises();
+      const selector = (name: string) => `[data-testid="${form}-${name}"]`;
+      const fast = () => wrapper.get(selector("force-openai-fast"));
+      const ultra = () => wrapper.get(selector("force-openai-ultrafast"));
+      const filter = () => wrapper.get(selector("filter-openai-service-tier"));
+      const free = () => wrapper.get(selector("free-openai-fast"));
+      await fast().trigger("click");
+      expect(fast().attributes("aria-checked")).toBe("true");
+      await ultra().trigger("click");
+      expect(fast().attributes("aria-checked")).toBe("false");
+      expect(ultra().attributes("aria-checked")).toBe("true");
+      await free().trigger("click");
+      await filter().trigger("click");
+      expect(filter().attributes("aria-checked")).toBe("true");
+      expect(ultra().attributes("aria-checked")).toBe("false");
+      expect(fast().attributes("aria-checked")).toBe("false");
+      expect(free().attributes("aria-checked")).toBe("true");
+      await fast().trigger("click");
+      expect(filter().attributes("aria-checked")).toBe("false");
+      await ultra().trigger("click");
+      await wrapper.get("form").trigger("submit");
+      await flushPromises();
+      const call = (form === "create" ? createGroup : updateGroup).mock.calls[0];
+      expect(call).toBeDefined();
+      expect(call[form === "create" ? 0 : 1]).toMatchObject({
+        force_openai_fast: false,
+        force_openai_ultrafast: true,
+        filter_openai_service_tier: false,
+        free_openai_fast: true,
+      });
+      wrapper.unmount();
+    });
+  }
 });

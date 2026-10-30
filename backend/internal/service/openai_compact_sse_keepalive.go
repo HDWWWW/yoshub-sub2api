@@ -11,7 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// openAICompactSSEKeepaliveKey 存放 body-signal compact 请求的下游 SSE 心跳器。
+// openAICompactSSEKeepaliveKey stores non-output SSE signals: compact/Responses
+// heartbeat comments and the optional Responses initial metadata notification.
 const openAICompactSSEKeepaliveKey = "openai_compact_sse_keepalive"
 
 // openAICompactSSEKeepalive 在 compact 上游 unary 等待期间向下游写 SSE 注释行
@@ -25,13 +26,14 @@ const openAICompactSSEKeepaliveKey = "openai_compact_sse_keepalive"
 // 原 JSON+状态码链路（Codex 按 HTTP 状态码重试）；首拍之后状态码固化为 200，
 // 后续错误由写回方降级为 response.failed 流内终止事件。
 type openAICompactSSEKeepalive struct {
-	mu      sync.Mutex
-	writer  gin.ResponseWriter
-	started bool
-	stopped bool
-	// bytes 是心跳已写出的注释字节数。心跳不构成语义响应，handler 的
-	// "Forward 期间是否已写响应"判定（failover 放弃换号的依据）必须扣除
-	// 这部分字节，见 OpenAICompactKeepaliveAdjustedWrittenSize。
+	mu               sync.Mutex
+	writer           gin.ResponseWriter
+	started          bool
+	stopped          bool
+	initialEventSent bool
+	// bytes counts heartbeat comments and initial metadata bytes, neither of
+	// which is semantic output. Exclude them from the handler's written-size
+	// check so they cannot prevent account failover.
 	bytes int
 	stop  chan struct{}
 }
@@ -59,10 +61,29 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 	if c == nil || c.Writer == nil || interval <= 0 {
 		return func() {}
 	}
+	return startOpenAISSESignals(c, interval, nil)
+}
+
+// A single writer lock covers both the optional initial event and heartbeats.
+// Their bytes remain excluded from semantic-output/failover accounting.
+func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay *time.Duration) func() {
+	if c == nil || c.Writer == nil || (interval <= 0 && initialDelay == nil) {
+		return func() {}
+	}
 	originalWriter := c.Writer
 	k := &openAICompactSSEKeepalive{
 		writer: originalWriter,
 		stop:   make(chan struct{}),
+	}
+	// A retried account shares the downstream response. Keep all earlier
+	// non-output bytes excluded, and emit the initial event at most once.
+	if value, ok := c.Get(openAICompactSSEKeepaliveKey); ok {
+		if previous, valid := value.(*openAICompactSSEKeepalive); valid && previous != nil {
+			previous.mu.Lock()
+			previous.markStoppedLocked()
+			k.bytes, k.started, k.initialEventSent = previous.bytes, previous.started, previous.initialEventSent
+			previous.mu.Unlock()
+		}
 	}
 	c.Set(openAICompactSSEKeepaliveKey, k)
 	wrappedWriter := &openAICompactKeepaliveWriter{ResponseWriter: originalWriter, k: k}
@@ -73,20 +94,38 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 		reqDone = c.Request.Context().Done()
 	}
 	go func() {
-		timer := time.NewTimer(interval)
-		defer timer.Stop()
+		var heartbeat <-chan time.Time
+		if interval > 0 {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			heartbeat = ticker.C
+		}
+		var initial <-chan time.Time
+		if initialDelay != nil && !k.initialEventSent {
+			timer := time.NewTimer(*initialDelay)
+			defer timer.Stop()
+			initial = timer.C
+		}
+		if initial == nil && heartbeat == nil {
+			return
+		}
 		for {
 			select {
 			case <-k.stop:
 				return
 			case <-reqDone:
 				return
-			case <-timer.C:
+			case <-initial:
+				initial = nil
+				if !k.writeSignal([]byte(openAIHappyFirstTokenEvent), true) || heartbeat == nil {
+					return
+				}
+				continue
+			case <-heartbeat:
 			}
 			if !k.beat() {
 				return
 			}
-			timer.Reset(interval)
 		}
 	}()
 	return func() {
@@ -102,6 +141,10 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 // beat 在锁内提交（首次）响应头并写出一条 SSE 注释行；返回 false 表示心跳已
 // 停止或下游写入失败，goroutine 应退出。
 func (k *openAICompactSSEKeepalive) beat() bool {
+	return k.writeSignal([]byte(": keepalive\n\n"), false)
+}
+
+func (k *openAICompactSSEKeepalive) writeSignal(frame []byte, initial bool) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if k.stopped {
@@ -116,11 +159,14 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 		k.writer.WriteHeader(http.StatusOK)
 		k.started = true
 	}
-	n, err := k.writer.Write([]byte(": keepalive\n\n"))
+	n, err := k.writer.Write(frame)
 	k.bytes += n
 	if err != nil {
-		k.stopped = true
+		k.markStoppedLocked()
 		return false
+	}
+	if initial {
+		k.initialEventSent = true
 	}
 	k.writer.Flush()
 	return true

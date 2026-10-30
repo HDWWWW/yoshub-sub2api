@@ -369,6 +369,8 @@ func sanitizeGroupOpenAIFast(group *Group) {
 	if group == nil || !groupSupportsOpenAIFast(group.Platform) {
 		if group != nil {
 			group.ForceOpenAIFast = false
+			group.ForceOpenAIUltrafast = false
+			group.FilterOpenAIServiceTier = false
 			group.FreeOpenAIFast = false
 		}
 	}
@@ -626,6 +628,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
 		AllowLive:                       input.AllowLive,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
+		ForceOpenAIUltrafast:            input.ForceOpenAIUltrafast,
+		FilterOpenAIServiceTier:         input.FilterOpenAIServiceTier,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
@@ -642,6 +646,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	if (group.ForceOpenAIFast && group.ForceOpenAIUltrafast) ||
+		(group.FilterOpenAIServiceTier && (group.ForceOpenAIFast || group.ForceOpenAIUltrafast)) {
+		return nil, infraerrors.BadRequest("OPENAI_FAST_MODE_CONFLICT", "Force Fast, Force Ultrafast and Filter service_tier are mutually exclusive")
+	}
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
@@ -1019,6 +1027,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.ForceOpenAIFast != nil {
 		group.ForceOpenAIFast = *input.ForceOpenAIFast
 	}
+	if input.ForceOpenAIUltrafast != nil {
+		group.ForceOpenAIUltrafast = *input.ForceOpenAIUltrafast
+	}
+	if input.FilterOpenAIServiceTier != nil {
+		group.FilterOpenAIServiceTier = *input.FilterOpenAIServiceTier
+	}
 	if input.FreeOpenAIFast != nil {
 		group.FreeOpenAIFast = *input.FreeOpenAIFast
 	}
@@ -1070,6 +1084,10 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	if (group.ForceOpenAIFast && group.ForceOpenAIUltrafast) ||
+		(group.FilterOpenAIServiceTier && (group.ForceOpenAIFast || group.ForceOpenAIUltrafast)) {
+		return nil, infraerrors.BadRequest("OPENAI_FAST_MODE_CONFLICT", "Force Fast, Force Ultrafast and Filter service_tier are mutually exclusive")
+	}
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
