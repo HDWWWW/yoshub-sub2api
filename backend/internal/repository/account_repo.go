@@ -142,6 +142,8 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	if account == nil {
 		return service.ErrAccountNilInput
 	}
+	// Central creation path covers JSON/Codex imports, OAuth, batch creation and CRS sync.
+	service.ApplyNewAccountQuotaPauseDefaults(account)
 
 	builder := client.Account.Create().
 		SetName(account.Name).

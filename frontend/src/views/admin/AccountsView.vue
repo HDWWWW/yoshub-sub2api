@@ -17,6 +17,15 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button
+                class="btn btn-secondary"
+                :disabled="!params.group || loading"
+                :title="params.group ? t('admin.accounts.bulkConcurrency.title') : t('admin.accounts.bulkConcurrency.chooseGroup')"
+                data-testid="open-bulk-concurrency"
+                @click="openBulkConcurrency"
+              >
+                {{ t('admin.accounts.bulkConcurrency.title') }}
+              </button>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -463,6 +472,13 @@
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
+    <BulkConcurrencyModal
+      :show="showBulkConcurrency"
+      :filters="bulkConcurrencyFilters"
+      :group-label="bulkConcurrencyGroupLabel"
+      @close="showBulkConcurrency = false"
+      @updated="handleConcurrencyUpdated"
+    />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -512,6 +528,7 @@ import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrs
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
+import BulkConcurrencyModal from '@/components/admin/account/BulkConcurrencyModal.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
@@ -600,6 +617,9 @@ const showImportData = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
+const showBulkConcurrency = ref(false)
+const bulkConcurrencyFilters = ref<Partial<ReturnType<typeof buildBulkEditFilterSnapshot>>>({})
+const bulkConcurrencyGroupLabel = ref('')
 const bulkEditTarget = ref<AccountBulkEditTarget | null>(null)
 const showTempUnsched = ref(false)
 const showDeleteDialog = ref(false)
@@ -1404,6 +1424,7 @@ const isAnyModalOpen = computed(() => {
     showImportData.value ||
     showExportDataDialog.value ||
     showBulkEdit.value ||
+    showBulkConcurrency.value ||
     showTempUnsched.value ||
     showDeleteDialog.value ||
     showReAuth.value ||
@@ -2160,6 +2181,19 @@ const openBulkEditFiltered = async () => {
 const handleBulkUpdated = () => {
   showBulkEdit.value = false
   bulkEditTarget.value = null
+  clearSelection()
+  reload()
+}
+const openBulkConcurrency = () => {
+  if (!params.group || loading.value) return
+  bulkConcurrencyFilters.value = buildBulkEditFilterSnapshot()
+  bulkConcurrencyGroupLabel.value = params.group === 'ungrouped'
+    ? t('admin.accounts.ungroupedGroup')
+    : groupsByID.value.get(Number(params.group))?.name ?? `#${params.group}`
+  showBulkConcurrency.value = true
+}
+const handleConcurrencyUpdated = () => {
+  showBulkConcurrency.value = false
   clearSelection()
   reload()
 }
