@@ -144,6 +144,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	}
 	// Central creation path covers JSON/Codex imports, OAuth, batch creation and CRS sync.
 	service.ApplyNewAccountQuotaPauseDefaults(account)
+	if service.ShouldStopAccountAtSchedulingThreshold(account, time.Now().UTC()) {
+		account.Schedulable = false
+	}
 
 	builder := client.Account.Create().
 		SetName(account.Name).
@@ -2807,11 +2810,12 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 
 	clearProbeSnapshot := upstreamBillingProbeExplicitlyDisabled(updates) || upstreamBillingProbeSnapshotClearRequested(updates)
 	durableSchedulerChange := shouldEnqueueSchedulerOutboxForExtraUpdates(updates) || clearProbeSnapshot
+	checkSchedulingThreshold := hasSchedulingThresholdUsageUpdates(updates)
 	baseCtx := ctx
 	contextTx := dbent.TxFromContext(ctx)
 	client := clientFromContext(ctx, r.client)
 	var tx *dbent.Tx
-	if durableSchedulerChange && contextTx == nil {
+	if (durableSchedulerChange || checkSchedulingThreshold) && contextTx == nil {
 		var txErr error
 		tx, txErr = r.client.Tx(ctx)
 		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
@@ -2847,6 +2851,13 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	if affected == 0 {
 		return service.ErrAccountNotFound
 	}
+	if checkSchedulingThreshold {
+		_, stopped, err := stopAccountAtSchedulingThreshold(ctx, client, id)
+		if err != nil {
+			return err
+		}
+		durableSchedulerChange = durableSchedulerChange || stopped
+	}
 	if durableSchedulerChange {
 		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 			return err
@@ -2860,6 +2871,12 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 			r.syncSchedulerAccountSnapshot(baseCtx, id)
 		}
 	} else {
+		if tx != nil {
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			ctx = baseCtx
+		}
 		// 观测型 extra 字段不需要触发 bucket 重建，但仍同步单账号快照，
 		// 让 sticky session / GetAccount 命中缓存时也能读到最新数据，
 		// 同时避免缓存局部 patch 覆盖掉并发写入的其它账号字段。

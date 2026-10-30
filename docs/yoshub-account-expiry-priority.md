@@ -1,6 +1,6 @@
 # Automatic account expiry priority
 
-Release: `0.2.19-yoshub.expiry-priority.2`, retaining the new-account 99% quota
+Release: `0.2.19-yoshub.expiry-priority.3`, retaining the new-account 99% quota
 defaults and filtered bulk concurrency controls.
 
 Enable `gateway.scheduling.account_expiry_priority_enabled` or set
@@ -33,3 +33,23 @@ Yoshub production uses normal scheduling with the advanced and low-upstream-rate
 
 Disable the environment flag and restart the application to stop automatic priority updates.
 The last assigned priorities remain editable; old manual values are not automatically restored.
+
+## Account threshold override
+
+New OpenAI accounts default to `credentials.account_scheduling_threshold = 99`.
+Explicit imported values are preserved, including 100 (disable). Existing accounts
+and explicit legacy per-window Extra settings are not rewritten. The default no
+longer populates the separate temporary per-window pause settings.
+
+An account override reaching its threshold turns `schedulable` off persistently.
+Quota snapshot updates check this inside the same transaction; scheduler selection
+also rechecks persisted usage under a row lock to reject stale snapshots. The
+scheduling change and outbox notification commit together. Quota resets and usage
+refreshes never turn scheduling back on; an administrator must do so manually.
+Enabling while usage remains at the threshold stops it again on the next check.
+No temporary-unschedulable deadline is created. An old threshold cooldown is
+cleared when converted; unrelated error cooldowns remain intact.
+
+Platform-default thresholds and model-specific Fable limits keep their existing
+temporary behavior. Usage comes from upstream snapshots, so a threshold stops new
+selections after the snapshot is observed; already running requests may finish.

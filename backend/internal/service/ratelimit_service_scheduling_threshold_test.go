@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func TestRateLimitService_ApplyAccountSchedulingThreshold_SetsTempUnschedulable(
 	require.Contains(t, payload["error_message"], "91.5% used >= 80%")
 }
 
-func TestRateLimitService_ApplyAccountSchedulingThreshold_UsesAccountOverrideInReason(t *testing.T) {
+func TestRateLimitService_ApplyAccountSchedulingThreshold_OverridePermanentlyStops(t *testing.T) {
 	accountSchedulingThresholdsSF.Forget(SettingKeyAccountSchedulingThresholds)
 	accountSchedulingThresholdsCache.Store(&cachedAccountSchedulingThresholds{})
 
@@ -81,13 +82,36 @@ func TestRateLimitService_ApplyAccountSchedulingThreshold_UsesAccountOverrideInR
 	blocked := rl.ApplyAccountSchedulingThreshold(context.Background(), account)
 
 	require.True(t, blocked)
-	require.Equal(t, 1, accountRepo.tempCalls)
+	require.Zero(t, accountRepo.tempCalls)
+	require.Equal(t, 1, accountRepo.schedulableCalls)
+	require.False(t, accountRepo.lastSchedulable)
+	require.False(t, account.Schedulable)
+	require.Nil(t, account.TempUnschedulableUntil)
+	require.Empty(t, account.TempUnschedulableReason)
 
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal([]byte(accountRepo.lastTempReason), &payload))
-	require.Equal(t, float64(80), payload["threshold_percent"])
-	require.Equal(t, float64(85.5), payload["used_percent"])
-	require.Contains(t, payload["error_message"], "85.5% used >= 80%")
+	account.Extra["codex_7d_used_percent"] = 0.0
+	rl.ApplyAccountSchedulingThreshold(context.Background(), account)
+	require.False(t, account.Schedulable, "resetting usage must not turn scheduling back on")
+	require.Equal(t, 1, accountRepo.schedulableCalls)
+	account.Schedulable = true // administrator enables the account
+	require.False(t, rl.ApplyAccountSchedulingThreshold(context.Background(), account))
+	require.True(t, account.Schedulable)
+}
+
+func TestRateLimitService_ApplyAccountSchedulingThreshold_StopFailureRetries(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{schedulableErr: errors.New("database unavailable")}
+	rl := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{ID: 1005, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"account_scheduling_threshold": 99},
+		Extra:       map[string]any{"codex_5h_used_percent": 99.0, "codex_5h_reset_at": time.Now().Add(time.Hour).Format(time.RFC3339)}}
+	require.True(t, rl.ApplyAccountSchedulingThreshold(context.Background(), account))
+	require.True(t, account.Schedulable, "failed persistence must remain retryable")
+	require.Nil(t, account.TempUnschedulableUntil)
+	repo.schedulableErr = nil
+	require.True(t, rl.ApplyAccountSchedulingThreshold(context.Background(), account))
+	require.False(t, account.Schedulable)
+	require.Equal(t, 2, repo.schedulableCalls)
+	require.Zero(t, repo.tempCalls)
 }
 
 type fableSchedulingThresholdRepoStub struct {

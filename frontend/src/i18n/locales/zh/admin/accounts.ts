@@ -446,7 +446,7 @@ export default {
         '仅对当前账号覆盖平台级自动停调阈值；关闭后使用平台设置。',
       accountSchedulingThresholdOverrideValue: '账号阈值百分比',
       accountSchedulingThresholdOverrideDisabledHint:
-        '1-100，达到该用量百分比后临时不可调度；100 表示禁用当前账号自动停调。',
+        '1-100，达到该用量百分比后直接关闭调度，额度重置后仍保持关闭，需手动开启；100 表示禁用当前账号自动停调。',
       status: {
         active: '正常',
         inactive: '停用',

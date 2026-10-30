@@ -134,3 +134,18 @@ func TestOpenAIGatewayService_ListSchedulableAccounts_FiltersThresholdBlockedAcc
 	require.Equal(t, int64(4102), accounts[0].ID)
 	require.Equal(t, 1, accountRepo.tempCalls)
 }
+
+func TestOpenAIGatewayService_AccountOverrideStopsBeforeLegacyQuotaGate(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	rl := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{accountRepo: repo, rateLimitService: rl}
+	account := &Account{ID: 4200, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"account_scheduling_threshold": 99},
+		Extra: map[string]any{"auto_pause_5h_threshold": 0.99, "codex_5h_used_percent": 99.0,
+			"codex_5h_reset_at": time.Now().Add(time.Hour).Format(time.RFC3339)}}
+	selected := svc.recheckSelectedOpenAIAccountFromDBBeforeProfit(context.Background(), account, nil, PlatformOpenAI, "", false, "")
+	require.Nil(t, selected)
+	require.False(t, account.Schedulable)
+	require.Equal(t, 1, repo.schedulableCalls)
+	require.Zero(t, repo.tempCalls)
+}

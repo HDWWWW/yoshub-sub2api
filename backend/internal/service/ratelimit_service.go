@@ -159,11 +159,12 @@ func (s *RateLimitService) notifyAccountSchedulingBlockCleared(accountID int64) 
 }
 
 // ApplyAccountSchedulingThreshold evaluates admin-configured per-platform
-// utilization thresholds and, when breached, parks the account as temp-
-// unschedulable until the winning window resets. Returns true when the account
+// utilization thresholds. An account override turns scheduling off until an
+// administrator enables it; a platform default pauses until the window resets.
+// Returns true when the account
 // is blocked (either newly or already paused for the same threshold reason).
 func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, account *Account) bool {
-	if s == nil || s.settingService == nil || s.accountRepo == nil || account == nil || account.ID <= 0 {
+	if s == nil || s.accountRepo == nil || account == nil || account.ID <= 0 {
 		return false
 	}
 	if !account.IsActive() || !account.Schedulable {
@@ -171,11 +172,44 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	}
 
 	now := time.Now().UTC()
-	thresholds := s.settingService.GetAccountSchedulingThresholds(ctx)
+	var thresholds map[string]int
+	if s.settingService != nil {
+		thresholds = s.settingService.GetAccountSchedulingThresholds(ctx)
+	}
 	decision := EvaluateAccountSchedulingThreshold(account, thresholds, now)
 	if !decision.ShouldPause || decision.Until == nil || !decision.Until.After(now) {
 		s.applyAnthropicFableSchedulingThreshold(ctx, account, thresholds, now)
 		return false
+	}
+	if _, override := accountSchedulingThresholdOverride(account); override {
+		blocked := true
+		var err error
+		if stopper, ok := s.accountRepo.(AccountSchedulingThresholdStopper); ok {
+			blocked, err = stopper.StopAccountAtSchedulingThreshold(ctx, account.ID)
+		} else {
+			err = s.accountRepo.SetSchedulable(ctx, account.ID, false)
+		}
+		if err != nil {
+			// Reject this selection but leave the snapshot retryable on the next call.
+			slog.Warn("account_scheduling_threshold_stop_failed", "account_id", account.ID, "error", err)
+			return true
+		}
+		if !blocked {
+			return false
+		}
+		account.Schedulable = false
+		if IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) {
+			account.TempUnschedulableUntil = nil
+			account.TempUnschedulableReason = ""
+			if s.tempUnschedCache != nil {
+				if err := s.tempUnschedCache.DeleteTempUnsched(ctx, account.ID); err != nil {
+					slog.Warn("account_scheduling_threshold_cache_delete_failed", "account_id", account.ID, "error", err)
+				}
+			}
+		}
+		slog.Info("account_scheduling_threshold_stopped", "account_id", account.ID,
+			"window", decision.Window, "threshold_percent", decision.ThresholdPercent, "used_percent", decision.UsedPercent)
+		return true
 	}
 
 	reason := BuildDetailedAccountSchedulingThresholdReason(AccountSchedulingThresholdReasonInput{

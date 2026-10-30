@@ -17,8 +17,16 @@ import (
 type snapshotThresholdRepo struct {
 	service.AccountRepository
 	accountPauses int
+	accountStops  int
 	modelPauses   int
 	until         time.Time
+}
+
+func (r *snapshotThresholdRepo) SetSchedulable(_ context.Context, _ int64, enabled bool) error {
+	if !enabled {
+		r.accountStops++
+	}
+	return nil
 }
 
 func (r *snapshotThresholdRepo) SetTempUnschedulable(_ context.Context, _ int64, until time.Time, _ string) error {
@@ -89,9 +97,11 @@ func TestSchedulerCacheAnthropicThresholdAdmission(t *testing.T) {
 				// must survive both cache read paths to trigger admission control.
 				limiter.SetSettingService(service.NewSettingService(nil, &config.Config{}))
 				require.Equal(t, tc.accountPaused, limiter.ApplyAccountSchedulingThreshold(ctx, candidate))
-				require.Equal(t, tc.accountPaused, repo.accountPauses == 1)
+				require.Equal(t, tc.accountPaused, repo.accountStops == 1)
+				require.Zero(t, repo.accountPauses)
+				require.Equal(t, !tc.accountPaused, candidate.Schedulable)
 				require.Equal(t, tc.fablePaused, repo.modelPauses == 1)
-				if tc.accountPaused || tc.fablePaused {
+				if tc.fablePaused {
 					require.True(t, end.Equal(repo.until))
 				}
 				if tc.fablePaused {

@@ -29,6 +29,15 @@ type rateLimitAccountRepoStub struct {
 	lastRateLimitedID      int64
 	lastRateLimitedAt      time.Time
 	tempErr                error
+	schedulableCalls       int
+	schedulableErr         error
+	lastSchedulable        bool
+}
+
+func (r *rateLimitAccountRepoStub) SetSchedulable(_ context.Context, _ int64, enabled bool) error {
+	r.schedulableCalls++
+	r.lastSchedulable = enabled
+	return r.schedulableErr
 }
 
 func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {

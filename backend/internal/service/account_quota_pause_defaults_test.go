@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -9,42 +8,48 @@ import (
 )
 
 func TestNewAccountQuotaPauseDefaults(t *testing.T) {
-	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	for _, explicit := range []any{nil, 80, 100, "100"} {
+		t.Run(stringValue(explicit), func(t *testing.T) {
+			credentials := map[string]any{"unrelated": "retained"}
+			if explicit != nil {
+				credentials[accountSchedulingThresholdCredentialKey] = explicit
+			}
+			extra := map[string]any{"auto_pause_5h_threshold": 0.8, "auto_pause_7d_disabled": true}
+			account := &Account{Platform: PlatformOpenAI, Credentials: credentials, Extra: extra}
+			ApplyNewAccountQuotaPauseDefaults(account)
+			if explicit == nil {
+				require.Equal(t, 99, account.Credentials[accountSchedulingThresholdCredentialKey])
+				require.NotContains(t, credentials, accountSchedulingThresholdCredentialKey)
+			} else {
+				require.Equal(t, explicit, account.Credentials[accountSchedulingThresholdCredentialKey])
+			}
+			require.Equal(t, "retained", account.Credentials["unrelated"])
+			require.Equal(t, extra, account.Extra)
+			require.NotContains(t, account.Extra, "auto_pause_7d_threshold")
+		})
+	}
+	account := &Account{Platform: PlatformAnthropic}
 	ApplyNewAccountQuotaPauseDefaults(account)
-	require.Equal(t, 0.99, account.Extra["auto_pause_5h_threshold"])
-	require.Equal(t, 0.99, account.Extra["auto_pause_7d_threshold"])
-
-	source := map[string]any{"auto_pause_5h_threshold": 0.8, "auto_pause_7d_disabled": true, "unrelated": "retained"}
-	account.Extra = source
-	ApplyNewAccountQuotaPauseDefaults(account)
-	require.Equal(t, 0.8, account.Extra["auto_pause_5h_threshold"])
-	require.Equal(t, 0.99, account.Extra["auto_pause_7d_threshold"])
-	require.Equal(t, true, account.Extra["auto_pause_7d_disabled"])
-	require.Equal(t, "retained", account.Extra["unrelated"])
-	require.NotContains(t, source, "auto_pause_7d_threshold", "do not mutate imported source maps")
-
-	account = &Account{Platform: PlatformAnthropic}
-	ApplyNewAccountQuotaPauseDefaults(account)
+	require.Nil(t, account.Credentials)
 	require.Nil(t, account.Extra)
 }
 
-func TestNewAccountQuotaPauseAt99AndReset(t *testing.T) {
+func TestNewAccountQuotaPauseAt99(t *testing.T) {
 	for _, window := range []string{"5h", "7d"} {
 		t.Run(window, func(t *testing.T) {
-			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+			now := time.Now()
+			account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
 			ApplyNewAccountQuotaPauseDefaults(account)
-			account.Extra["codex_usage_updated_at"] = time.Now().Format(time.RFC3339)
-			account.Extra["codex_"+window+"_used_percent"] = 98.9
-			account.Extra["codex_"+window+"_reset_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
-			paused, _ := shouldAutoPauseOpenAIAccountByQuota(context.Background(), account)
-			require.False(t, paused)
+			account.Extra = map[string]any{
+				"codex_usage_updated_at":            now.Format(time.RFC3339),
+				"codex_" + window + "_used_percent": 98.9,
+				"codex_" + window + "_reset_at":     now.Add(time.Hour).Format(time.RFC3339),
+			}
+			require.False(t, ShouldStopAccountAtSchedulingThreshold(account, now))
 			account.Extra["codex_"+window+"_used_percent"] = 99.0
-			paused, decision := shouldAutoPauseOpenAIAccountByQuota(context.Background(), account)
-			require.True(t, paused)
-			require.Equal(t, window, decision.window)
-			account.Extra["codex_"+window+"_reset_at"] = time.Now().Add(-time.Minute).Format(time.RFC3339)
-			paused, _ = shouldAutoPauseOpenAIAccountByQuota(context.Background(), account)
-			require.False(t, paused, "window reset automatically makes the account eligible again")
+			require.True(t, ShouldStopAccountAtSchedulingThreshold(account, now))
+			account.Credentials[accountSchedulingThresholdCredentialKey] = 100
+			require.False(t, ShouldStopAccountAtSchedulingThreshold(account, now))
 		})
 	}
 }
