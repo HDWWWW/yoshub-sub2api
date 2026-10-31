@@ -17,6 +17,7 @@ import (
 const manualRefillRequestLifetime = 24 * time.Hour
 
 type ManualAccountRefillRequest struct {
+	GroupID   int64  `json:"group_id,omitempty"`
 	RequestID string `json:"request_id"`
 	Plan      string `json:"plan"`
 	Revision  int64  `json:"revision"`
@@ -69,6 +70,9 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		if err != nil {
 			return err
 		}
+		if request.GroupID != 0 && request.GroupID != state.Config.GroupID {
+			return invalidManualRefill("手动补号分组与当前规则不匹配")
+		}
 		// Check receipts before revision, budget or switches: retries acknowledge
 		// the original accepted order, even if configuration changed afterwards.
 		for _, j := range state.Jobs {
@@ -77,6 +81,26 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 					return invalidManualRefill("同一请求不能修改套餐或配置版本，请核对原任务")
 				}
 				return nil
+			}
+		}
+		if stores, ok := s.rootService().store.(AccountRefillGroupStore); ok {
+			rows, err := stores.ListRules(ctx)
+			if err != nil {
+				return err
+			}
+			for key, raw := range rows {
+				if key == s.ruleGroupID {
+					continue
+				}
+				other, err := decodeAccountRefillState(raw)
+				if err != nil {
+					return err
+				}
+				for _, job := range other.Jobs {
+					if job.ID == jobID || job.ManualRequestID == request.RequestID {
+						return invalidManualRefill("此请求已属于其他分组，请核对原任务")
+					}
+				}
 			}
 		}
 		now := time.Now()
@@ -164,11 +188,9 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			return invalidManualRefill("已达到本日数量或积分预算")
 		}
 		// Locally queued jobs have not reached the supplier wallet yet.
-		unsubmitted := 0.0
-		for _, j := range state.Jobs {
-			if j.pending() && j.SupplierID == "" {
-				unsubmitted += j.Price
-			}
+		unsubmitted, reserveErr := s.unsubmittedPoints(ctx, &state)
+		if reserveErr != nil {
+			return invalidManualRefill(reserveErr.Error())
 		}
 		if math.IsNaN(catalog.Available) || math.IsNaN(wallet.Available) || math.Min(catalog.Available, wallet.Available)+1e-8 < quote.Price+unsubmitted {
 			if err := s.notifyRefillBalance(ctx, &state, math.Min(catalog.Available, wallet.Available), quote.Price+unsubmitted, persist); err != nil {

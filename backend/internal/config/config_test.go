@@ -29,7 +29,7 @@ func TestLoadUngroupedTokenRefreshInterval(t *testing.T) {
 		name, env string
 		want      int
 	}{
-		{"default", "", 5}, {"override", "12", 12}, {"disabled", "0", 0},
+		{"default", "", 15}, {"override", "12", 12}, {"disabled", "0", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetViperWithJWTSecret(t)

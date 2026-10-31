@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
@@ -43,11 +44,33 @@ func (h *AccountHandler) refillAvailable(c *gin.Context) bool {
 	return true
 }
 
-func (h *AccountHandler) GetAccountRefill(c *gin.Context) {
+func (h *AccountHandler) refillForRequest(c *gin.Context) (*service.AccountRefillService, bool) {
 	if !h.refillAvailable(c) {
+		return nil, false
+	}
+	id := int64(0)
+	if value, present := c.GetQuery("group_id"); present {
+		var err error
+		id, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "分组 ID 无效")
+			return nil, false
+		}
+	}
+	svc, err := h.accountRefill.ForGroup(c.Request.Context(), id)
+	if err != nil {
+		refillResponseError(c, err)
+		return nil, false
+	}
+	return svc, true
+}
+
+func (h *AccountHandler) GetAccountRefill(c *gin.Context) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
 		return
 	}
-	view, err := h.accountRefill.View(c.Request.Context())
+	view, err := svc.View(c.Request.Context())
 	if err != nil {
 		response.Error(c, 503, "补号状态读取失败")
 		return
@@ -57,7 +80,8 @@ func (h *AccountHandler) GetAccountRefill(c *gin.Context) {
 }
 
 func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
-	if !h.refillAvailable(c) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -66,7 +90,7 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		Revision int64                       `json:"revision"`
 		Webhook  string                      `json:"wecom_webhook"`
 	}
-	current, err := h.accountRefill.View(c.Request.Context())
+	current, err := svc.View(c.Request.Context())
 	if err != nil {
 		response.Error(c, 503, "补号状态读取失败")
 		return
@@ -78,7 +102,7 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		response.BadRequest(c, "补号设置格式无效")
 		return
 	}
-	if err := h.accountRefill.Configure(c.Request.Context(), req.Config, req.APIToken, req.Revision, req.Webhook); err != nil {
+	if err := svc.Configure(c.Request.Context(), req.Config, req.APIToken, req.Revision, req.Webhook); err != nil {
 		refillResponseError(c, err)
 		return
 	}
@@ -86,12 +110,13 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 }
 
 func (h *AccountHandler) CheckAccountRefill(c *gin.Context) {
-	if !h.refillAvailable(c) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
 	defer cancel()
-	if err := h.accountRefill.Check(ctx); err != nil {
+	if err := svc.Check(ctx); err != nil {
 		refillResponseError(c, err)
 		return
 	}
@@ -99,10 +124,11 @@ func (h *AccountHandler) CheckAccountRefill(c *gin.Context) {
 }
 
 func (h *AccountHandler) RetryAccountRefill(c *gin.Context) {
-	if !h.refillAvailable(c) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
 		return
 	}
-	if err := h.accountRefill.Retry(c.Request.Context(), c.Param("job_id")); err != nil {
+	if err := svc.Retry(c.Request.Context(), c.Param("job_id")); err != nil {
 		refillResponseError(c, err)
 		return
 	}
@@ -110,7 +136,8 @@ func (h *AccountHandler) RetryAccountRefill(c *gin.Context) {
 }
 
 func (h *AccountHandler) ManualAccountRefill(c *gin.Context) {
-	if !h.refillAvailable(c) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
 		return
 	}
 	middleware.SetAuditAction(c, "admin.accounts.refill.manual")
@@ -122,7 +149,7 @@ func (h *AccountHandler) ManualAccountRefill(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
 	defer cancel()
-	if err := h.accountRefill.Manual(ctx, req); err != nil {
+	if err := svc.Manual(ctx, req); err != nil {
 		if errors.Is(err, service.ErrAccountRefillBusy) || service.IsManualRefillValidationError(err) {
 			refillResponseError(c, err)
 		} else {
@@ -143,7 +170,8 @@ func refillResponseError(c *gin.Context, err error) {
 }
 
 func (h *AccountHandler) DismissAccountRefill(c *gin.Context) {
-	if !h.refillAvailable(c) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -153,7 +181,7 @@ func (h *AccountHandler) DismissAccountRefill(c *gin.Context) {
 		response.BadRequest(c, "请先在号商处确认该请求未受理且没有订单，再释放本地预占")
 		return
 	}
-	if err := h.accountRefill.DismissRejected(c.Request.Context(), c.Param("job_id")); err != nil {
+	if err := svc.DismissRejected(c.Request.Context(), c.Param("job_id")); err != nil {
 		refillResponseError(c, err)
 		return
 	}

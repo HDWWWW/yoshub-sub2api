@@ -35,21 +35,25 @@ type accountRefillLoads interface {
 }
 
 type AccountRefillService struct {
-	notifier   refillNotifier
-	capacityMu sync.Mutex
-	capacity   refillCapacityTracker
-	store      AccountRefillStore
-	encryptor  SecretEncryptor
-	accounts   accountRefillAccounts
-	admin      accountRefillAdmin
-	groups     accountRefillGroups
-	loads      accountRefillLoads
-	proxies    accountRefillProxies
-	provider   RefillProvider
-	stop       chan struct{}
-	cancel     context.CancelFunc
-	once       sync.Once
-	wg         sync.WaitGroup
+	rulesMu      sync.Mutex
+	ruleRoot     *AccountRefillService
+	ruleGroupID  int64
+	ruleServices map[int64]*AccountRefillService
+	notifier     refillNotifier
+	capacityMu   sync.Mutex
+	capacity     refillCapacityTracker
+	store        AccountRefillStore
+	encryptor    SecretEncryptor
+	accounts     accountRefillAccounts
+	admin        accountRefillAdmin
+	groups       accountRefillGroups
+	loads        accountRefillLoads
+	proxies      accountRefillProxies
+	provider     RefillProvider
+	stop         chan struct{}
+	cancel       context.CancelFunc
+	once         sync.Once
+	wg           sync.WaitGroup
 }
 
 func NewAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor, accounts AccountRepository, admin AdminService, groups GroupRepository, loads *ConcurrencyService, proxies ProxyRepository) *AccountRefillService {
@@ -69,7 +73,7 @@ func (s *AccountRefillService) Start() {
 				return
 			case <-ticker.C:
 				sampleCtx, cancel := context.WithTimeout(ctx, refillCapacityMaxSampleGap)
-				s.sampleCapacity(sampleCtx)
+				s.sampleAllCapacity(sampleCtx)
 				cancel()
 			}
 		}
@@ -84,9 +88,7 @@ func (s *AccountRefillService) Start() {
 			case <-s.stop:
 				return
 			case <-ticker.C:
-				ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
-				err := s.run(ctx, false)
-				cancel()
+				err := s.runAllRules(ctx)
 				if err != nil && !errors.Is(err, ErrAccountRefillBusy) {
 					slog.Warn("account_refill_tick_failed", "error", "补号检查未完成，下轮重试")
 				}
@@ -108,6 +110,9 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
+	Rules                     []AccountRefillRuleSummary       `json:"rules"`
+	RotationCursor            int                              `json:"rotation_cursor"`
+	NextPlan                  string                           `json:"next_plan"`
 	WebhookConfigured         bool                             `json:"webhook_configured"`
 	NotificationStatus        AccountRefillNotificationStatus  `json:"notification_status"`
 	LeaseSyncAt               *time.Time                       `json:"lease_sync_at"`
@@ -157,9 +162,14 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		}
 	}
 	daily.SpentPoints = refillMax(0, daily.Points-daily.ReservedPoints)
+	rules, err := s.ListRules(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &AccountRefillView{WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: state.Jobs, Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
+		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: refillNextPlan(state.Config, state.RotationCursor),
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now())}, nil
 }
 
@@ -180,6 +190,9 @@ func (s *AccountRefillService) validateGroups(ctx context.Context, c AccountRefi
 	return nil
 }
 func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillConfig, token string, revision int64, webhooks ...string) error {
+	if s.ruleGroupID > 0 && c.GroupID != s.ruleGroupID {
+		return errors.New("规则与当前分组不匹配，请重新选择分组")
+	}
 	if err := c.Validate(); err != nil {
 		return err
 	}
@@ -211,6 +224,21 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		}
 		if revision != state.Revision {
 			return errors.New("配置已被其他页面修改，请刷新后再保存")
+		}
+		if state.Config.GroupID > 0 && c.GroupID != state.Config.GroupID {
+			return errors.New("请通过分组选择器切换规则，不能覆盖其他分组的规则")
+		}
+		if stores, ok := s.rootService().store.(AccountRefillGroupStore); ok {
+			rows, err := stores.ListRules(ctx)
+			if err != nil {
+				return err
+			}
+			if s.ruleGroupID > 0 && rows[s.ruleGroupID] == "" && len(rows) >= 100 {
+				return errors.New("最多支持 100 个分组规则")
+			}
+			if s.ruleGroupID == 0 && state.Config.GroupID == 0 && rows[c.GroupID] != "" {
+				return errors.New("该分组已有规则，请通过分组选择器加载")
+			}
 		}
 		if webhook != "" {
 			cipher, err := s.encryptor.Encrypt(webhook)
@@ -283,6 +311,9 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			state.NextIntervalAt = time.Now().Add(time.Duration(c.IntervalMinutes) * time.Minute)
 			state.IntervalRemaining = 0
 		}
+		if c.RotationEnabled != state.Config.RotationEnabled || !slices.Equal(c.Rotation, state.Config.Rotation) {
+			state.RotationCursor = 0
+		}
 		state.Config = c
 		state.Revision++
 		state.NextCheckAt = time.Time{}
@@ -316,7 +347,11 @@ func (s *AccountRefillService) evaluate(ctx context.Context, state *accountRefil
 	if err != nil {
 		return errors.New("并发数据读取失败，暂停新增补号")
 	}
-	state.Evaluation = evaluateAccountRefill(state.Config, accounts, loads, state.Jobs, now)
+	jobs, err := s.evaluationJobs(ctx, state)
+	if err != nil {
+		return err
+	}
+	state.Evaluation = evaluateAccountRefill(state.Config, accounts, loads, jobs, now)
 	return nil
 }
 
@@ -459,10 +494,11 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = "补号冷却中，等待下次检查"
 			return persist()
 		}
+		plan := refillNextPlan(state.Config, state.RotationCursor)
 		var quote *RefillQuote
 		for i := range catalog.Items {
 			q := &catalog.Items[i]
-			if q.Service == "refill" && q.Plan == state.Config.Plan && q.Enabled {
+			if q.Service == "refill" && q.Plan == plan && q.Enabled {
 				quote = q
 				break
 			}
@@ -485,9 +521,14 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = "已达到本日数量或积分预算"
 			return persist()
 		}
-		if catalog.Available+1e-8 < quote.Price {
+		unsubmitted, reserveErr := s.unsubmittedPoints(ctx, &state)
+		if reserveErr != nil {
+			state.Message = reserveErr.Error()
+			return persist()
+		}
+		if catalog.Available+1e-8 < quote.Price+unsubmitted {
 			state.Message = "号商可用积分不足"
-			if err := s.notifyRefillBalance(ctx, &state, catalog.Available, quote.Price, persist); err != nil {
+			if err := s.notifyRefillBalance(ctx, &state, catalog.Available, quote.Price+unsubmitted, persist); err != nil {
 				return err
 			}
 			return persist()
@@ -529,7 +570,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = "并发观察尚未连续达标，等待下次检查"
 			return persist()
 		}
-		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: state.Config.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ExpiryGraceMinutes: &graceMinutes,
 			GroupID:            state.Config.GroupID, Concurrency: state.Config.ImportConcurrency, DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
@@ -544,6 +585,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}
 		state.LastSubmitAt = now
+		advanceRefillRotation(&state)
 		if state.Config.Mode == "interval" {
 			state.IntervalRemaining = refillMax(0, state.IntervalRemaining-1)
 		}

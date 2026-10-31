@@ -2,6 +2,13 @@
   <BaseDialog :show="show" :title="t('accountRefill.title')" width="extra-wide" :close-on-escape="!busy" :show-close-button="!busy" @close="close">
     <div v-if="loading" class="py-12 text-center" role="status">{{ t('common.loading') }}</div>
     <div v-else-if="view && form" class="space-y-5">
+      <label class="block"><span class="input-label">{{ t('accountRefill.ruleGroup') }}</span>
+        <select :value="selectedGroup" class="input" data-testid="refill-rule-group" :disabled="busy || dirty || !!manualPending" @change="switchGroup(Number(($event.target as HTMLSelectElement).value))">
+          <option :value="0" disabled>{{ t('accountRefill.chooseGroup') }}</option>
+          <option v-for="group in ruleGroups" :key="group.id" :value="group.id">{{ group.name }} (#{{ group.id }}) · {{ t(view.rules?.find(r => r.group_id === group.id)?.enabled ? 'accountRefill.ruleOn' : 'accountRefill.ruleOff') }}</option>
+        </select>
+        <span class="input-hint">{{ t(dirty ? 'accountRefill.groupSaveFirst' : 'accountRefill.groupRulesHint') }}</span>
+      </label>
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div v-for="item in walletItems" :key="item.key" class="rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700">
           <div class="text-xs text-gray-500 dark:text-dark-300">{{ t(`accountRefill.${item.key}`) }}</div>
@@ -24,7 +31,6 @@
               <div><dt class="text-gray-500">{{ t('accountRefill.keyLabel') }}</dt><dd class="mt-1">{{ view.key ? `${view.key.label} / ${view.key.scope}` : t('accountRefill.unknown') }}</dd></div>
               <div><dt class="text-gray-500">{{ t('accountRefill.keyExpiry') }}</dt><dd class="mt-1">{{ date(view.key?.expires_at) }} <span :class="keyDays !== null && keyDays < 7 ? 'text-amber-600' : 'text-gray-500'">{{ keyRemaining }}</span></dd></div>
             </dl>
-            <label class="block"><span class="input-label">{{ t('accountRefill.group_id') }}</span><select v-model.number="form.group_id" class="input" data-testid="refill-group" @change="includeMonitor"><option :value="0" disabled>{{ t('accountRefill.chooseGroup') }}</option><option v-for="group in openAIGroups" :key="group.id" :value="group.id">{{ group.name }} (#{{ group.id }})</option></select></label>
             <div><p class="input-label">{{ t('accountRefill.deliveryGroups') }}</p><div class="grid gap-3 sm:grid-cols-2"><label v-for="group in openAIGroups" :key="group.id" class="flex items-center gap-2 rounded-lg border border-gray-200 p-3 text-sm dark:border-dark-700"><input v-model="form.delivery_group_ids" type="checkbox" :value="group.id" :disabled="group.id === form.group_id" />{{ group.name }} (#{{ group.id }})</label></div><p class="input-hint">{{ t('accountRefill.groupsHint') }}</p></div>
             <p class="rounded-lg bg-primary-50 p-4 text-sm leading-6 text-primary-800 dark:bg-primary-900/20 dark:text-primary-200">{{ t('accountRefill.importHint', { minutes: form.import_expiry_grace_minutes }) }}</p>
           </div>
@@ -33,7 +39,21 @@
             <p class="text-sm leading-6 text-amber-700 dark:text-amber-300">{{ t('accountRefill.enableHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.mode') }}</span><select v-model="form.mode" class="input"><option v-for="mode in ['capacity', 'fixed', 'interval']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
-              <label><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="form.plan" class="input"><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
+              <label v-if="!form.rotation_enabled"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="form.plan" class="input"><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
+            </div>
+            <label class="flex items-center gap-2 text-sm"><input v-model="form.rotation_enabled" type="checkbox" data-testid="refill-rotation-enabled" @change="initializeRotation" />{{ t('accountRefill.rotationEnabled') }}</label>
+            <div v-if="form.rotation_enabled" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <p class="text-sm text-gray-500">{{ t('accountRefill.rotationHint') }}</p>
+              <div v-for="(step, index) in form.rotation" :key="index" class="flex flex-wrap items-end gap-3" data-testid="refill-rotation-step">
+                <span class="pb-2 text-sm tabular-nums">{{ index + 1 }}.</span>
+                <label class="min-w-32 flex-1"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="step.plan" class="input" :data-testid="`refill-rotation-plan-${index}`"><option value="pro20x">Pro20x</option><option value="pro5x">Pro5x</option></select></label>
+                <label class="w-28"><span class="input-label">{{ t('accountRefill.rotationCount') }}</span><input v-model.number="step.count" class="input" type="number" min="1" max="100" step="1" :data-testid="`refill-rotation-count-${index}`" /></label>
+                <button type="button" class="btn btn-secondary" :disabled="index === 0" :aria-label="t('accountRefill.rotationUp')" @click="moveRotation(index)">↑</button>
+                <button type="button" class="btn btn-secondary" :disabled="form.rotation.length <= 1" @click="form.rotation.splice(index, 1)">{{ t('accountRefill.rotationRemove') }}</button>
+              </div>
+              <button type="button" class="btn btn-secondary" data-testid="refill-rotation-add" :disabled="form.rotation.length >= 20" @click="form.rotation.push({ plan: 'pro5x', count: 1 })">{{ t('accountRefill.rotationAdd') }}</button>
+              <p class="text-sm font-medium" data-testid="refill-rotation-preview">{{ rotationPreview }} → {{ t('accountRefill.rotationRepeat') }}</p>
+              <p v-if="view.config.rotation_enabled" class="text-sm text-gray-500">{{ t('accountRefill.rotationNext') }}: {{ view.next_plan }} · {{ t('accountRefill.rotationPosition', { position: view.rotation_cursor + 1 }) }}</p>
             </div>
             <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800"><p>{{ t('accountRefill.quote') }}: <strong>{{ number(quote?.price) }}</strong> {{ t('accountRefill.points') }}</p><p v-if="quote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ quote.terms }}</p></div>
             <p class="text-sm leading-6 text-gray-500">{{ t(form.mode === 'interval' ? 'accountRefill.intervalHint' : form.mode === 'fixed' ? 'accountRefill.fixedHint' : 'accountRefill.ruleHint') }}</p>
@@ -136,7 +156,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { accountRefillAPI, type RefillConfig, type RefillView, type RefillJob, type ManualRefillRequest } from '@/api/admin/accountRefill'
-import { getAll } from '@/api/admin/groups'
+import { getAllIncludingInactive } from '@/api/admin/groups'
 import type { AdminGroup } from '@/types'
 import { useAppStore } from '@/stores/app'
 
@@ -148,6 +168,8 @@ const tabs = ['connection', 'rules', 'delivery', 'manual', 'notifications', 'pro
 const activeTab = ref<typeof tabs[number]>('connection')
 const view = ref<RefillView | null>(null)
 const form = ref<RefillConfig | null>(null)
+const selectedGroup = ref(0)
+const switchingGroup = ref(false)
 const groups = ref<AdminGroup[]>([])
 const confirmedJobs = ref<string[]>([])
 const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
@@ -158,13 +180,15 @@ const loading = ref(false), busy = ref(false), conflict = ref(false), now = ref(
 let revision = 0, generation = 0, fetching = false
 let timer: ReturnType<typeof setInterval> | undefined
 const openAIGroups = computed(() => groups.value.filter(g => g.platform === 'openai' && g.status === 'active'))
+const ruleGroups = computed(() => groups.value.filter(g => g.platform === 'openai'))
+const rotationPreview = computed(() => form.value?.rotation?.map(step => `${step.plan === 'pro20x' ? 'Pro20x' : 'Pro5x'} × ${step.count}`).join(' → '))
 const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || webhook.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
 const walletItems = computed(() => [{ key: 'balance', value: view.value?.wallet?.balance }, { key: 'held', value: view.value?.wallet?.held }, { key: 'available', value: view.value?.wallet?.available ?? view.value?.catalog?.available }])
 const usageItems = computed(() => {
   const v = view.value
   return [{ key: 'spent', value: v?.daily.spent_points }, { key: 'reserved', value: v?.daily.reserved_points }, { key: 'count', value: v?.daily.count }, { key: 'budget', value: v?.config.daily_max_points }, { key: 'ready', value: v?.evaluation.ready }, { key: 'expiring', value: v?.evaluation.expiring }, { key: 'pending', value: v?.evaluation.pending }, { key: 'needed', value: v?.evaluation.needed }]
 })
-const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === form.value?.plan && q.enabled))
+const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === (form.value?.rotation_enabled ? (dirty.value ? form.value.rotation[0]?.plan : view.value?.next_plan) : form.value?.plan) && q.enabled))
 const manualQuote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && q.enabled))
 const manualGroups = computed(() => view.value?.config.delivery_group_ids.map(id => groups.value.find(g => g.id === id)?.name || `#${id}`).join('、'))
 const manualDisabled = computed(() => busy.value || !view.value || (!manualPending.value && (dirty.value || conflict.value || !view.value.token_configured || !view.value.config.push_enabled)))
@@ -185,12 +209,25 @@ const number = (v: number | null | undefined) => v == null ? '—' : v.toLocaleS
 const date = (v: string | null | undefined) => !v || v.startsWith('0001') ? '—' : new Date(v).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`accountRefill.states.${state}`) : state
 const elapsed = (job: RefillJob) => { const seconds = Math.max(0, Math.floor(((job.finished_at ? Date.parse(job.finished_at) : now.value) - Date.parse(job.created_at)) / 1000)); return `${Math.floor(seconds / 60)}m ${seconds % 60}s` }
-function includeMonitor() { if (form.value && !form.value.delivery_group_ids.includes(form.value.group_id)) form.value.delivery_group_ids.push(form.value.group_id) }
+function initializeRotation() { if (form.value?.rotation_enabled && !form.value.rotation?.length) form.value.rotation = [{ plan: 'pro20x', count: 1 }, { plan: 'pro5x', count: 2 }] }
+function moveRotation(index: number) { if (form.value && index > 0) { const rows = form.value.rotation; [rows[index - 1], rows[index]] = [rows[index]!, rows[index - 1]!] } }
+async function switchGroup(id: number) {
+  if (!id || busy.value || dirty.value || manualPending.value) return
+  const current = ++generation
+  busy.value = true; switchingGroup.value = true; error.value = ''
+  try { const data = await accountRefillAPI.get(id); if (current === generation) accept(data, true) }
+  catch (e) { if (current === generation) error.value = message(e) }
+  finally { if (current === generation) { busy.value = false; switchingGroup.value = false } }
+}
 function accept(data: RefillView, reset: boolean) {
+  if (!reset && data.config.group_id !== selectedGroup.value) return
+  data.config.rotation ??= []
+  data.config.rotation_enabled ??= false
   if (!reset && data.revision < revision) return
   if (!reset && view.value && Date.parse(data.evaluation.checked_at) < Date.parse(view.value.evaluation.checked_at)) data.evaluation = view.value.evaluation
   if (!reset && dirty.value && data.revision !== revision) conflict.value = true
   if (reset || !dirty.value) {
+    selectedGroup.value = data.config.group_id
     form.value = JSON.parse(JSON.stringify(data.config))
     mapping.value = JSON.stringify(data.config.delivery.model_mapping || {}, null, 2)
     saved.value = JSON.stringify(form.value)
@@ -205,10 +242,10 @@ function accept(data: RefillView, reset: boolean) {
 }
 function message(e: unknown) { const v = e as { response?: { data?: { message?: string; error?: string } } }; return v.response?.data?.message || v.response?.data?.error || t('accountRefill.error') }
 async function refresh(reset: boolean) {
-  if (fetching) return
+  if (fetching || switchingGroup.value) return
   const current = generation
   fetching = true
-  try { const data = await accountRefillAPI.get(); if (current === generation) { accept(data, reset); error.value = '' } }
+  try { const data = await accountRefillAPI.get(selectedGroup.value || undefined); if (current === generation) { accept(data, reset); error.value = '' } }
   catch { if (current === generation) error.value = t('accountRefill.loadError') }
   finally { fetching = false }
 }
@@ -226,9 +263,9 @@ async function save() {
   } catch (e) { error.value = message(e) }
   finally { busy.value = false }
 }
-async function check() { if (busy.value || dirty.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.check(), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
-async function retry(id: string) { if (busy.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.retry(id), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
-async function dismiss(id: string) { if (busy.value || !confirmedJobs.value.includes(id)) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.dismiss(id), false); confirmedJobs.value = confirmedJobs.value.filter(v => v !== id) } catch (e) { error.value = message(e) } finally { busy.value = false } }
+async function check() { if (busy.value || dirty.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.check(selectedGroup.value), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
+async function retry(id: string) { if (busy.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.retry(id, selectedGroup.value), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
+async function dismiss(id: string) { if (busy.value || !confirmedJobs.value.includes(id)) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.dismiss(id, selectedGroup.value), false); confirmedJobs.value = confirmedJobs.value.filter(v => v !== id) } catch (e) { error.value = message(e) } finally { busy.value = false } }
 function clearManualRequest() {
   manualPending.value = null
   try { sessionStorage.removeItem(manualStorageKey) } catch { /* Already acknowledged in memory. */ }
@@ -246,7 +283,7 @@ function restoreManualRequest() {
 }
 async function submitManual() {
   if (manualDisabled.value) return
-  const request = manualPending.value || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision }
+  const request = manualPending.value || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value }
   try { sessionStorage.setItem(manualStorageKey, JSON.stringify(request)) }
   catch { error.value = t('accountRefill.manualStorageError'); return }
   manualPending.value = request; busy.value = true; error.value = ''; generation++
@@ -269,7 +306,12 @@ watch(() => props.show, async show => {
   if (!show) return
   loading.value = true; error.value = ''; form.value = null; view.value = null; activeTab.value = props.initialTab || 'connection'
   restoreManualRequest()
-  try { const [data, allGroups] = await Promise.all([accountRefillAPI.get(), getAll('openai')]); if (current === generation) { groups.value = allGroups; accept(data, true) } }
+  try {
+    const [initial, allGroups] = await Promise.all([accountRefillAPI.get(manualPending.value?.group_id), getAllIncludingInactive()])
+    const firstGroup = initial.rules?.[0]?.group_id || allGroups.find(g => g.platform === 'openai' && g.status === 'active')?.id
+    const data = !initial.config.group_id && firstGroup ? await accountRefillAPI.get(firstGroup) : initial
+    if (current === generation) { groups.value = allGroups; accept(data, true) }
+  }
   catch { if (current === generation) error.value = t('accountRefill.loadError') }
   finally { if (current === generation) loading.value = false }
   if (current === generation) timer = setInterval(() => { now.value = Date.now(); void refresh(false) }, 15000)

@@ -22,7 +22,21 @@ type AccountRefillStore interface {
 	WithLock(context.Context, func(string, func(string) error) error) error
 }
 
+// All group stores share the same database advisory lock, including the legacy
+// single-rule store. Separate keys keep rolling deployments backward compatible.
+type AccountRefillGroupStore interface {
+	ForGroup(int64) AccountRefillStore
+	ListRules(context.Context) (map[int64]string, error)
+}
+
+type AccountRefillRotationStep struct {
+	Plan  string `json:"plan"`
+	Count int    `json:"count"`
+}
+
 type AccountRefillConfig struct {
+	RotationEnabled           bool                            `json:"rotation_enabled"`
+	Rotation                  []AccountRefillRotationStep     `json:"rotation"`
 	Notifications             AccountRefillNotificationConfig `json:"notifications"`
 	Enabled                   bool                            `json:"enabled"`
 	MonitorEnabled            bool                            `json:"monitor_enabled"`
@@ -82,6 +96,9 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
+	if err := validateRefillRotation(c); err != nil {
+		return err
+	}
 	if math.IsNaN(c.Notifications.LowBalanceThreshold) || math.IsInf(c.Notifications.LowBalanceThreshold, 0) || c.Notifications.LowBalanceThreshold < 0 || c.Notifications.LowBalanceThreshold > 1e7 {
 		return errors.New("余额预警阈值须为 0–10000000 积分")
 	}
@@ -197,6 +214,7 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
+	RotationCursor     int                                `json:"rotation_cursor"`
 	EncryptedWebhook   string                             `json:"encrypted_webhook,omitempty"`
 	NotificationStatus AccountRefillNotificationStatus    `json:"notification_status"`
 	LowBalanceAlerted  bool                               `json:"low_balance_alerted"`

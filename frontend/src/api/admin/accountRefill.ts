@@ -18,6 +18,8 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
+	rotation_enabled: boolean
+	rotation: { plan: string; count: number }[]
   notifications: { refill_started: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
@@ -67,11 +69,15 @@ export interface RefillJob {
   next_attempt_at: string
 }
 export interface ManualRefillRequest {
+	group_id?: number
   request_id: string
   plan: string
   revision: number
 }
 export interface RefillView {
+	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_plan: string }[]
+	rotation_cursor: number
+	next_plan: string
   webhook_configured: boolean
   notification_status: { at: string | null; message: string }
   lease_sync_at: string | null
@@ -102,12 +108,12 @@ export interface RefillView {
   import_expiry_offset_minutes: number
 }
 export const accountRefillAPI = {
-  async get() { return (await apiClient.get<RefillView>('/admin/accounts/refill')).data },
+  async get(groupID?: number) { return (await apiClient.get<RefillView>('/admin/accounts/refill', { params: groupID ? { group_id: groupID } : {} })).data },
   async save(config: RefillConfig, api_token: string, revision: number, wecom_webhook = '') {
-    return (await apiClient.put<RefillView>('/admin/accounts/refill', { config, api_token, revision, wecom_webhook }, { timeout: 100000 })).data
+    return (await apiClient.put<RefillView>('/admin/accounts/refill', { config, api_token, revision, wecom_webhook }, { params: { group_id: config.group_id }, timeout: 100000 })).data
   },
-  async check() { return (await apiClient.post<RefillView>('/admin/accounts/refill/check', {}, { timeout: 100000 })).data },
-  async manual(request: ManualRefillRequest) { return (await apiClient.post<RefillView>('/admin/accounts/refill/manual', request, { timeout: 100000 })).data },
-  async dismiss(id: string) { return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/dismiss`, { confirm_not_accepted: true })).data },
-  async retry(id: string) { return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/retry`)).data }
+  async check(groupID?: number) { return (await apiClient.post<RefillView>('/admin/accounts/refill/check', {}, { params: groupID ? { group_id: groupID } : {}, timeout: 100000 })).data },
+  async manual(request: ManualRefillRequest) { return (await apiClient.post<RefillView>('/admin/accounts/refill/manual', request, { params: request.group_id ? { group_id: request.group_id } : {}, timeout: 100000 })).data },
+  async dismiss(id: string, groupID?: number) { return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/dismiss`, { confirm_not_accepted: true }, { params: groupID ? { group_id: groupID } : {} })).data },
+  async retry(id: string, groupID?: number) { return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/retry`, {}, { params: groupID ? { group_id: groupID } : {} })).data }
 }
