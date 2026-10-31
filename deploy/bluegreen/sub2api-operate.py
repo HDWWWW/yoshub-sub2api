@@ -243,7 +243,7 @@ def redirect_rules(old_ip, router_ip):
     import ipaddress
     ipaddress.IPv4Address(old_ip)
     ipaddress.IPv4Address(router_ip)
-    match = ['-p', 'tcp', '-d', old_ip + '/32', '--dport', '8080',
+    match = ['-p', 'tcp', '--syn', '-d', old_ip + '/32', '--dport', '8080',
              '-m', 'comment', '--comment', 'sub2api-bootstrap']
     rules = [(chain, match + ['-j', 'DNAT', '--to-destination', router_ip + ':8080'])
              for chain in ['PREROUTING', 'OUTPUT']]
@@ -262,23 +262,32 @@ def redirect_legacy(state):
     for network in NETWORKS:
         rules += redirect_rules(old['NetworkSettings']['Networks'][network]['IPAddress'],
                                 router['NetworkSettings']['Networks'][network]['IPAddress'])
-    if state.get('redirect_rules') and state['redirect_rules'] != [list(r) for r in rules]:
+    if state.get('redirect_namespace') == 'container' and state.get('redirect_rules') != [list(r) for r in rules]:
         raise RuntimeError('Bootstrap router address changed; inspect forwarding before proceeding')
+    if state.get('redirect_namespace') != 'container':
+        state['host_redirect_rules'] = state.get('redirect_rules', [])
     state['redirect_rules'] = rules
+    state['redirect_namespace'] = 'container'
     save_state(state)
-    # NAT applies only to new connections. Conntrack keeps every established stream
-    # on its original app, including clients that cached the old Docker address.
+    # Bridge traffic need not traverse host iptables (br_netfilter is optional).
+    # Redirect inside the legacy app's network namespace, without changing host
+    # bridge sysctls. Match SYN only, preserving streams even if conntrack was not
+    # enabled in this namespace before installation.
+    namespace = ['nsenter', '-t', str(old['State']['Pid']), '-n']
+    command(namespace + ['sysctl', '-w', 'net.ipv4.ip_forward=1'])
     for chain, rule in rules:
-        check = subprocess.run(['iptables', '-w', '10', '-t', 'nat', '-C', chain] + rule,
+        check = subprocess.run(namespace + ['iptables', '-w', '10', '-t', 'nat', '-C', chain] + rule,
                                capture_output=True)
         if check.returncode == 1:
-            command(['iptables', '-w', '10', '-t', 'nat', '-I', chain, '1'] + rule)
+            command(namespace + ['iptables', '-w', '10', '-t', 'nat', '-I', chain, '1'] + rule)
         elif check.returncode:
             raise RuntimeError('Cannot verify bootstrap forwarding rule')
 
 
 def clear_redirects(state):
-    for chain, rule in state.get('redirect_rules', []):
+    # The old container namespace (and its rules) disappears when it stops.
+    # Remove any host rules left by the initial installation as well.
+    for chain, rule in state.get('host_redirect_rules', []):
         check = subprocess.run(['iptables', '-w', '10', '-t', 'nat', '-C', chain] + rule,
                                capture_output=True)
         if check.returncode == 0:
@@ -409,7 +418,11 @@ def finish_bootstrap(state, seconds):
     if LEGACY in data['services']:
         backup(LEGACY_COMPOSE)
         del data['services'][LEGACY]
+        includes = data.setdefault('include', [])
+        if not any(isinstance(item, dict) and item.get('path') == str(COMPOSE) for item in includes):
+            includes.append({'path': str(COMPOSE)})
         atomic(LEGACY_COMPOSE, json.dumps(data, indent=2) + '\n')
+        command(['docker', 'compose', '-f', str(LEGACY_COMPOSE), 'config', '-q'])
     # Keep the standby stopped: Sub2API has no NewAPI-style master/slave role.
     # Brief overlap for cutover is enough; do not run two sets of background jobs forever.
     stale = ROOT / 'yoshub-sub2api.compose.json'

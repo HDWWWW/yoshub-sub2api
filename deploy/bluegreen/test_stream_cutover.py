@@ -49,8 +49,7 @@ def main():
     task = 'sub2-cutover-' + uuid.uuid4().hex[:8]
     containers = []
     redirects = []
-    firewall = ['docker', 'run', '--rm', '--privileged', '--pid', 'host', 'alpine:3.21',
-                'nsenter', '-t', '1', '-m', '-n', 'iptables', '-w', '10', '-t', 'nat']
+    firewall = []
     run('docker', 'network', 'create', task)
     try:
         with tempfile.TemporaryDirectory(prefix=task) as directory:
@@ -62,7 +61,7 @@ def main():
                 name = task + '-' + slot
                 containers.append(name)
                 run('docker', 'run', '-d', '--name', name, '--network', task, '--network-alias', 'sub2api-' + slot,
-                    '-v', f'{root}:/fixture:ro', '-e', 'SLOT=' + slot, 'python:3.13-alpine', 'python', '/fixture/server.py')
+                    '-p', '127.0.0.1::8080', '-v', f'{root}:/fixture:ro', '-e', 'SLOT=' + slot, 'python:3.13-alpine', 'python', '/fixture/server.py')
             name = task + '-router'
             containers.append(name)
             run('docker', 'run', '-d', '--name', name, '--network', task, '-p', '127.0.0.1::8080',
@@ -107,7 +106,14 @@ def main():
             assert messages == ['blue:' + str(i) for i in range(1, 20)], messages
             ws.close()
             assert json.load(urllib.request.urlopen(url + '/health'))['slot'] == 'green'
-            old_ip = json.loads(run('docker', 'inspect', containers[0]))[0]['NetworkSettings']['Networks'][task]['IPAddress']
+            old = json.loads(run('docker', 'inspect', containers[0]))[0]
+            old_ip = old['NetworkSettings']['Networks'][task]['IPAddress']
+            old_port = old['NetworkSettings']['Ports']['8080/tcp'][0]['HostPort']
+            legacy_stream = urllib.request.urlopen('http://127.0.0.1:' + old_port + '/stream', timeout=10)
+            assert legacy_stream.readline() == b'data: blue:0\n'
+            firewall = ['docker', 'run', '--rm', '--privileged', '--pid', 'host', 'alpine:3.21',
+                        'nsenter', '-t', '1', '-m', '-n', 'nsenter', '-t', str(old['State']['Pid']), '-n',
+                        'iptables', '-w', '10', '-t', 'nat']
             router_ip = json.loads(run('docker', 'inspect', name))[0]['NetworkSettings']['Networks'][task]['IPAddress']
             for chain, rule in op.redirect_rules(old_ip, router_ip):
                 run(*(firewall + ['-I', chain, '1'] + rule))
@@ -116,8 +122,11 @@ def main():
             result = run('docker', 'run', '--rm', '--network', task, 'python:3.13-alpine', 'python', '-c',
                          f'import urllib.request; print(urllib.request.urlopen("http://{old_ip}:8080/health").read().decode())')
             assert json.loads(result)['slot'] == 'green', result
+            legacy_rest = legacy_stream.read().decode()
+            assert 'blue:19' in legacy_rest and 'green:' not in legacy_rest
             print(json.dumps({'sse_frames': 20, 'websocket_frames': 20, 'old_streams_completed': True,
-                              'new_connections_slot': 'green', 'cached_legacy_ip_forwarded': True}))
+                              'new_connections_slot': 'green', 'cached_legacy_ip_forwarded': True,
+                              'legacy_existing_stream_survived': True}))
     finally:
         for chain, rule in reversed(redirects):
             subprocess.run(firewall + ['-D', chain] + rule, capture_output=True)
