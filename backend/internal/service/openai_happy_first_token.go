@@ -30,6 +30,13 @@ func (s *OpenAIGatewayService) startOpenAIResponseSignals(ctx context.Context, c
 	// commits the original headers through the normal forwarding path.
 	if c != nil && account != nil && account.Platform == PlatformOpenAI && account.IsOAuth() && !IsOpenAIResponsesCompactPath(c) && !openAICompactClientWantsStream(c) {
 		settings := s.settingService.happyFirstTokenSettings(ctx)
+		var groupID int64
+		if value, ok := c.Get("api_key"); ok {
+			if key, ok := value.(*APIKey); ok && key != nil && key.GroupID != nil {
+				groupID = *key.GroupID
+			}
+		}
+		settings = settings.ForGroup(groupID)
 		if settings.Enabled {
 			value, _ := c.Get(openAIHappyFirstTokenDeadlineKey)
 			deadline, scheduled := value.(time.Time)

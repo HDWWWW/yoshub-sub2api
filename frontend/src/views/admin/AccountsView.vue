@@ -17,6 +17,7 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button class="btn btn-secondary" data-testid="open-account-refill" @click="showAccountRefill = true">{{ t('accountRefill.title') }}</button>
               <button
                 class="btn btn-secondary"
                 :disabled="!params.group || loading"
@@ -472,6 +473,7 @@
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
+    <AccountRefillModal v-if="showAccountRefill" :show="showAccountRefill" @close="showAccountRefill = false" />
     <BulkConcurrencyModal
       :show="showBulkConcurrency"
       :filters="bulkConcurrencyFilters"
@@ -528,6 +530,7 @@ import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrs
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
+import AccountRefillModal from '@/components/admin/account/AccountRefillModal.vue'
 import BulkConcurrencyModal from '@/components/admin/account/BulkConcurrencyModal.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
@@ -617,6 +620,7 @@ const showImportData = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
+const showAccountRefill = ref(false)
 const showBulkConcurrency = ref(false)
 const bulkConcurrencyFilters = ref<Partial<ReturnType<typeof buildBulkEditFilterSnapshot>>>({})
 const bulkConcurrencyGroupLabel = ref('')
@@ -1424,6 +1428,7 @@ const isAnyModalOpen = computed(() => {
     showImportData.value ||
     showExportDataDialog.value ||
     showBulkEdit.value ||
+    showAccountRefill.value ||
     showBulkConcurrency.value ||
     showTempUnsched.value ||
     showDeleteDialog.value ||

@@ -237,6 +237,7 @@ func (h *AccountHandler) ImportData(c *gin.Context) {
 		return
 	}
 
+	applyExternalImportExpiry(&req, c.GetString("auth_method"))
 	executeAdminIdempotentJSON(c, "admin.accounts.import_data", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		return h.importData(ctx, req)
 	})

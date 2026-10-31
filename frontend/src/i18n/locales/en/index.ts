@@ -1,3 +1,4 @@
+import accountRefill from './accountRefill'
 import adminAccessKeys from './adminAccessKeys'
 import happyFirstToken from './happyFirstToken'
 import landing from './landing'
@@ -9,6 +10,7 @@ import admin from './admin'
 import misc from './misc'
 
 export default {
+  accountRefill,
   happyFirstToken,
   adminAccessKeys,
   ...landing,

@@ -360,6 +360,11 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	accounts := admin.Group("/accounts")
 	{
+		accounts.GET("/refill", h.Admin.Account.GetAccountRefill)
+		accounts.PUT("/refill", h.Admin.Account.UpdateAccountRefill)
+		accounts.POST("/refill/check", h.Admin.Account.CheckAccountRefill)
+		accounts.POST("/refill/jobs/:job_id/retry", h.Admin.Account.RetryAccountRefill)
+		accounts.POST("/refill/jobs/:job_id/dismiss", h.Admin.Account.DismissAccountRefill)
 		accounts.GET("", h.Admin.Account.List)
 		accounts.GET("/upstream-billing-rates", h.Admin.Account.GetUpstreamBillingRates)
 		accounts.GET("/upstream-billing-probe/settings", h.Admin.Account.GetUpstreamBillingProbeSettings)

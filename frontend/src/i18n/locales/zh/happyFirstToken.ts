@@ -1,4 +1,14 @@
 export default {
+  groupTitle: "按分组单独设置",
+  groupHint: "上方为全局默认。勾选分组后可独立开关及设置等待区间；取消勾选恢复全局默认。以请求 API Key 所属分组为准，不影响共享账号的其他分组。",
+  searchGroups: "搜索 OpenAI 分组",
+  customGroup: "单独设置",
+  inherit: "跟随全局",
+  groupEnable: "此分组启用",
+  noGroups: "没有匹配的分组",
+  missingGroup: "分组已删除或不可用",
+  removeOverride: "移除单独设置",
+
   title: '快乐首字',
   description: '设置 OpenAI OAuth Responses 流的连接状态通知时间。',
   enabled: '已启用',

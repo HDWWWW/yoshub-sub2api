@@ -21,15 +21,26 @@ func (h *SettingHandler) GetHappyFirstTokenSettings(c *gin.Context) {
 
 func (h *SettingHandler) UpdateHappyFirstTokenSettings(c *gin.Context) {
 	var req struct {
-		Enabled    *bool `json:"enabled" binding:"required"`
-		MinDelayMS *int  `json:"min_delay_ms" binding:"required"`
-		MaxDelayMS *int  `json:"max_delay_ms" binding:"required"`
+		GroupOverrides *[]service.HappyFirstTokenGroupOverride `json:"group_overrides"`
+		Enabled        *bool                                   `json:"enabled" binding:"required"`
+		MinDelayMS     *int                                    `json:"min_delay_ms" binding:"required"`
+		MaxDelayMS     *int                                    `json:"max_delay_ms" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "enabled, min_delay_ms and max_delay_ms are required")
 		return
 	}
 	settings := service.HappyFirstTokenSettings{Enabled: *req.Enabled, MinDelayMS: *req.MinDelayMS, MaxDelayMS: *req.MaxDelayMS}
+	if req.GroupOverrides != nil {
+		settings.GroupOverrides = *req.GroupOverrides
+	} else {
+		current, err := h.settingService.GetHappyFirstTokenSettings(c.Request.Context())
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		settings.GroupOverrides = current.GroupOverrides
+	}
 	if err := settings.Validate(); err != nil {
 		response.BadRequest(c, err.Error())
 		return

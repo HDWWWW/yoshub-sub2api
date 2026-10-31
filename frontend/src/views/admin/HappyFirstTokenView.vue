@@ -50,6 +50,23 @@
               <p id="happy-delay-limits" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.limits') }}</p>
             </div>
             <p class="text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.timingHint') }}</p>
+            <section class="space-y-4 border-t border-gray-100 pt-6 dark:border-dark-700">
+              <h2 class="font-medium text-gray-900 dark:text-white">{{ t('happyFirstToken.groupTitle') }}</h2>
+              <p class="text-sm leading-6 text-gray-500">{{ t('happyFirstToken.groupHint') }}</p>
+              <input v-model="groupSearch" class="input" :placeholder="t('happyFirstToken.searchGroups')" :aria-label="t('happyFirstToken.searchGroups')" />
+              <div v-for="group in visibleGroups" :key="group.id" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <label class="flex items-center gap-3 text-sm font-medium"><input type="checkbox" :checked="!!overrideFor(group.id)" :disabled="saving" :data-testid="`happy-group-${group.id}`" @change="toggleGroup(group.id)" />{{ group.name }} <span class="font-normal text-gray-500">#{{ group.id }} · {{ t(overrideFor(group.id) ? 'happyFirstToken.customGroup' : 'happyFirstToken.inherit') }}</span></label>
+                <template v-for="override in overrides.filter(g => g.group_id === group.id)" :key="override.group_id">
+                  <div class="mt-4 grid items-end gap-4 sm:grid-cols-3">
+                    <label class="flex items-center gap-2 pb-3 text-sm"><input v-model="override.enabled" type="checkbox" :disabled="saving" />{{ t('happyFirstToken.groupEnable') }}</label>
+                    <label><span class="input-label">{{ t('happyFirstToken.minimum') }} ({{ t('happyFirstToken.seconds') }})</span><input v-model="override.minimum" class="input" type="number" min="0" max="60" step="0.001" required :disabled="saving" :aria-invalid="!validRange(override.minimum, override.maximum)" /></label>
+                    <label><span class="input-label">{{ t('happyFirstToken.maximum') }} ({{ t('happyFirstToken.seconds') }})</span><input v-model="override.maximum" class="input" type="number" min="0" max="60" step="0.001" required :disabled="saving" :aria-invalid="!validRange(override.minimum, override.maximum)" /></label>
+                  </div>
+                </template>
+              </div>
+              <p v-if="!visibleGroups.length" class="text-sm text-gray-500">{{ t('happyFirstToken.noGroups') }}</p>
+              <div v-for="override in overrides.filter(o => !groups.some(g => g.id === o.group_id))" :key="override.group_id" class="flex justify-between text-sm text-amber-700"><span>{{ t('happyFirstToken.missingGroup') }} #{{ override.group_id }}</span><button type="button" :disabled="saving" @click="toggleGroup(override.group_id)">{{ t('happyFirstToken.removeOverride') }}</button></div>
+            </section>
           </div>
           <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-6 py-4 dark:border-dark-700">
             <p class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite">{{ dirty ? t('happyFirstToken.unsaved') : '' }}</p>
@@ -72,6 +89,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAppStore } from '@/stores/app'
+import { getAll } from '@/api/admin/groups'
+import type { AdminGroup } from '@/types'
 import { getHappyFirstTokenSettings, updateHappyFirstTokenSettings, type HappyFirstTokenSettings } from '@/api/admin/settings'
 
 const { t } = useI18n()
@@ -83,8 +102,18 @@ const enabled = ref(false)
 const minimum = ref<number | string>(0.1)
 const maximum = ref<number | string>(1)
 const saved = ref('')
-const valid = computed(() => minimum.value !== '' && maximum.value !== '' && Number.isFinite(Number(minimum.value)) && Number.isFinite(Number(maximum.value)) && Number(minimum.value) >= 0 && Number(maximum.value) <= 60 && Number(minimum.value) <= Number(maximum.value))
-const payload = computed<HappyFirstTokenSettings>(() => ({ enabled: enabled.value, min_delay_ms: Math.round(Number(minimum.value) * 1000), max_delay_ms: Math.round(Number(maximum.value) * 1000) }))
+const groups = ref<AdminGroup[]>([])
+const overrides = ref<{ group_id: number; enabled: boolean; minimum: number | string; maximum: number | string }[]>([])
+const groupSearch = ref('')
+const visibleGroups = computed(() => groups.value.filter(g => g.name.toLowerCase().includes(groupSearch.value.toLowerCase())))
+const overrideFor = (id: number) => overrides.value.find(g => g.group_id === id)
+function toggleGroup(id: number) {
+  if (overrideFor(id)) overrides.value = overrides.value.filter(g => g.group_id !== id)
+  else overrides.value.push({ group_id: id, enabled: enabled.value, minimum: minimum.value, maximum: maximum.value })
+}
+const validRange = (min: number | string, max: number | string) => min !== '' && max !== '' && Number.isFinite(Number(min)) && Number.isFinite(Number(max)) && Number(min) >= 0 && Number(max) <= 60 && Number(min) <= Number(max)
+const valid = computed(() => validRange(minimum.value, maximum.value) && overrides.value.every(g => validRange(g.minimum, g.maximum)))
+const payload = computed<HappyFirstTokenSettings>(() => ({ enabled: enabled.value, min_delay_ms: Math.round(Number(minimum.value) * 1000), max_delay_ms: Math.round(Number(maximum.value) * 1000), group_overrides: overrides.value.map(g => ({ group_id: g.group_id, enabled: g.enabled, min_delay_ms: Math.round(Number(g.minimum) * 1000), max_delay_ms: Math.round(Number(g.maximum) * 1000) })) }))
 const dirty = computed(() => JSON.stringify(payload.value) !== saved.value)
 const rangeLabel = computed(() => Number(minimum.value) === Number(maximum.value)
   ? t('happyFirstToken.fixed', { seconds: minimum.value })
@@ -94,13 +123,14 @@ function apply(settings: HappyFirstTokenSettings) {
   enabled.value = settings.enabled
   minimum.value = settings.min_delay_ms / 1000
   maximum.value = settings.max_delay_ms / 1000
+  overrides.value = (settings.group_overrides || []).map(g => ({ group_id: g.group_id, enabled: g.enabled, minimum: g.min_delay_ms / 1000, maximum: g.max_delay_ms / 1000 }))
   saved.value = JSON.stringify(payload.value)
 }
 
 async function load() {
   loading.value = true
   loadError.value = false
-  try { apply(await getHappyFirstTokenSettings()) }
+  try { const [settings, all] = await Promise.all([getHappyFirstTokenSettings(), getAll('openai')]); groups.value = all; apply(settings) }
   catch { loadError.value = true }
   finally { loading.value = false }
 }

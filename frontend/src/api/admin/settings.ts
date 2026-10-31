@@ -14,7 +14,15 @@ import type {
 } from "@/types";
 import type { RechargeBonusTier } from "@/utils/rechargeBonus";
 
+export interface HappyFirstTokenGroupOverride {
+  group_id: number;
+  enabled: boolean;
+  min_delay_ms: number;
+  max_delay_ms: number;
+}
+
 export interface HappyFirstTokenSettings {
+  group_overrides?: HappyFirstTokenGroupOverride[];
   enabled: boolean;
   min_delay_ms: number;
   max_delay_ms: number;

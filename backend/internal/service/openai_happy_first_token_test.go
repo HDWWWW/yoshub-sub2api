@@ -324,3 +324,32 @@ func TestHappyFirstTokenTimingStopAndScope(t *testing.T) {
 		})
 	}
 }
+
+func TestHappyFirstTokenGroupOverrides(t *testing.T) {
+	settings := HappyFirstTokenSettings{Enabled: true, MinDelayMS: 100, MaxDelayMS: 500, GroupOverrides: []HappyFirstTokenGroupOverride{{GroupID: 2, Enabled: false, MinDelayMS: 0, MaxDelayMS: 0}, {GroupID: 3, Enabled: true, MinDelayMS: 0, MaxDelayMS: 0}}}
+	require.NoError(t, settings.Validate())
+	require.False(t, settings.ForGroup(2).Enabled)
+	require.True(t, settings.ForGroup(3).Enabled)
+	require.Equal(t, 100, settings.ForGroup(4).MinDelayMS)
+	require.Equal(t, 500, settings.ForGroup(0).MaxDelayMS)
+	invalid := settings
+	invalid.GroupOverrides = append(invalid.GroupOverrides, invalid.GroupOverrides[0])
+	require.Error(t, invalid.Validate())
+	for _, id := range []int64{2, 3} {
+		service := happyTestService(t, 0)
+		service.settingService.defaultSubGroupReader = refillTestGroups{}
+		require.NoError(t, service.settingService.UpdateHappyFirstTokenSettings(context.Background(), settings))
+		c, recorder := happyTestContext(t)
+		c.Set("api_key", &APIKey{GroupID: &id})
+		account := happyAccount()
+		account.GroupIDs = []int64{2, 3}
+		stop := service.startOpenAIResponseSignals(c.Request.Context(), c, account, nil, time.Now(), 0)
+		select {
+		case <-recorder.flushed:
+			require.Equal(t, int64(3), id)
+		case <-time.After(80 * time.Millisecond):
+			require.Equal(t, int64(2), id)
+		}
+		stop()
+	}
+}

@@ -402,6 +402,8 @@ type UpdateGroupInput struct {
 }
 
 type CreateAccountInput struct {
+	// InitiallyInactive keeps staged background imports out of scheduling until finalized.
+	InitiallyInactive  bool
 	ProxyMode          string // 受限写入在验权后选择代理。
 	Name               string
 	Notes              *string

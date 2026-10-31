@@ -6,6 +6,7 @@ import happyFirstToken from '@/i18n/locales/zh/happyFirstToken'
 const { getSettings, updateSettings, showSuccess, showError } = vi.hoisted(() => ({
   getSettings: vi.fn(), updateSettings: vi.fn(), showSuccess: vi.fn(), showError: vi.fn()
 }))
+vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn().mockResolvedValue([{ id: 2, name: 'Group two', platform: 'openai', status: 'active' }]) }))
 vi.mock('@/api/admin/settings', () => ({
   getHappyFirstTokenSettings: getSettings,
   updateHappyFirstTokenSettings: updateSettings
@@ -30,6 +31,22 @@ async function openPage() {
 }
 
 describe('HappyFirstTokenView', () => {
+  it('saves a selected group independently and unchecking restores inheritance', async () => {
+    const wrapper = await openPage()
+    await wrapper.get('[data-testid="happy-group-2"]').setValue(true)
+    const groupSection = wrapper.get('section')
+    const numbers = groupSection.findAll('input[type="number"]')
+    await numbers[0]!.setValue('0.25')
+    await numbers[1]!.setValue('0.5')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings.mock.calls[0]![0].group_overrides).toEqual([{ group_id: 2, enabled: false, min_delay_ms: 250, max_delay_ms: 500 }])
+    await wrapper.get('[data-testid="happy-group-2"]').setValue(false)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings.mock.calls[1]![0].group_overrides).toEqual([])
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     getSettings.mockResolvedValue({ enabled: false, min_delay_ms: 100, max_delay_ms: 1000 })
@@ -45,7 +62,7 @@ describe('HappyFirstTokenView', () => {
     await wrapper.get('#happy-maximum').setValue('0.9')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(updateSettings).toHaveBeenCalledWith({ enabled: true, min_delay_ms: 125, max_delay_ms: 900 })
+    expect(updateSettings).toHaveBeenCalledWith({ enabled: true, min_delay_ms: 125, max_delay_ms: 900, group_overrides: [] })
     expect(showSuccess).toHaveBeenCalledOnce()
     expect(wrapper.get('[type="submit"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
@@ -74,7 +91,7 @@ describe('HappyFirstTokenView', () => {
     expect(wrapper.text()).toContain('固定等待 0 秒')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(updateSettings).toHaveBeenCalledWith({ enabled: false, min_delay_ms: 0, max_delay_ms: 0 })
+    expect(updateSettings).toHaveBeenCalledWith({ enabled: false, min_delay_ms: 0, max_delay_ms: 0, group_overrides: [] })
     wrapper.unmount()
   })
 

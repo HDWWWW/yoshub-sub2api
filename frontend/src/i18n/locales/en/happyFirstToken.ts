@@ -1,4 +1,14 @@
 export default {
+  groupTitle: "Group overrides",
+  groupHint: "The settings above are global defaults. Select groups to override enablement and timing. Uncheck to inherit defaults. Uses the request API key group, without affecting other groups sharing an account.",
+  searchGroups: "Search OpenAI groups",
+  customGroup: "Custom settings",
+  inherit: "Global default",
+  groupEnable: "Enable for this group",
+  noGroups: "No matching groups",
+  missingGroup: "Deleted or unavailable group",
+  removeOverride: "Remove override",
+
   title: 'Happy First Response',
   description: 'Set the connection status notification delay for OpenAI OAuth Responses streams.',
   enabled: 'Enabled',
