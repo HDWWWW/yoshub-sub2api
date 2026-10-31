@@ -474,3 +474,14 @@ func TestAccountRefillKeyRotationAndReconciliation(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, s.DismissRejected(ctx, v.Jobs[0].ID))
 }
+
+func TestAccountRefillQueueFairness(t *testing.T) {
+	now := time.Now()
+	jobs := []AccountRefillJob{{Status: "queued", NextAttemptAt: now.Add(-time.Second)}, {Status: "processing", NextAttemptAt: now.Add(-time.Minute)}, {Status: "awaiting_push", NextAttemptAt: now.Add(-time.Hour)}}
+	require.Equal(t, 1, nextAccountRefillJob(jobs, false, now))
+	require.Equal(t, 2, nextAccountRefillJob(jobs, true, now))
+	jobs[1].Status = "blocked"
+	require.Equal(t, 0, nextAccountRefillJob(jobs, false, now))
+	jobs[0].NextAttemptAt = now.Add(time.Minute)
+	require.Equal(t, -1, nextAccountRefillJob(jobs, false, now))
+}

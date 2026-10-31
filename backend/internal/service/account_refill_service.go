@@ -285,14 +285,9 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		if !preview && token != "" {
 			// Continue accepted work even when automation or its time window is off.
-			for i := range state.Jobs {
-				j := &state.Jobs[i]
-				if j.pending() && now.After(j.NextAttemptAt) && j.Status != "blocked" && j.Status != "import_failed" && (state.Config.PushEnabled || j.Status != "awaiting_push") {
-					if err := s.advance(ctx, token, &state, j, persist); err != nil {
-						return err
-					}
-					// Bound each tick to one remote job transition.
-					break
+			if index := nextAccountRefillJob(state.Jobs, state.Config.PushEnabled, now); index >= 0 {
+				if err := s.advance(ctx, token, &state, &state.Jobs[index], persist); err != nil {
+					return err
 				}
 			}
 		}
@@ -754,4 +749,18 @@ func (s *AccountRefillService) DismissRejected(ctx context.Context, id string) e
 		}
 		return errors.New("任务不存在")
 	})
+}
+
+// Advance the oldest due transition so a large queue cannot starve earlier orders.
+func nextAccountRefillJob(jobs []AccountRefillJob, pushEnabled bool, now time.Time) int {
+	selected := -1
+	for i, j := range jobs {
+		if !j.pending() || now.Before(j.NextAttemptAt) || j.Status == "blocked" || j.Status == "import_failed" || (!pushEnabled && j.Status == "awaiting_push") {
+			continue
+		}
+		if selected < 0 || j.NextAttemptAt.Before(jobs[selected].NextAttemptAt) || (j.NextAttemptAt.Equal(jobs[selected].NextAttemptAt) && j.CreatedAt.Before(jobs[selected].CreatedAt)) {
+			selected = i
+		}
+	}
+	return selected
 }
