@@ -25,14 +25,46 @@ Priority changes and scheduler cache notifications commit in one SQL statement. 
 accounts are written/notified. Concurrent expiry or priority edits are left for the next scan.
 No schema migration or account credential change is required.
 
-This controls the existing scheduler's priority input. Normal scheduling picks the smallest
+This controls the scheduler's priority input. For models without a dedicated policy, normal scheduling picks the smallest
 available priority, then falls back when accounts are busy or unavailable. Existing sticky
 sessions, previous-response bindings, model/group restrictions, and quota/health checks remain
 in effect. The optional advanced weighted scheduler still treats priority as one score factor;
-Yoshub production uses normal scheduling with the advanced and low-upstream-rate modes disabled.
+The GPT-6 Astra policy below makes numeric priority a strict ordering for that model.
 
 Disable the environment flag and restart the application to stop automatic priority updates.
 The last assigned priorities remain editable; old manual values are not automatically restored.
+
+## GPT-6 Astra priority consumption
+
+Available in `0.2.19-yoshub.astra-priority.1`, retaining the happy-first.3 behavior.
+`gateway.scheduling.openai_astra_priority_enabled` defaults to `true`. Production and
+local releases also set `GATEWAY_SCHEDULING_OPENAI_ASTRA_PRIORITY_ENABLED=true` explicitly.
+
+For OpenAI requests using `gpt-6-astra`, the existing `gpt-6` alias, or recognized
+provider-prefixed/dated Astra variants, selection tries lower numeric account priorities
+first. With expiry ranking enabled, this consumes earlier-expiring accounts first.
+The same selection engine applies whether the advanced scheduler is enabled or disabled.
+
+- Model/group/capability, quota, health, privacy and profit eligibility checks still apply.
+- An ordinary session binding or a higher load/cost score cannot select a later priority
+  while an earlier tier has an eligible account with available concurrency.
+- Within a priority tier, compact/subscription preferences, scoring and soft affinity apply.
+  Top-K does not discard the other accounts in that tier or the later fallback tiers.
+- Busy accounts and accounts rejected by a fresh check fall through to the next candidate.
+  When all candidates are busy, the wait plan starts at the earliest eligible tier. Existing
+  concurrency/DB probe budgets remain bounded; cached full accounts do not consume slot probes.
+- Non-movable `previous_response_id` chains retain their owning account. Movable WebSocket
+  requests use their full input to rebuild context if selection changes the owner. An already
+  established WebSocket keeps its account until a new scheduling decision is needed.
+- Guardian parent affinity is preserved. Other model families keep their existing policy.
+
+Selection diagnostics use `schedule_layer=priority_first`; required previous-response and
+guardian selections keep their original diagnostic layers. Advanced scheduler metrics count
+these selections as load-balanced selections.
+
+Set `GATEWAY_SCHEDULING_OPENAI_ASTRA_PRIORITY_ENABLED=false` and recreate only the application
+to restore the previous Astra selection policy. This switch does not rewrite account priorities
+or change the expiry worker. No schema migration is introduced.
 
 ## Account threshold override
 

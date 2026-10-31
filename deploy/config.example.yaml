@@ -564,6 +564,11 @@ gateway:
     # Undated accounts follow dated accounts; expired accounts are last. Equal dates share a rank.
     # Environment: GATEWAY_SCHEDULING_ACCOUNT_EXPIRY_PRIORITY_ENABLED=true
     account_expiry_priority_enabled: false
+    # GPT-6 Astra uses lower numeric account priorities before load/cost/sticky preferences.
+    # Works with advanced scheduling on or off; busy/ineligible accounts fall through.
+    # Non-movable previous_response_id chains and guardian parent affinity stay pinned.
+    # Environment: GATEWAY_SCHEDULING_OPENAI_ASTRA_PRIORITY_ENABLED=false disables this policy.
+    openai_astra_priority_enabled: true
     # Enable batch load calculation for scheduling
     # 启用调度批量负载计算
     load_batch_enabled: true
