@@ -134,6 +134,7 @@ const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`a
 const elapsed = (job: RefillJob) => { const seconds = Math.max(0, Math.floor(((job.finished_at ? Date.parse(job.finished_at) : now.value) - Date.parse(job.created_at)) / 1000)); return `${Math.floor(seconds / 60)}m ${seconds % 60}s` }
 function includeMonitor() { if (form.value && !form.value.delivery_group_ids.includes(form.value.group_id)) form.value.delivery_group_ids.push(form.value.group_id) }
 function accept(data: RefillView, reset: boolean) {
+  if (!reset && data.revision < revision) return
   if (!reset && dirty.value && data.revision !== revision) conflict.value = true
   if (reset || !dirty.value) {
     form.value = JSON.parse(JSON.stringify(data.config))

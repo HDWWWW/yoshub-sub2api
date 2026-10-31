@@ -32,7 +32,19 @@ describe('AccountRefillModal', () => {
   expect((w.get('[data-testid="refill-token"]').element as HTMLInputElement).value).toBe('')
   expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined(); w.unmount()
  })
- it('blocks a stale form and stops polling after close', async () => {
+ it('ignores a poll started before a successful save', async () => {
+  const w = await open()
+  let resolvePoll!: (value: ReturnType<typeof response>) => void
+  get.mockImplementationOnce(() => new Promise(resolve => { resolvePoll = resolve }))
+  await vi.advanceTimersByTimeAsync(15000)
+  await w.get('[data-testid="refill-enabled"]').setValue(true)
+  await w.get('form').trigger('submit'); await flushPromises()
+  resolvePoll(response(1)); await flushPromises()
+  expect((w.get('[data-testid="refill-enabled"]').element as HTMLInputElement).checked).toBe(true)
+  expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined()
+  w.unmount()
+ })
+ it('blocks a stale form and stops polling after close' , async () => {
   const w = await open(); await w.get('[data-testid="refill-enabled"]').setValue(true); get.mockResolvedValue(response(2))
   await vi.advanceTimersByTimeAsync(15000); await flushPromises(); expect(w.text()).toContain('accountRefill.conflict')
   await w.get('form').trigger('submit'); expect(save).not.toHaveBeenCalled()
