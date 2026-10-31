@@ -775,7 +775,9 @@
             v-model.number="priority"
             id="bulk-edit-priority"
             type="number"
-            min="1"
+            min="0"
+            max="9999"
+            step="1"
             :disabled="!enablePriority"
             class="input"
             :class="!enablePriority && 'cursor-not-allowed opacity-50'"
@@ -1955,6 +1957,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (enablePriority.value) {
     updates.priority = priority.value
+    updates.yoshub_priority_mode = 'manual'
   }
 
   if (enableRateMultiplier.value) {

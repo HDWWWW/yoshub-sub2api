@@ -4,6 +4,9 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +16,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,6 +36,7 @@ func TestAccountProxySelectionLargePoolAndTransactionalLeastUsed(t *testing.T) {
  INSERT INTO accounts VALUES(1,5,NULL),(2,6,NULL),(3,7,NULL),(4,8,NOW());
 `)
 	require.NoError(t, err)
+	installProxyBindingLimitSchema(t, db)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	repo := newProxyRepositoryWithSQL(client, db)
 	// 真实 2 万条池只返回指定页；不用账户聚合管理列表。
@@ -135,6 +140,7 @@ func TestAccountProxySelectionConcurrentRandomAndLeastUsedExclusive(t *testing.T
  CREATE TABLE accounts(id BIGINT PRIMARY KEY,proxy_id BIGINT,deleted_at TIMESTAMPTZ,status TEXT DEFAULT 'inactive');
  INSERT INTO proxies(id) SELECT generate_series(1,8);`)
 	require.NoError(t, err)
+	installProxyBindingLimitSchema(t, db)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	repo := newProxyRepositoryWithSQL(client, db)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -195,4 +201,106 @@ func TestAccountProxySelectionConcurrentRandomAndLeastUsedExclusive(t *testing.T
 		require.EqualValues(t, 1, id)
 		require.NoError(t, tx.Rollback())
 	}
+}
+
+func installProxyBindingLimitSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "250_yoshub_proxy_binding_limits.sql"))
+	require.NoError(t, err)
+	_, err = db.Exec(string(migration))
+	require.NoError(t, err)
+}
+
+func TestNativeStaleAccountWritePreservesCurrentManualPriority(t *testing.T) {
+	db := scopedAdminKeyTestDB(t)
+	_, err := db.Exec(`CREATE TABLE accounts(id BIGINT PRIMARY KEY,platform TEXT,type TEXT,proxy_id BIGINT,
+	 credentials JSONB DEFAULT '{}'::jsonb, extra JSONB DEFAULT '{}'::jsonb,deleted_at TIMESTAMPTZ);
+	 INSERT INTO accounts(id,platform,type,extra) VALUES(1,'openai','oauth','{"yoshub_manual_scheduling_priority":0}');`)
+	require.NoError(t, err)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	tx, err := client.Tx(context.Background())
+	require.NoError(t, err)
+	defer tx.Rollback()
+	stale := &service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Extra: map[string]any{service.AccountManualPriorityExtraKey: 9, "supplier": true}}
+	merged, err := lockAndMergeAccountProbeExtra(context.Background(), tx.Client(), stale, nil, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, merged[service.AccountManualPriorityExtraKey])
+	require.Equal(t, true, merged["supplier"])
+}
+
+func TestProxyBindingLimitsCapacityAndConcurrentAllocation(t *testing.T) {
+	db := scopedAdminKeyTestDB(t)
+	_, err := db.Exec(`CREATE TABLE proxies(id BIGINT PRIMARY KEY,status TEXT DEFAULT 'active',expires_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ);
+ CREATE TABLE accounts(id BIGINT PRIMARY KEY,proxy_id BIGINT,deleted_at TIMESTAMPTZ);
+ INSERT INTO proxies(id) VALUES(1),(2);`)
+	require.NoError(t, err)
+	installProxyBindingLimitSchema(t, db)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	repo := newProxyRepositoryWithSQL(client, db)
+	ctx := context.Background()
+	limits, err := repo.GetProxyBindingLimits(ctx, []int64{1, 2})
+	require.NoError(t, err)
+	require.Equal(t, 1, limits[0].MaxAccounts)
+	require.NoError(t, repo.SetProxyBindingLimits(ctx, []int64{1, 2}, 3))
+	require.Error(t, repo.SetProxyBindingLimits(ctx, []int64{1, 999}, 9), "missing IDs must rollback whole batch")
+	limits, err = repo.GetProxyBindingLimits(ctx, []int64{1})
+	require.NoError(t, err)
+	require.Equal(t, 3, limits[0].MaxAccounts)
+	require.Error(t, repo.SetProxyBindingLimits(ctx, []int64{1}, 0))
+	var wg sync.WaitGroup
+	failures := make(chan error, 32)
+	for i := 1; i <= 32; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			tx, e := client.Tx(ctx)
+			if e != nil {
+				failures <- e
+				return
+			}
+			defer tx.Rollback()
+			c := dbent.NewTxContext(ctx, tx)
+			mode := "random"
+			if id%2 == 0 {
+				mode = "least_used"
+			}
+			proxy, e := repo.SelectAccountProxy(c, mode)
+			if e == nil && proxy > 0 {
+				_, e = tx.Client().ExecContext(c, `INSERT INTO accounts(id,proxy_id) VALUES($1,$2)`, id, proxy)
+			}
+			if e == nil {
+				e = tx.Commit()
+			}
+			failures <- e
+		}(i)
+	}
+	wg.Wait()
+	close(failures)
+	for e := range failures {
+		require.NoError(t, e)
+	}
+	limits, err = repo.GetProxyBindingLimits(ctx, []int64{1, 2})
+	require.NoError(t, err)
+	for _, limit := range limits {
+		require.EqualValues(t, 3, limit.AccountCount)
+	}
+	free, err := repo.HasFreeAccountProxy(ctx)
+	require.NoError(t, err)
+	require.False(t, free)
+	require.NoError(t, repo.SetProxyBindingLimits(ctx, []int64{1, 2}, 1))
+	limits, err = repo.GetProxyBindingLimits(ctx, []int64{1, 2})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, limits[0].AccountCount, "lowering never evicts existing accounts")
+	free, err = repo.HasFreeAccountProxy(ctx)
+	require.NoError(t, err)
+	require.False(t, free)
+	// Capacity expansion immediately makes exactly one additional slot available.
+	require.NoError(t, repo.SetProxyBindingLimits(ctx, []int64{1}, 4))
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	id, err := repo.SelectAccountProxy(dbent.NewTxContext(ctx, tx), "least_used")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, id)
 }

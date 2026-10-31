@@ -73,6 +73,7 @@
               <Icon name="trash" size="md" class="mr-2" />
               {{ t('admin.proxies.batchDeleteAction') }}
             </button>
+            <button class="btn btn-secondary" :disabled="selectedCount === 0 || selectedCount > 1000" @click="openBindingLimits([...selectedProxyIds])">{{ t('accountRefill.batchBindingLimits') }}</button>
             <button @click="showImportData = true" class="btn btn-secondary">
               {{ t('admin.proxies.dataImport') }}
             </button>
@@ -213,6 +214,7 @@
             >
               {{ t('admin.groups.accountsCount', { count: 0 }) }}
             </span>
+            <button type="button" class="mt-1 block text-xs text-primary-600" @click="openBindingLimits([row.id])">{{ t('accountRefill.bindingLimit') }}: {{ bindingLimits[row.id]?.max_accounts ?? '—' }}</button>
           </template>
 
           <template #cell-latency="{ row }">
@@ -365,6 +367,13 @@
         />
       </template>
     </TablePageLayout>
+
+    <BaseDialog :show="showBindingLimits" :title="t('accountRefill.bindingLimitTitle')" @close="showBindingLimits = false">
+      <p class="mb-3 text-sm text-gray-500">{{ t('accountRefill.bindingLimitHint', { count: bindingLimitIDs.length }) }}</p>
+      <label><span class="input-label">{{ t('accountRefill.bindingLimit') }}</span><input v-model.number="bindingLimitDraft" type="number" min="1" max="100000" step="1" class="input" :disabled="bindingLimitSaving" /></label>
+      <p v-if="bindingLimitError" class="mt-2 text-sm text-red-600" role="alert">{{ bindingLimitError }}</p>
+      <template #footer><button class="btn btn-primary" :disabled="bindingLimitSaving || !Number.isInteger(bindingLimitDraft) || bindingLimitDraft < 1 || bindingLimitDraft > 100000" @click="saveBindingLimits">{{ t('common.save') }}</button></template>
+    </BaseDialog>
 
     <!-- Create Proxy Modal -->
     <BaseDialog
@@ -975,6 +984,8 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import { proxyBindingLimitsAPI, type ProxyBindingLimit } from '@/api/admin/proxyBindingLimits'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
@@ -1038,6 +1049,24 @@ const editStatusOptions = computed(() => [
 ])
 
 const proxies = ref<Proxy[]>([])
+const bindingLimits = ref<Record<number, ProxyBindingLimit>>({})
+const showBindingLimits = ref(false), bindingLimitSaving = ref(false), bindingLimitError = ref('')
+const bindingLimitIDs = ref<number[]>([]), bindingLimitDraft = ref(1)
+const openBindingLimits = (ids: number[]) => {
+  bindingLimitIDs.value = [...ids]
+  bindingLimitDraft.value = ids.length === 1 ? (bindingLimits.value[ids[0]!]?.max_accounts ?? 1) : 1
+  bindingLimitError.value = ''; showBindingLimits.value = true
+}
+const saveBindingLimits = async () => {
+  if (bindingLimitSaving.value) return
+  bindingLimitSaving.value = true; bindingLimitError.value = ''
+  try {
+    await proxyBindingLimitsAPI.save(bindingLimitIDs.value, bindingLimitDraft.value)
+    showBindingLimits.value = false
+    await loadProxies()
+  } catch (e) { bindingLimitError.value = extractApiErrorMessage(e, t('accountRefill.bindingLimitError')) }
+  finally { bindingLimitSaving.value = false }
+}
 const visiblePasswordIds = reactive(new Set<number>())
 const copyMenuProxyId = ref<number | null>(null)
 const loading = ref(false)
@@ -1207,6 +1236,13 @@ const loadProxies = async () => {
     proxies.value = response.items
     pagination.total = response.total
     pagination.pages = response.pages
+    bindingLimits.value = {}
+    if (response.items.length) {
+      try {
+        const limits = await proxyBindingLimitsAPI.get(response.items.map(p => p.id), currentAbortController.signal)
+        if (abortController === currentAbortController && !currentAbortController.signal.aborted) bindingLimits.value = Object.fromEntries(limits.map(item => [item.proxy_id, item]))
+      } catch (e) { if (!isAbortError(e)) appStore.showError(t('accountRefill.bindingLimitError')) }
+    }
   } catch (error) {
     if (isAbortError(error)) {
       return

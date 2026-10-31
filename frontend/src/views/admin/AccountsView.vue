@@ -17,6 +17,7 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button class="btn btn-secondary" data-testid="open-account-scheduling" @click="showScheduling = true">{{ t('accountRefill.schedulingTitle') }}</button>
               <button class="btn btn-secondary" data-testid="open-account-refill" @click="showAccountRefill = true">{{ t('accountRefill.title') }}</button>
               <button
                 class="btn btn-secondary"
@@ -394,6 +395,7 @@
               @updated="handleAccountUpdated"
               @error="(message: string) => appStore.showError(message)"
             />
+            <span v-if="schedulingMetadata[row.id]" class="block text-xs text-gray-400">{{ t(schedulingMetadata[row.id]?.manual_priority != null ? 'accountRefill.priorityManual' : 'accountRefill.priorityAuto') }}</span>
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -424,24 +426,8 @@
           <template #cell-created_at="{ value }">
             <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
           </template>
-          <template #cell-expires_at="{ row, value }">
-            <div class="flex flex-col items-start gap-1">
-              <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatExpiresAt(value) }}</span>
-              <div v-if="isExpired(value) || (row.auto_pause_on_expired && value)" class="flex items-center gap-1">
-                <span
-                  v-if="isExpired(value)"
-                  class="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                >
-                  {{ t('admin.accounts.expired') }}
-                </span>
-                <span
-                  v-if="row.auto_pause_on_expired && value"
-                  class="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                >
-                  {{ t('admin.accounts.autoPauseOnExpired') }}
-                </span>
-              </div>
-            </div>
+          <template #cell-expires_at="{ row }">
+            <AccountLeaseCell :metadata="schedulingMetadata[row.id]" :auto-pause="row.auto_pause_on_expired" :failed="schedulingMetadataFailed" />
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
@@ -465,6 +451,7 @@
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
+    <AccountSchedulingModal :show="showScheduling" :groups="groups" :initial-group="Number(params.group) || 0" @close="showScheduling = false" @updated="load()" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
@@ -546,6 +533,9 @@ import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import AccountPriorityCell from '@/components/account/AccountPriorityCell.vue'
+import AccountLeaseCell from '@/components/account/AccountLeaseCell.vue'
+import AccountSchedulingModal from '@/components/admin/account/AccountSchedulingModal.vue'
+import { accountSchedulingAPI, type AccountSchedulingMetadata } from '@/api/admin/accountScheduling'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
@@ -621,6 +611,10 @@ const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
 const showAccountRefill = ref(false)
+const showScheduling = ref(false)
+const schedulingMetadata = ref<Record<number, AccountSchedulingMetadata>>({})
+const schedulingMetadataFailed = ref(false)
+let metadataGeneration = 0
 const showBulkConcurrency = ref(false)
 const bulkConcurrencyFilters = ref<Partial<ReturnType<typeof buildBulkEditFilterSnapshot>>>({})
 const bulkConcurrencyGroupLabel = ref('')
@@ -1198,6 +1192,21 @@ useSwipeSelect(accountTableRef, {
   batchUpdate
 }, swipeVirtualContext)
 
+const refreshSchedulingMetadata = async () => {
+  const current = ++metadataGeneration
+  const ids = accounts.value.map(a => a.id)
+  if (!ids.length) { schedulingMetadata.value = {}; return }
+  schedulingMetadataFailed.value = false
+  try {
+    const data = await accountSchedulingAPI.metadata(ids)
+    if (current === metadataGeneration) schedulingMetadata.value = Object.fromEntries(data.map(item => [item.account_id, item]))
+  } catch {
+    if (current === metadataGeneration) { schedulingMetadata.value = {}; schedulingMetadataFailed.value = true }
+  }
+}
+watch(accounts, () => { void refreshSchedulingMetadata() })
+watch(showEdit, (show) => { if (!show) void refreshSchedulingMetadata() })
+
 const resetAutoRefreshCache = () => {
   autoRefreshETag.value = null
   upstreamBillingRateETag.value = null
@@ -1427,6 +1436,7 @@ const isAnyModalOpen = computed(() => {
     showSync.value ||
     showImportData.value ||
     showExportDataDialog.value ||
+    showScheduling.value ||
     showBulkEdit.value ||
     showAccountRefill.value ||
     showBulkConcurrency.value ||
@@ -1870,7 +1880,7 @@ const allColumns = computed(() => {
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
-    { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },
+    { key: 'expires_at', label: t('accountRefill.leaseTimes'), sortable: false },
     { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false },
     { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false }
   )
@@ -2550,25 +2560,6 @@ const handleTempUnschedReset = async (updated: Account) => {
   tempUnschedAcc.value = null
   patchAccountInList(updated)
   enterAutoRefreshSilentWindow()
-}
-const formatExpiresAt = (value: number | null) => {
-  if (!value) return '-'
-  return formatDateTime(
-    new Date(value * 1000),
-    {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    },
-    'sv-SE'
-  )
-}
-const isExpired = (value: number | null) => {
-  if (!value) return false
-  return value * 1000 <= Date.now()
 }
 // 所绑定代理的有效期(逻辑同 /admin/proxies,见 utils/proxyExpiry)
 const proxyExpiryBadge = (p: AccountProxy): string => proxyExpiryBadgeClass(p.expires_at, p.status)

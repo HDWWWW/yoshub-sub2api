@@ -1609,6 +1609,7 @@ export interface CreateAccountRequest {
 }
 
 export interface UpdateAccountRequest {
+	yoshub_priority_mode?: 'manual' | 'auto'
   name?: string
   notes?: string | null
   type?: AccountType

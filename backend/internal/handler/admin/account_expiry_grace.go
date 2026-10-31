@@ -46,7 +46,9 @@ func (h *AccountHandler) accountExpiryGrace(c *gin.Context, update bool) {
 		}
 	}
 	c.Header("Cache-Control", "no-store")
-	response.Success(c, gin.H{"minutes": a.ExpiryGraceSeconds() / 60, "effective_expires_at": a.SchedulingExpiresAt()})
+	metadata := service.SchedulingMetadata(a)
+	response.Success(c, gin.H{"minutes": metadata.GraceMinutes, "effective_expires_at": metadata.EffectiveExpiresAt,
+		"source_expires_at": metadata.SourceExpiresAt, "source_expiry_origin": metadata.SourceExpiryOrigin})
 }
 
 func (h *AccountHandler) GetAccountExpiryGrace(c *gin.Context)    { h.accountExpiryGrace(c, false) }

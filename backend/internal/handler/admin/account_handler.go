@@ -143,6 +143,7 @@ type CreateAccountRequest struct {
 // UpdateAccountRequest represents update account request
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateAccountRequest struct {
+	SchedulingPriorityMode  string         `json:"yoshub_priority_mode"`
 	Name                    string         `json:"name"`
 	Notes                   *string        `json:"notes"`
 	Type                    string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account"`
@@ -164,6 +165,7 @@ type UpdateAccountRequest struct {
 
 // BulkUpdateAccountsRequest represents the payload for bulk editing accounts
 type BulkUpdateAccountsRequest struct {
+	SchedulingPriorityMode  string                    `json:"yoshub_priority_mode"`
 	AccountIDs              []int64                   `json:"account_ids"`
 	Filters                 *BulkUpdateAccountFilters `json:"filters"`
 	Name                    string                    `json:"name"`
@@ -1180,23 +1182,24 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
 	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
-		Name:                  req.Name,
-		Notes:                 req.Notes,
-		Type:                  req.Type,
-		Credentials:           req.Credentials,
-		Extra:                 req.Extra,
-		ProxyID:               req.ProxyID,
-		Concurrency:           req.Concurrency, // 指针类型，nil 表示未提供
-		Priority:              req.Priority,    // 指针类型，nil 表示未提供
-		RateMultiplier:        req.RateMultiplier,
-		LoadFactor:            req.LoadFactor,
-		Status:                req.Status,
-		GroupIDs:              req.GroupIDs,
-		ExpiresAt:             req.ExpiresAt,
-		AutoPauseOnExpired:    req.AutoPauseOnExpired,
-		ProbeEnabled:          req.ProbeEnabled,
-		RateSyncEnabled:       req.RateSyncEnabled,
-		SkipMixedChannelCheck: skipCheck,
+		SchedulingPriorityMode: req.SchedulingPriorityMode,
+		Name:                   req.Name,
+		Notes:                  req.Notes,
+		Type:                   req.Type,
+		Credentials:            req.Credentials,
+		Extra:                  req.Extra,
+		ProxyID:                req.ProxyID,
+		Concurrency:            req.Concurrency, // 指针类型，nil 表示未提供
+		Priority:               req.Priority,    // 指针类型，nil 表示未提供
+		RateMultiplier:         req.RateMultiplier,
+		LoadFactor:             req.LoadFactor,
+		Status:                 req.Status,
+		GroupIDs:               req.GroupIDs,
+		ExpiresAt:              req.ExpiresAt,
+		AutoPauseOnExpired:     req.AutoPauseOnExpired,
+		ProbeEnabled:           req.ProbeEnabled,
+		RateSyncEnabled:        req.RateSyncEnabled,
+		SkipMixedChannelCheck:  skipCheck,
 	})
 	if err != nil {
 		// 检查是否为混合渠道错误
@@ -2338,6 +2341,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
 	hasUpdates := req.Name != "" ||
+		req.SchedulingPriorityMode != "" ||
 		req.ProxyID != nil ||
 		req.Concurrency != nil ||
 		req.Priority != nil ||
@@ -2356,21 +2360,22 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	}
 
 	result, err := h.adminService.BulkUpdateAccounts(c.Request.Context(), &service.BulkUpdateAccountsInput{
-		AccountIDs:            req.AccountIDs,
-		Filters:               toServiceBulkUpdateAccountFilters(req.Filters),
-		Name:                  req.Name,
-		ProxyID:               req.ProxyID,
-		Concurrency:           req.Concurrency,
-		Priority:              req.Priority,
-		RateMultiplier:        req.RateMultiplier,
-		LoadFactor:            req.LoadFactor,
-		Status:                req.Status,
-		Schedulable:           req.Schedulable,
-		GroupIDs:              req.GroupIDs,
-		Credentials:           req.Credentials,
-		Extra:                 req.Extra,
-		ProbeEnabled:          req.ProbeEnabled,
-		SkipMixedChannelCheck: skipCheck,
+		SchedulingPriorityMode: req.SchedulingPriorityMode,
+		AccountIDs:             req.AccountIDs,
+		Filters:                toServiceBulkUpdateAccountFilters(req.Filters),
+		Name:                   req.Name,
+		ProxyID:                req.ProxyID,
+		Concurrency:            req.Concurrency,
+		Priority:               req.Priority,
+		RateMultiplier:         req.RateMultiplier,
+		LoadFactor:             req.LoadFactor,
+		Status:                 req.Status,
+		Schedulable:            req.Schedulable,
+		GroupIDs:               req.GroupIDs,
+		Credentials:            req.Credentials,
+		Extra:                  req.Extra,
+		ProbeEnabled:           req.ProbeEnabled,
+		SkipMixedChannelCheck:  skipCheck,
 	})
 	if err != nil {
 		var mixedErr *service.MixedChannelError

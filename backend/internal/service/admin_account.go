@@ -415,6 +415,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		return nil, errors.New("typesafe accounts only support apikey credentials")
 	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
+	delete(accountExtra, AccountManualPriorityExtraKey)
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingProbeExtraKey)
@@ -581,6 +582,12 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	if err := validateSchedulingPriorityMode(ctx, input.SchedulingPriorityMode, input.Priority); err != nil {
+		return nil, err
+	}
+	if input.SchedulingPriorityMode != "" {
+		ctx = context.WithValue(ctx, manualPriorityWriteKey{}, true)
+	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -830,6 +837,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.Priority != nil {
 		account.Priority = *input.Priority
 	}
+	account.Extra = applyManualSchedulingPriority(account.Extra, input.SchedulingPriorityMode, input.Priority)
 	if input.RateMultiplier != nil {
 		if *input.RateMultiplier < 0 {
 			return nil, errors.New("rate_multiplier must be >= 0")
@@ -978,6 +986,9 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
+	if err := validateSchedulingPriorityMode(ctx, input.SchedulingPriorityMode, input.Priority); err != nil {
+		return nil, err
+	}
 	if input.Concurrency != nil && (*input.Concurrency < 1 || int64(*input.Concurrency) > 2147483647) {
 		return nil, infraerrors.BadRequest("INVALID_CONCURRENCY", "concurrency must be a positive 32-bit integer")
 	}
@@ -1175,6 +1186,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.Priority != nil {
 		repoUpdates.Priority = input.Priority
 	}
+	repoUpdates.Extra = applyManualSchedulingPriority(repoUpdates.Extra, input.SchedulingPriorityMode, input.Priority)
 	if input.RateMultiplier != nil {
 		repoUpdates.RateMultiplier = input.RateMultiplier
 	}

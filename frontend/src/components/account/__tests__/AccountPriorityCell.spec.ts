@@ -35,12 +35,12 @@ describe('AccountPriorityCell', () => {
     await flushPromises()
 
     expect(update).toHaveBeenCalledTimes(1)
-    expect(update).toHaveBeenCalledWith(7, { priority: 4 })
+    expect(update).toHaveBeenCalledWith(7, { priority: 4, yoshub_priority_mode: 'manual' })
     expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({ id: 7, priority: 4 })
   })
 
-  it('does not go below 1', async () => {
-    const wrapper = mountCell(account({ priority: 1 }))
+  it('does not go below 0', async () => {
+    const wrapper = mountCell(account({ priority: 0 }))
     const dec = wrapper.get('[data-testid="account-priority-decrement"]')
     expect(dec.attributes('disabled')).toBeDefined()
     // 到达下限时按钮仍应随悬停显隐，而不是常驻半透明
@@ -58,7 +58,7 @@ describe('AccountPriorityCell', () => {
     await input.setValue('12')
     await input.trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(update).toHaveBeenCalledWith(7, { priority: 12 })
+    expect(update).toHaveBeenCalledWith(7, { priority: 12, yoshub_priority_mode: 'manual' })
 
     vi.mocked(update).mockClear()
     await wrapper.setProps({ account: account({ priority: 12 }) })

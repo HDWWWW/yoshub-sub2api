@@ -11,7 +11,7 @@ import (
 func TestNativeAccountResponseHidesImportPolicyAndPreservesSupplierFields(t *testing.T) {
 	expiry := time.Now().Add(time.Hour).Truncate(time.Second)
 	a := &service.Account{ID: 7, Priority: 17, ExpiresAt: &expiry, Schedulable: false, GroupIDs: []int64{2, 5},
-		Extra: map[string]any{"supplier": "unchanged", service.AccountImportExpiryGraceExtraKey: 3600,
+		Extra: map[string]any{"supplier": "unchanged", service.AccountImportExpiryGraceExtraKey: 3600, service.AccountManualPriorityExtraKey: 0,
 			service.AccountSourceExpiryExtraKey: expiry.Unix(), service.AccountSourceExpiryOriginExtraKey: "supplier_api", service.AccountSourceExpiryCheckedExtraKey: "2026-11-01T00:00:00Z",
 			"import_original_expires_at": expiry.Unix(), "import_expiry_offset_seconds": 3600}}
 	dto := AccountFromService(a)
@@ -21,5 +21,5 @@ func TestNativeAccountResponseHidesImportPolicyAndPreservesSupplierFields(t *tes
 	require.False(t, dto.Schedulable)
 	require.Equal(t, []int64{2, 5}, dto.GroupIDs)
 	require.Equal(t, map[string]any{"supplier": "unchanged"}, dto.Extra)
-	require.Len(t, a.Extra, 7, "redaction must not modify the source/cached metadata")
+	require.Len(t, a.Extra, 8, "redaction must not modify the source/cached metadata")
 }

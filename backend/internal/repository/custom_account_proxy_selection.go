@@ -9,7 +9,8 @@ import (
 
 const freeAccountProxyPredicate = `p.deleted_at IS NULL AND p.status='active'
  AND (p.expires_at IS NULL OR p.expires_at>NOW())
- AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.proxy_id=p.id AND a.deleted_at IS NULL)`
+ AND (SELECT COUNT(*) FROM accounts a WHERE a.proxy_id=p.id AND a.deleted_at IS NULL)
+   < COALESCE((SELECT l.max_accounts FROM yoshub_proxy_binding_limits l WHERE l.proxy_id=p.id),1)`
 
 // HasFreeAccountProxy is a read-only purchase preflight, not a reservation.
 // Delivery always rechecks under SelectAccountProxy's transaction lock.
@@ -20,7 +21,7 @@ func (r *proxyRepository) HasFreeAccountProxy(ctx context.Context) (bool, error)
 }
 
 // SelectAccountProxy 在数据库内选出单个 ID，不把整个代理池或密码载入应用。
-// 二开自动分配只使用未绑定的代理。随机与最空闲共用事务锁，持有到账号绑定提交，
+// 二开自动分配只使用未达绑定上限的代理。随机与最空闲共用事务锁，持有到账号绑定提交，
 // 避免跨实例的推送和补号同时拿到同一个空闲代理；不改变原生显式绑定语义。
 func (r *proxyRepository) SelectAccountProxy(ctx context.Context, mode string) (int64, error) {
 	tx := dbent.TxFromContext(ctx)
@@ -32,11 +33,11 @@ func (r *proxyRepository) SelectAccountProxy(ctx context.Context, mode string) (
 	switch mode {
 	case "random":
 	case "least_used":
-		order = "p.id"
+		order = "(SELECT COUNT(*) FROM accounts a WHERE a.proxy_id=p.id AND a.deleted_at IS NULL), p.id"
 	default:
 		return 0, fmt.Errorf("不支持的代理选择模式")
 	}
-	if _, err := client.ExecContext(ctx, `SELECT pg_advisory_xact_lock(742319830125)`); err != nil {
+	if _, err := client.ExecContext(ctx, accountProxyAllocationLock); err != nil {
 		return 0, err
 	}
 	query := `SELECT p.id FROM proxies p WHERE ` + freeAccountProxyPredicate + ` ORDER BY ` + order + ` LIMIT 1`

@@ -17,7 +17,7 @@ const AccountSourceExpiryOriginExtraKey = "yoshub_source_expiry_origin"
 const AccountSourceExpiryCheckedExtraKey = "yoshub_source_expiry_checked_at"
 
 func isAccountImportExpiryExtra(key string) bool {
-	return key == AccountImportExpiryGraceExtraKey || key == AccountSourceExpiryExtraKey || key == AccountSourceExpiryOriginExtraKey || key == AccountSourceExpiryCheckedExtraKey || key == "import_original_expires_at" || key == "import_expiry_offset_seconds"
+	return key == AccountManualPriorityExtraKey || key == AccountImportExpiryGraceExtraKey || key == AccountSourceExpiryExtraKey || key == AccountSourceExpiryOriginExtraKey || key == AccountSourceExpiryCheckedExtraKey || key == "import_original_expires_at" || key == "import_expiry_offset_seconds"
 }
 
 func (a *Account) SourceExpiresAt() (*time.Time, string) {
@@ -128,6 +128,9 @@ func (a *Account) isSchedulingExpired(now time.Time) bool {
 func (a *Account) SchedulingPriority() int {
 	if a == nil {
 		return 0
+	}
+	if priority, manual := a.ManualSchedulingPriority(); manual {
+		return priority
 	}
 	if a.schedulingPriority > 0 {
 		return a.schedulingPriority

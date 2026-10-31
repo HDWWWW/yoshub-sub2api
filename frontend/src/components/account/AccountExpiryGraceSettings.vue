@@ -14,6 +14,7 @@
           <button v-for="preset in [0, 30, 60, 120]" :key="preset" type="button" class="btn btn-secondary text-xs" :disabled="saving" @click="minutes = preset">{{ t('accountRefill.minutePreset', { minutes: preset }) }}</button>
         </div>
         <p class="text-xs leading-5 text-gray-500">{{ t('accountRefill.expiryGraceHint') }}</p>
+        <p class="text-xs text-gray-500">{{ t('accountRefill.supplierReclaimAt') }}: {{ sourceExpiry ? new Date(sourceExpiry).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '—' }}</p>
         <p v-if="effectiveExpiry" class="text-xs text-gray-500">{{ t('accountRefill.effectiveExpiry') }}: {{ new Date(effectiveExpiry).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) }}</p>
         <button type="button" class="btn btn-secondary" :disabled="saving || !valid || minutes === saved" data-testid="expiry-grace-save" @click="save">{{ t(saving ? 'accountRefill.saving' : 'accountRefill.saveExpiryGrace') }}</button>
         <p v-if="success" class="text-xs text-green-600" role="status">{{ t('accountRefill.expiryGraceSaved') }}</p>
@@ -31,7 +32,7 @@ import { accountExpiryGraceAPI } from '@/api/admin/accountExpiryGrace'
 const props = defineProps<{ accountId: number; active: boolean }>()
 const { t } = useI18n()
 const expanded = ref(false), loading = ref(false), loaded = ref(false), saving = ref(false), success = ref(false)
-const minutes = ref(0), saved = ref(0), effectiveExpiry = ref<string | null>(null), error = ref('')
+const minutes = ref(0), saved = ref(0), effectiveExpiry = ref<string | null>(null), sourceExpiry = ref<string | null>(null), error = ref('')
 const valid = computed(() => Number.isInteger(minutes.value) && minutes.value >= 0 && minutes.value <= 1440)
 let generation = 0
 watch(() => [props.accountId, props.active], () => {
@@ -46,7 +47,7 @@ async function open() {
   try {
     const result = await accountExpiryGraceAPI.get(props.accountId)
     if (current !== generation) return
-    minutes.value = saved.value = result.minutes; effectiveExpiry.value = result.effective_expires_at; loaded.value = true
+    minutes.value = saved.value = result.minutes; effectiveExpiry.value = result.effective_expires_at; sourceExpiry.value = result.source_expires_at; loaded.value = true
   } catch { if (current === generation) error.value = t('accountRefill.expiryGraceError') }
   finally { if (current === generation) loading.value = false }
 }
@@ -57,7 +58,7 @@ async function save() {
   try {
     const result = await accountExpiryGraceAPI.save(props.accountId, minutes.value)
     if (current !== generation) return
-    minutes.value = saved.value = result.minutes; effectiveExpiry.value = result.effective_expires_at; success.value = true
+    minutes.value = saved.value = result.minutes; effectiveExpiry.value = result.effective_expires_at; sourceExpiry.value = result.source_expires_at; success.value = true
   } catch { if (current === generation) error.value = t('accountRefill.expiryGraceError') }
   finally { if (current === generation) saving.value = false }
 }

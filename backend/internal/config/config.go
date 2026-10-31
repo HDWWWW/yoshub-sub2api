@@ -1494,7 +1494,7 @@ type TLSProfileConfig struct {
 
 // GatewaySchedulingConfig accounts scheduling configuration.
 type GatewaySchedulingConfig struct {
-	// AccountExpiryPriorityEnabled automatically ranks account priorities by expiry every minute.
+	// AccountExpiryPriorityEnabled derives expiry ranks for each candidate pool without rewriting native priorities.
 	AccountExpiryPriorityEnabled bool `mapstructure:"account_expiry_priority_enabled"`
 	// OpenAIAstraPriorityEnabled drains lower numeric account priorities first for GPT-6 Astra.
 	OpenAIAstraPriorityEnabled bool `mapstructure:"openai_astra_priority_enabled"`

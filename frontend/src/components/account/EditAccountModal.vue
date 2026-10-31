@@ -1929,7 +1929,9 @@
           <input
             v-model.number="form.priority"
             type="number"
-            min="1"
+            min="0"
+            max="9999"
+            step="1"
             class="input"
             data-tour="account-form-priority"
           />
@@ -5613,6 +5615,7 @@ const handleSubmit = async () => {
 	}
 
   const updatePayload: Record<string, unknown> = { ...form }
+  if (form.priority !== props.account.priority) updatePayload.yoshub_priority_mode = 'manual'
   try {
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
     if (updatePayload.proxy_id === null) {

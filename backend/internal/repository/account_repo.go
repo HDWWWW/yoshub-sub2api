@@ -687,7 +687,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'opencode_go_usage_auto_refresh',
 			extra -> 'opencode_go_usage_snapshot',
 			extra -> 'grok_observed_models',
-			extra -> 'upstream_model_metadata'
+			extra -> 'upstream_model_metadata',
+			extra -> 'yoshub_manual_scheduling_priority'
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -718,6 +719,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOpenCodeSnapshot        []byte
 		currentGrokObservedModels      []byte
 		currentUpstreamModelMetadata   []byte
+		currentManualPriority          []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -734,6 +736,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentOpenCodeSnapshot,
 		&currentGrokObservedModels,
 		&currentUpstreamModelMetadata,
+		&currentManualPriority,
 	); err != nil {
 		return nil, err
 	}
@@ -742,6 +745,16 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	if !service.HasManualSchedulingPriorityWrite(ctx) {
+		delete(extra, service.AccountManualPriorityExtraKey)
+		value, ok, err := decodeAccountExtraJSON(currentManualPriority)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			extra[service.AccountManualPriorityExtraKey] = value
+		}
+	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,

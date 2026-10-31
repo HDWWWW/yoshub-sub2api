@@ -777,7 +777,7 @@ func (s *AccountRefillService) selectProxy(ctx context.Context, d AccountRefillD
 			return nil, errors.New("无法读取空闲代理，请稍后重试")
 		}
 		if !free {
-			return nil, errors.New("没有未绑定账号的有效空闲代理，暂停新增补号")
+			return nil, errors.New("没有未达绑定上限的有效空闲代理，暂停新增补号")
 		}
 		return nil, nil // Preflight only; reserve atomically when creating the account.
 	}

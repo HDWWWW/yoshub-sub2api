@@ -66,7 +66,7 @@ func (s *adminServiceImpl) scopedAccountProxySelection(ctx context.Context, mode
 		return nil, err
 	}
 	if selected <= 0 {
-		return nil, infraerrors.BadRequest("PROXY_POOL_EMPTY", "没有启用、未过期且未绑定账号的空闲代理，请添加代理或释放已有绑定后重试")
+		return nil, infraerrors.BadRequest("PROXY_POOL_EMPTY", "没有启用、未过期且未达绑定上限的代理，请添加代理、提高上限或释放已有绑定后重试")
 	}
 	return &selected, nil
 }

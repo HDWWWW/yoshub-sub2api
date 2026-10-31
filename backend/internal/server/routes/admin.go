@@ -361,6 +361,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("/refill", h.Admin.Account.GetAccountRefill)
+		accounts.POST("/scheduling-metadata", h.Admin.Account.GetAccountSchedulingMetadata)
+		accounts.GET("/scheduling-preview", h.Admin.Account.GetAccountSchedulingPreview)
 		accounts.PUT("/refill", h.Admin.Account.UpdateAccountRefill)
 		accounts.POST("/refill/check", h.Admin.Account.CheckAccountRefill)
 		accounts.POST("/refill/jobs/:job_id/retry", h.Admin.Account.RetryAccountRefill)
@@ -529,6 +531,8 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 	proxies := admin.Group("/proxies")
 	{
 		proxies.GET("", h.Admin.Proxy.List)
+		proxies.POST("/binding-limits/query", h.Admin.Proxy.GetProxyBindingLimits)
+		proxies.PUT("/binding-limits", h.Admin.Proxy.SetProxyBindingLimits)
 		proxies.GET("/all", h.Admin.Proxy.GetAll)
 		// 代理导出泄露账号密码原文——要求 step-up 2FA
 		proxies.GET("/data", gin.HandlerFunc(stepUpAuth), h.Admin.Proxy.ExportData)

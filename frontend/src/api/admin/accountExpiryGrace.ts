@@ -3,6 +3,8 @@ import { apiClient } from '../client'
 export interface AccountExpiryGrace {
   minutes: number
   effective_expires_at: string | null
+  source_expires_at: string | null
+  source_expiry_origin: string
 }
 
 export const accountExpiryGraceAPI = {
