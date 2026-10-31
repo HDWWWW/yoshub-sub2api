@@ -9,10 +9,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// response.metadata is an existing non-output event understood by NewAPI.
-// Do not synthesize codex.rate_limits: it would expose account quota or invent
-// quota values, and older relays treat it as committed output, preventing retry.
-const openAIHappyFirstTokenEvent = "event: response.metadata\ndata: {\"type\":\"response.metadata\",\"metadata\":{\"gateway_status\":\"upstream_connected\"}}\n\n"
+// This extension describes the gateway connection, without inventing model
+// output or account quota. Existing Responses relays count and forward unknown
+// events, unlike response.metadata. Those relays consequently commit their
+// stream; their later pre-output retry is unavailable. This gateway excludes
+// its own notification bytes from account-failover decisions.
+const openAIHappyFirstTokenEvent = "event: gateway.status\ndata: {\"type\":\"gateway.status\",\"metadata\":{\"gateway_status\":\"upstream_connected\"}}\n\n"
 
 const openAIHappyFirstTokenDeadlineKey = "openai_happy_first_token_deadline"
 

@@ -95,6 +95,9 @@ func TestHappyFirstTokenHandlerKeepsRateLimitAndAccountFailover(t *testing.T) {
 			billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 			t.Cleanup(billing.Stop)
 			rec := &happyHandlerRecorder{ResponseRecorder: httptest.NewRecorder(), ready: make(chan struct{})}
+			if tc.chat {
+				close(rec.ready) // Chat keeps HTTP error handling and emits no early signal.
+			}
 			upstream := &happyHandlerUpstream{ready: rec.ready, status: status}
 			gateway := service.NewOpenAIGatewayService(repo, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
 				service.NewBillingService(cfg, nil), nil, billing, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, settings, nil)
@@ -120,12 +123,8 @@ func TestHappyFirstTokenHandlerKeepsRateLimitAndAccountFailover(t *testing.T) {
 			upstream.mu.Unlock()
 			// Existing OAuth 429 policy retries each account once before switching.
 			require.Equal(t, []int64{9901, 9901, 9902, 9902}, attempts, "status=%d body=%s", rec.Code, rec.Body.String())
-			if status == http.StatusOK {
-				if tc.chat {
-					require.Contains(t, rec.Body.String(), "rate_limit_error")
-				} else {
-					require.Contains(t, rec.Body.String(), "rate_limit_exceeded")
-				}
+			if status == http.StatusOK && !tc.chat {
+				require.Contains(t, rec.Body.String(), "rate_limit_exceeded")
 				require.Equal(t, http.StatusOK, rec.Code)
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"gateway_status":"upstream_connected"`))
 				if !tc.chat {
@@ -135,7 +134,8 @@ func TestHappyFirstTokenHandlerKeepsRateLimitAndAccountFailover(t *testing.T) {
 			} else {
 				require.Equal(t, http.StatusTooManyRequests, rec.Code)
 				require.Contains(t, rec.Body.String(), "rate_limit_error")
-				require.NotContains(t, rec.Body.String(), "response.metadata")
+				require.NotContains(t, rec.Body.String(), "gateway.status")
+				require.NotContains(t, rec.Body.String(), "upstream_connected")
 			}
 		})
 	}

@@ -842,23 +842,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	// 网关作为计费链路的一环，不能把下游 usage 输出绑定到客户端是否显式请求。
 	// raw Chat Completions 直转路径已经强制透出 usage，这里保持同样行为，避免级联代理计费为 0。
 	state.IncludeUsage = true
-	// A zero-choice chunk is a transport notification: it adds no model text,
-	// role, tool call, usage or finish reason. Relays can forward it immediately.
-	notification, _ := json.Marshal(gin.H{
-		"id": state.ID, "object": "chat.completion.chunk", "created": state.Created,
-		"model": originalModel, "choices": []any{},
-		"metadata": gin.H{"gateway_status": "upstream_connected"},
-	})
-	stopResponseSignals := s.startOpenAIResponseSignals(c.Request.Context(), c, account, nil, startTime, 0,
-		[]byte("data: "+string(notification)+"\n\n"))
-	defer stopResponseSignals()
-	writeHeaders := writeStreamHeaders
-	writeStreamHeaders = func() {
-		stopResponseSignals()
-		if !c.Writer.Written() {
-			writeHeaders()
-		}
-	}
+	// Do not send an early status chunk here. Existing Chat relays may buffer
+	// it and fail to classify a later stream error. Keep pre-output failures on
+	// the original HTTP error path; the early signal is Responses-only.
 
 	var usage OpenAIUsage
 	var firstTokenMs *int

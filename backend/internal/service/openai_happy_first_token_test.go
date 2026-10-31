@@ -147,7 +147,7 @@ func TestHappyFirstTokenPrecedesOutputWithoutChangingTTFT(t *testing.T) {
 			result, err := happyRunStream(s, c, resp, passthrough, time.Now())
 			require.NoError(t, err)
 			require.True(t, strings.HasPrefix(rec.Body.String(), openAIHappyFirstTokenEvent))
-			require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.metadata"`))
+			require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"gateway.status"`))
 			require.Empty(t, rec.Result().Header.Get(openAICodexTurnStateHeader))
 			require.Empty(t, rec.Result().Header.Get("X-Request-Id"))
 			_, tracked := s.openaiCodexTurnStateOrigins.Load(openAICodexTurnStateSeed(c))
@@ -197,7 +197,7 @@ func TestHappyFirstTokenPreservesFailuresAndRetry(t *testing.T) {
 				resp.Header.Set(openAICodexTurnStateHeader, "winning-account-state")
 				_, err = happyRunStream(s, c, resp, passthrough, time.Now())
 				require.NoError(t, err)
-				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.metadata"`))
+				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"gateway.status"`))
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
 				require.NotContains(t, rec.Body.String(), `"type":"response.failed"`)
 				require.Greater(t, OpenAICompactKeepaliveAdjustedWrittenSize(c), 0)
@@ -224,32 +224,32 @@ func TestHappyFirstTokenNeverDelaysRealOutputOrDropsTurnState(t *testing.T) {
 			}
 			_, err := happyRunStream(s, c, resp, false, time.Now())
 			require.NoError(t, err)
-			require.NotContains(t, rec.Body.String(), "response.metadata")
+			require.NotContains(t, rec.Body.String(), "gateway.status")
 			require.Contains(t, rec.Body.String(), "response.completed")
 			require.Equal(t, tc.state, rec.Result().Header.Get(openAICodexTurnStateHeader))
 		})
 	}
 }
 
-func TestHappyFirstTokenChatNotificationPrecedesModelOutput(t *testing.T) {
+func TestHappyFirstTokenChatRetainsOriginalOutputAndErrors(t *testing.T) {
 	c, rec := happyTestContext(t)
 	c.Request.URL.Path = "/v1/chat/completions"
 	s := happyTestService(t, 0)
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"response-real\"}}\n\n" + happySuccessStream
-	resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {"attempt-state"}}, Body: happyBodyAfterSignal(t, rec, body, 30*time.Millisecond)}
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	go func() {
+		defer writer.Close()
+		time.Sleep(30 * time.Millisecond)
+		_, _ = io.WriteString(writer, body)
+	}()
+	resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {"attempt-state"}}, Body: reader}
 	result, err := s.handleChatStreamingResponse(resp, c, happyAccount(), "test-model", "test-model", "test-model", time.Now(), 1)
 	require.NoError(t, err)
 	require.NotNil(t, result.FirstTokenMs)
 	require.GreaterOrEqual(t, *result.FirstTokenMs, 30, "the existing log measurement remains upstream-based")
-	first, _, found := strings.Cut(rec.Body.String(), "\n\n")
-	require.True(t, found)
-	var notification map[string]any
-	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(first, "data: ")), &notification))
-	require.Equal(t, "chat.completion.chunk", notification["object"])
-	require.Empty(t, notification["choices"])
-	require.NotContains(t, notification, "usage")
 	require.Contains(t, rec.Body.String(), `"content":"hello"`)
-	require.Equal(t, 1, strings.Count(rec.Body.String(), "upstream_connected"))
+	require.NotContains(t, rec.Body.String(), "upstream_connected")
 	require.Equal(t, 1, strings.Count(rec.Body.String(), "data: [DONE]"))
 }
 
@@ -269,7 +269,7 @@ func TestHappyFirstTokenRetryKeepsOriginalDeadline(t *testing.T) {
 		t.Fatal("account retry restarted the notification delay")
 	}
 	stop()
-	require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.metadata"`))
+	require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"gateway.status"`))
 }
 
 func TestHappyFirstTokenTimingStopAndScope(t *testing.T) {
