@@ -2712,6 +2712,8 @@
         </div>
       </div>
 
+      <AccountExpiryGraceSettings v-if="account?.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" :account-id="account.id" :active="show" />
+
       <div
         v-if="account?.platform === 'openai'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
@@ -3383,6 +3385,7 @@ import type {
   TempUnschedulableScope
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import AccountExpiryGraceSettings from '@/components/account/AccountExpiryGraceSettings.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'

@@ -190,6 +190,21 @@ func (a *refillTestAccounts) SetSchedulable(_ context.Context, id int64, v bool)
 	}
 	return nil
 }
+
+func (a *refillTestAccounts) UpdateExtra(_ context.Context, id int64, values map[string]any) error {
+	for i := range a.accounts {
+		if a.accounts[i].ID == id {
+			if a.accounts[i].Extra == nil {
+				a.accounts[i].Extra = map[string]any{}
+			}
+			for k, v := range values {
+				a.accounts[i].Extra[k] = v
+			}
+			return nil
+		}
+	}
+	return ErrAccountNotFound
+}
 func (a *refillTestAccounts) CreateAccount(_ context.Context, in *CreateAccountInput) (*Account, error) {
 	a.creates++
 	v, err := buildAccountForCreate(in, in.Extra)
@@ -399,7 +414,9 @@ func TestAccountRefillIntervalAndCapacityPersistence(t *testing.T) {
 	s.loads = refillTestLoads{map[int64]*AccountLoadInfo{1: {CurrentConcurrency: 60}}}
 	require.NoError(t, s.run(ctx, false))
 	require.Empty(t, p.submitted)
-	store.mutate(t, func(v *accountRefillState) { old := time.Now().Add(-31 * time.Second); v.DemandSince = &old })
+	state, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	feedRefillCapacity(s, state.Config, state.Revision, time.Now(), 30)
 	refillDue(t, store)
 	require.NoError(t, s.run(ctx, false))
 	require.Len(t, p.submitted, 1)

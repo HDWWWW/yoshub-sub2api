@@ -34,6 +34,8 @@ export interface RefillConfig {
   min_remaining_5h: number
   min_remaining_7d: number
   target_concurrency_percent: number
+  concurrency_sustain_seconds: number
+  import_expiry_grace_minutes: number
   check_seconds: number
   cooldown_seconds: number
   daily_max_count: number
@@ -63,6 +65,12 @@ export interface RefillJob {
   next_attempt_at: string
 }
 export interface RefillView {
+  lease_sync_at: string | null
+  lease_sync_message: string
+  capacity_observation: {
+    status: string; since: string | null; last_sample_at: string | null
+    sustained_seconds: number; required_seconds: number; utilization_percent: number; samples: number; ready: boolean
+  }
   config: RefillConfig
   revision: number
   token_configured: boolean
@@ -75,7 +83,7 @@ export interface RefillView {
   evaluation: {
     checked_at: string; ready: number; healthy: number; expiring: number; pending: number
     in_use: number; capacity: number; needed: number; reason: string
-    accounts: { id: number; name: string; state: string; expires_at: string | null; source_expires_at: string | null; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number }[]
+    accounts: { id: number; name: string; state: string; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number }[]
   }
   daily: { count: number; points: number; reserved_points: number; spent_points: number }
   next_check_at: string

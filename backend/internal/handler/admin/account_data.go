@@ -237,7 +237,11 @@ func (h *AccountHandler) ImportData(c *gin.Context) {
 		return
 	}
 
-	applyExternalImportExpiry(&req, c.GetString("auth_method"))
+	grace := service.AccountImportExpiryOffsetMinutes
+	if c.GetString("auth_method") == "admin_api_key" && h.accountRefill != nil {
+		grace = h.accountRefill.ImportExpiryGraceMinutes(c.Request.Context())
+	}
+	applyExternalImportExpiry(&req, c.GetString("auth_method"), grace)
 	executeAdminIdempotentJSON(c, "admin.accounts.import_data", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		return h.importData(ctx, req)
 	})

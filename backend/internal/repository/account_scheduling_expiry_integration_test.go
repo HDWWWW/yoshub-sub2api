@@ -82,3 +82,53 @@ func TestImportExpiryGraceConsistentAcrossSQLSchedulingAndAutoPause(t *testing.T
 	require.Equal(t, 7, paused.Priority)
 	require.True(t, paused.ExpiresAt.Equal(expiry))
 }
+
+func TestLeaseExpirySurvivesNativeManualRenewalAndGraceUpdates(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	client := tx.Client()
+	repo := newAccountRepositoryWithSQL(client, tx, nil)
+	now := time.Now().Truncate(time.Second)
+	native := now.AddDate(1, 0, 0)
+	lease := now.Add(-30 * time.Minute)
+	a := mustCreateAccount(t, client, &service.Account{Name: "lease-grace", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Schedulable: true, Priority: 7, ExpiresAt: &native, AutoPauseOnExpired: true, Extra: map[string]any{"import_original_expires_at": lease.Unix(), "import_expiry_offset_seconds": 3600}})
+	_, err := client.Account.UpdateOneID(a.ID).SetExpiresAt(native).SetAutoPauseOnExpired(true).Save(ctx)
+	require.NoError(t, err)
+	assertDeadline := func(expected time.Time) {
+		t.Helper()
+		loaded, e := repo.GetByID(ctx, a.ID)
+		require.NoError(t, e)
+		require.Equal(t, expected.Unix(), loaded.SchedulingExpiresAt().Unix())
+		var actual int64
+		query := "SELECT extract(epoch from " + aliasedAccountSchedulingExpirySQL("a") + ")::bigint FROM accounts a WHERE a.id=$1"
+		require.NoError(t, scanSingleRow(ctx, tx, query, []any{a.ID}, &actual))
+		require.Equal(t, expected.Unix(), actual)
+		require.True(t, loaded.ExpiresAt.Equal(native))
+		require.Equal(t, 7, loaded.Priority)
+	}
+	assertDeadline(lease.Add(time.Hour))
+	_, err = repo.AutoPauseExpiredAccounts(ctx, now)
+	require.NoError(t, err)
+	loaded, err := repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.True(t, loaded.Schedulable)
+	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountImportExpiryGraceExtraKey: 0}))
+	assertDeadline(lease)
+	// A later native date must not bypass the source lease in candidate queries.
+	eligible, err := client.Account.Query().Where(notExpiredPredicate(now)).All(ctx)
+	require.NoError(t, err)
+	for _, candidate := range eligible {
+		require.NotEqual(t, a.ID, candidate.ID)
+	}
+	_, err = repo.AutoPauseExpiredAccounts(ctx, now)
+	require.NoError(t, err)
+	loaded, err = repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.False(t, loaded.Schedulable)
+	newLease := now.Add(time.Hour)
+	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountSourceExpiryExtraKey: newLease.Unix(), service.AccountImportExpiryGraceExtraKey: 7200}))
+	assertDeadline(newLease.Add(2 * time.Hour))
+	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountSourceExpiryExtraKey: "garbage"}))
+	assertDeadline(lease.Add(2 * time.Hour))
+}

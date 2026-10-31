@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"slices"
@@ -36,18 +37,20 @@ type accountRefillLoads interface {
 }
 
 type AccountRefillService struct {
-	store     AccountRefillStore
-	encryptor SecretEncryptor
-	accounts  accountRefillAccounts
-	admin     accountRefillAdmin
-	groups    accountRefillGroups
-	loads     accountRefillLoads
-	proxies   accountRefillProxies
-	provider  RefillProvider
-	stop      chan struct{}
-	cancel    context.CancelFunc
-	once      sync.Once
-	wg        sync.WaitGroup
+	capacityMu sync.Mutex
+	capacity   refillCapacityTracker
+	store      AccountRefillStore
+	encryptor  SecretEncryptor
+	accounts   accountRefillAccounts
+	admin      accountRefillAdmin
+	groups     accountRefillGroups
+	loads      accountRefillLoads
+	proxies    accountRefillProxies
+	provider   RefillProvider
+	stop       chan struct{}
+	cancel     context.CancelFunc
+	once       sync.Once
+	wg         sync.WaitGroup
 }
 
 func NewAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor, accounts AccountRepository, admin AdminService, groups GroupRepository, loads *ConcurrencyService, proxies ProxyRepository) *AccountRefillService {
@@ -56,6 +59,22 @@ func NewAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor
 func (s *AccountRefillService) Start() {
 	ctx, stop := context.WithCancel(context.Background())
 	s.cancel = stop
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ticker := time.NewTicker(refillCapacitySampleInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sampleCtx, cancel := context.WithTimeout(ctx, refillCapacityMaxSampleGap)
+				s.sampleCapacity(sampleCtx)
+				cancel()
+			}
+		}
+	}()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -90,21 +109,24 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
-	Config                    AccountRefillConfig     `json:"config"`
-	Revision                  int64                   `json:"revision"`
-	TokenConfigured           bool                    `json:"token_configured"`
-	Key                       *RefillKeyInfo          `json:"key"`
-	Wallet                    *RefillWallet           `json:"wallet"`
-	Catalog                   *RefillCatalog          `json:"catalog"`
-	CatalogAt                 *time.Time              `json:"catalog_at"`
-	IdentityAt                *time.Time              `json:"identity_at"`
-	Jobs                      []AccountRefillJob      `json:"jobs"`
-	Evaluation                AccountRefillEvaluation `json:"evaluation"`
-	Daily                     AccountRefillDailyUsage `json:"daily"`
-	NextCheckAt               time.Time               `json:"next_check_at"`
-	NextIntervalAt            time.Time               `json:"next_interval_at"`
-	Message                   string                  `json:"message"`
-	ImportExpiryOffsetMinutes int                     `json:"import_expiry_offset_minutes"`
+	LeaseSyncAt               *time.Time                       `json:"lease_sync_at"`
+	LeaseSyncMessage          string                           `json:"lease_sync_message"`
+	CapacityObservation       AccountRefillCapacityObservation `json:"capacity_observation"`
+	Config                    AccountRefillConfig              `json:"config"`
+	Revision                  int64                            `json:"revision"`
+	TokenConfigured           bool                             `json:"token_configured"`
+	Key                       *RefillKeyInfo                   `json:"key"`
+	Wallet                    *RefillWallet                    `json:"wallet"`
+	Catalog                   *RefillCatalog                   `json:"catalog"`
+	CatalogAt                 *time.Time                       `json:"catalog_at"`
+	IdentityAt                *time.Time                       `json:"identity_at"`
+	Jobs                      []AccountRefillJob               `json:"jobs"`
+	Evaluation                AccountRefillEvaluation          `json:"evaluation"`
+	Daily                     AccountRefillDailyUsage          `json:"daily"`
+	NextCheckAt               time.Time                        `json:"next_check_at"`
+	NextIntervalAt            time.Time                        `json:"next_interval_at"`
+	Message                   string                           `json:"message"`
+	ImportExpiryOffsetMinutes int                              `json:"import_expiry_offset_minutes"`
 }
 
 func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, error) {
@@ -124,9 +146,10 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		}
 	}
 	daily.SpentPoints = refillMax(0, daily.Points-daily.ReservedPoints)
-	return &AccountRefillView{Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet,
+	return &AccountRefillView{Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: state.Jobs, Evaluation: state.Evaluation,
-		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: AccountImportExpiryOffsetMinutes}, nil
+		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
+		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now())}, nil
 }
 
 func saveRefillState(state *accountRefillState, save func(string) error) error {
@@ -229,6 +252,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		state.Revision++
 		state.NextCheckAt = time.Time{}
 		state.ProviderRetryAt = time.Time{}
+		state.LeaseSyncAt = nil
 		state.DemandSince = nil
 		state.Message = "配置已保存"
 		return saveRefillState(&state, save)
@@ -298,8 +322,15 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return nil
 		}
 		state.NextCheckAt = now.Add(time.Duration(state.Config.CheckSeconds) * time.Second)
+		if token != "" {
+			s.syncSourceLeases(ctx, token, &state, now, preview)
+		}
 		if err := s.evaluate(ctx, &state, now); err != nil {
 			state.Message = err.Error()
+			return persist()
+		}
+		if time.Now().Before(state.ProviderRetryAt) {
+			state.Message = "号商限流，等待重试后继续同步"
 			return persist()
 		}
 		if token == "" {
@@ -373,13 +404,13 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.DemandSince = nil
 			return persist()
 		}
-		if state.DemandSince == nil {
-			state.DemandSince = &now
-		}
 		// Minimum/expiry gaps act immediately. Capacity-only bursts must persist.
-		if state.Evaluation.Reason == "并发利用率超过目标" && now.Sub(*state.DemandSince) < 30*time.Second {
-			state.Message = "并发升高，等待持续 30 秒后确认"
-			return persist()
+		if state.Evaluation.Reason == "并发利用率超过目标" {
+			observation := s.capacityObservation(state.Config, state.Revision, time.Now())
+			if !observation.Ready {
+				state.Message = fmt.Sprintf("并发观察 %d/%d 秒，持续达到目标后才补号", observation.SustainedSeconds, observation.RequiredSeconds)
+				return persist()
+			}
 		}
 		if now.Sub(state.LastSubmitAt) < time.Duration(state.Config.CooldownSeconds)*time.Second {
 			state.Message = "补号冷却中，等待下次检查"
@@ -415,8 +446,28 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = "号商可用积分不足"
 			return persist()
 		}
+		if state.Evaluation.Reason == "并发利用率超过目标" {
+			// Re-read immediately before reserving a paid order. Slow provider calls
+			// must not turn an already-ended burst into a purchase.
+			if err := s.evaluate(ctx, &state, time.Now()); err != nil {
+				s.resetCapacityObservation()
+				state.Message = err.Error()
+				return persist()
+			}
+			if !refillCapacityHigh(state.Config, state.Evaluation) {
+				s.resetCapacityObservation()
+				state.Message = "并发已回落，重新观察"
+				return persist()
+			}
+			if state.Evaluation.Needed <= 0 || !s.capacityObservation(state.Config, state.Revision, time.Now()).Ready {
+				state.Message = "并发观察尚未连续达标，等待下次检查"
+				return persist()
+			}
+		}
+		graceMinutes := state.Config.ImportExpiryGraceMinutes
 		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: state.Config.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
-			GroupID: state.Config.GroupID, Concurrency: state.Config.ImportConcurrency, DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
+			ExpiryGraceMinutes: &graceMinutes,
+			GroupID:            state.Config.GroupID, Concurrency: state.Config.ImportConcurrency, DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
 		state.Jobs = append([]AccountRefillJob{job}, state.Jobs...)
 		// Retain pending jobs; historical totals live separately from the bounded list.
@@ -631,7 +682,20 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		}
 		extra := map[string]any{"refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
 			"codex_fingerprint_mode": j.DeliveryConfig.FingerprintMode, "openai_oauth_responses_websockets_v2_enabled": j.DeliveryConfig.WSMode != "off", "openai_oauth_responses_websockets_v2_mode": j.DeliveryConfig.WSMode}
-		deadline, extra = ImportedAccountExpiry(deadline, extra)
+		graceMinutes := AccountImportExpiryOffsetMinutes
+		if j.ExpiryGraceMinutes != nil {
+			graceMinutes = *j.ExpiryGraceMinutes
+		}
+		deadline, extra = ImportedAccountExpiryWithGrace(deadline, extra, graceMinutes)
+		// The supplier lease is independent of a locally shortened deadline.
+		if a.ExpiresAt != nil {
+			extra[AccountSourceExpiryExtraKey] = *a.ExpiresAt
+		}
+		if j.ExpiresAt != nil {
+			extra[AccountSourceExpiryExtraKey] = *j.ExpiresAt
+		}
+		extra[AccountSourceExpiryOriginExtraKey] = "supplier_api"
+		extra[AccountSourceExpiryCheckedExtraKey] = time.Now().UTC().Format(time.RFC3339)
 		if len(j.DeliveryConfig.ModelMapping) > 0 {
 			credentials["model_mapping"] = j.DeliveryConfig.ModelMapping
 		}

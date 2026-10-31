@@ -23,32 +23,34 @@ type AccountRefillStore interface {
 }
 
 type AccountRefillConfig struct {
-	Enabled           bool                        `json:"enabled"`
-	MonitorEnabled    bool                        `json:"monitor_enabled"`
-	Mode              string                      `json:"mode"`
-	GroupID           int64                       `json:"group_id"`
-	DeliveryGroupIDs  []int64                     `json:"delivery_group_ids"`
-	PushEnabled       bool                        `json:"push_enabled"`
-	MaxInFlight       int                         `json:"max_in_flight"`
-	IntervalMinutes   int                         `json:"interval_minutes"`
-	IntervalQuantity  int                         `json:"interval_quantity"`
-	Plan              string                      `json:"plan"`
-	MinReady          int                         `json:"min_ready"`
-	MaxReady          int                         `json:"max_ready"`
-	LeadMinutes       int                         `json:"lead_minutes"`
-	MinRemaining5h    float64                     `json:"min_remaining_5h"`
-	MinRemaining7d    float64                     `json:"min_remaining_7d"`
-	TargetConcurrency int                         `json:"target_concurrency_percent"`
-	CheckSeconds      int                         `json:"check_seconds"`
-	CooldownSeconds   int                         `json:"cooldown_seconds"`
-	DailyMaxCount     int                         `json:"daily_max_count"`
-	DailyMaxPoints    float64                     `json:"daily_max_points"`
-	MaxUnitPrice      float64                     `json:"max_unit_price"`
-	ImportConcurrency int                         `json:"import_concurrency"`
-	WindowEnabled     bool                        `json:"window_enabled"`
-	WindowStart       string                      `json:"window_start"`
-	WindowEnd         string                      `json:"window_end"`
-	Delivery          AccountRefillDeliveryConfig `json:"delivery"`
+	Enabled                   bool                        `json:"enabled"`
+	MonitorEnabled            bool                        `json:"monitor_enabled"`
+	Mode                      string                      `json:"mode"`
+	GroupID                   int64                       `json:"group_id"`
+	DeliveryGroupIDs          []int64                     `json:"delivery_group_ids"`
+	PushEnabled               bool                        `json:"push_enabled"`
+	MaxInFlight               int                         `json:"max_in_flight"`
+	IntervalMinutes           int                         `json:"interval_minutes"`
+	IntervalQuantity          int                         `json:"interval_quantity"`
+	Plan                      string                      `json:"plan"`
+	MinReady                  int                         `json:"min_ready"`
+	MaxReady                  int                         `json:"max_ready"`
+	LeadMinutes               int                         `json:"lead_minutes"`
+	MinRemaining5h            float64                     `json:"min_remaining_5h"`
+	MinRemaining7d            float64                     `json:"min_remaining_7d"`
+	TargetConcurrency         int                         `json:"target_concurrency_percent"`
+	ConcurrencySustainSeconds int                         `json:"concurrency_sustain_seconds"`
+	ImportExpiryGraceMinutes  int                         `json:"import_expiry_grace_minutes"`
+	CheckSeconds              int                         `json:"check_seconds"`
+	CooldownSeconds           int                         `json:"cooldown_seconds"`
+	DailyMaxCount             int                         `json:"daily_max_count"`
+	DailyMaxPoints            float64                     `json:"daily_max_points"`
+	MaxUnitPrice              float64                     `json:"max_unit_price"`
+	ImportConcurrency         int                         `json:"import_concurrency"`
+	WindowEnabled             bool                        `json:"window_enabled"`
+	WindowStart               string                      `json:"window_start"`
+	WindowEnd                 string                      `json:"window_end"`
+	Delivery                  AccountRefillDeliveryConfig `json:"delivery"`
 }
 
 type AccountRefillDeliveryConfig struct {
@@ -72,7 +74,7 @@ type AccountRefillDeliveryConfig struct {
 func DefaultAccountRefillConfig() AccountRefillConfig {
 	return AccountRefillConfig{MonitorEnabled: true, Mode: "capacity", DeliveryGroupIDs: []int64{}, PushEnabled: true, MaxInFlight: 1, IntervalMinutes: 60, IntervalQuantity: 1,
 		Plan: "pro5x", MinReady: 1, MaxReady: 20, LeadMinutes: 30,
-		MinRemaining5h: 15, MinRemaining7d: 15, TargetConcurrency: 85, CheckSeconds: 60,
+		MinRemaining5h: 15, MinRemaining7d: 15, TargetConcurrency: 85, ConcurrencySustainSeconds: 30, ImportExpiryGraceMinutes: 60, CheckSeconds: 60,
 		CooldownSeconds: 300, DailyMaxCount: 50, DailyMaxPoints: 3000, MaxUnitPrice: 60,
 		ImportConcurrency: 60, WindowStart: "09:00", WindowEnd: "23:00",
 		Delivery: AccountRefillDeliveryConfig{WSMode: "http_bridge", ProxyMode: "direct", AutoPauseOnExpired: true, Priority: 1, RateMultiplier: 1, Status: StatusActive, Schedulable: true, FingerprintMode: "full", ExpiryMode: "rental", ModelMapping: map[string]string{}}}
@@ -85,6 +87,7 @@ func (c AccountRefillConfig) Validate() error {
 		c.MinReady < 1 || c.MaxReady < c.MinReady || c.MaxReady > 100 ||
 		c.LeadMinutes < 0 || c.LeadMinutes > 1440 || c.CheckSeconds < 15 || c.CheckSeconds > 3600 ||
 		c.CooldownSeconds < 60 || c.CooldownSeconds > 86400 || c.TargetConcurrency < 1 || c.TargetConcurrency > 100 ||
+		c.ConcurrencySustainSeconds < 1 || c.ConcurrencySustainSeconds > 3600 || c.ImportExpiryGraceMinutes < 0 || c.ImportExpiryGraceMinutes > 1440 ||
 		c.DailyMaxCount < 1 || c.DailyMaxCount > 1000 || c.ImportConcurrency < 1 || c.ImportConcurrency > 10000 {
 		return errors.New("补号参数超出允许范围")
 	}
@@ -129,28 +132,29 @@ func (c AccountRefillConfig) Validate() error {
 }
 
 type AccountRefillJob struct {
-	ID               string                      `json:"id"`
-	SupplierID       string                      `json:"supplier_id,omitempty"`
-	Status           string                      `json:"status"`
-	SupplierStatus   string                      `json:"supplier_status,omitempty"`
-	Reason           string                      `json:"reason"`
-	Plan             string                      `json:"plan"`
-	Price            float64                     `json:"price"`
-	PriceVersion     int64                       `json:"price_version"`
-	GroupID          int64                       `json:"group_id"`
-	Concurrency      int                         `json:"concurrency"`
-	DeliveryGroupIDs []int64                     `json:"delivery_group_ids"`
-	DeliveryConfig   AccountRefillDeliveryConfig `json:"delivery_config"`
-	BudgetReleased   bool                        `json:"budget_released"`
-	AccountID        int64                       `json:"account_id,omitempty"`
-	CreatedAt        time.Time                   `json:"created_at"`
-	UpdatedAt        time.Time                   `json:"updated_at"`
-	FinishedAt       *time.Time                  `json:"finished_at,omitempty"`
-	ExpiresAt        *int64                      `json:"expires_at,omitempty"`
-	ResultReady      bool                        `json:"result_ready"`
-	Error            string                      `json:"error,omitempty"`
-	Attempts         int                         `json:"attempts"`
-	NextAttemptAt    time.Time                   `json:"next_attempt_at"`
+	ExpiryGraceMinutes *int                        `json:"expiry_grace_minutes,omitempty"`
+	ID                 string                      `json:"id"`
+	SupplierID         string                      `json:"supplier_id,omitempty"`
+	Status             string                      `json:"status"`
+	SupplierStatus     string                      `json:"supplier_status,omitempty"`
+	Reason             string                      `json:"reason"`
+	Plan               string                      `json:"plan"`
+	Price              float64                     `json:"price"`
+	PriceVersion       int64                       `json:"price_version"`
+	GroupID            int64                       `json:"group_id"`
+	Concurrency        int                         `json:"concurrency"`
+	DeliveryGroupIDs   []int64                     `json:"delivery_group_ids"`
+	DeliveryConfig     AccountRefillDeliveryConfig `json:"delivery_config"`
+	BudgetReleased     bool                        `json:"budget_released"`
+	AccountID          int64                       `json:"account_id,omitempty"`
+	CreatedAt          time.Time                   `json:"created_at"`
+	UpdatedAt          time.Time                   `json:"updated_at"`
+	FinishedAt         *time.Time                  `json:"finished_at,omitempty"`
+	ExpiresAt          *int64                      `json:"expires_at,omitempty"`
+	ResultReady        bool                        `json:"result_ready"`
+	Error              string                      `json:"error,omitempty"`
+	Attempts           int                         `json:"attempts"`
+	NextAttemptAt      time.Time                   `json:"next_attempt_at"`
 }
 
 func (j AccountRefillJob) pending() bool {
@@ -158,6 +162,8 @@ func (j AccountRefillJob) pending() bool {
 }
 
 type AccountRefillAccount struct {
+	ExpirySource    string     `json:"expiry_source"`
+	SourceSyncedAt  string     `json:"source_synced_at,omitempty"`
 	ID              int64      `json:"id"`
 	Name            string     `json:"name"`
 	State           string     `json:"state"`
@@ -183,6 +189,9 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
+	LeaseSyncAt       *time.Time                         `json:"lease_sync_at,omitempty"`
+	LeaseSyncMessage  string                             `json:"lease_sync_message"`
+	LeaseSyncCursor   int                                `json:"lease_sync_cursor"`
 	Config            AccountRefillConfig                `json:"config"`
 	EncryptedToken    string                             `json:"encrypted_token,omitempty"`
 	Revision          int64                              `json:"revision"`
@@ -227,6 +236,13 @@ func decodeAccountRefillState(raw string) (accountRefillState, error) {
 // scheduling grace. Legacy exports with an exact original+offset marker normalize
 // once; subsequent imports never accumulate another offset.
 func ImportedAccountExpiry(expires *int64, extra map[string]any) (*int64, map[string]any) {
+	return ImportedAccountExpiryWithGrace(expires, extra, AccountImportExpiryOffsetMinutes)
+}
+
+func ImportedAccountExpiryWithGrace(expires *int64, extra map[string]any, minutes int) (*int64, map[string]any) {
+	if minutes < 0 || minutes > 1440 {
+		minutes = AccountImportExpiryOffsetMinutes
+	}
 	if expires == nil || *expires <= 0 || *expires > 253402214399 {
 		return expires, extra
 	}
@@ -243,7 +259,9 @@ func ImportedAccountExpiry(expires *int64, extra map[string]any) (*int64, map[st
 	if copyExtra == nil {
 		copyExtra = make(map[string]any)
 	}
-	copyExtra[AccountImportExpiryGraceExtraKey] = AccountImportExpiryOffsetMinutes * 60
+	copyExtra[AccountImportExpiryGraceExtraKey] = minutes * 60
+	copyExtra[AccountSourceExpiryExtraKey] = original
+	copyExtra[AccountSourceExpiryOriginExtraKey] = "import"
 	return &original, copyExtra
 }
 
@@ -272,10 +290,11 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		if !a.IsOpenAIOAuth() || a.IsShadow() || !slices.Contains(a.GroupIDs, c.GroupID) {
 			continue
 		}
-		row := AccountRefillAccount{ID: a.ID, Name: a.Name, State: "ready", ExpiresAt: a.SchedulingExpiresAt(), SourceExpiresAt: a.ExpiresAt, Concurrency: a.Concurrency}
+		sourceExpiry, origin := a.SourceExpiresAt()
+		synced, _ := a.Extra[AccountSourceExpiryCheckedExtraKey].(string)
+		row := AccountRefillAccount{ID: a.ID, Name: a.Name, State: "ready", ExpiresAt: a.SchedulingExpiresAt(), SourceExpiresAt: sourceExpiry, ExpirySource: origin, SourceSyncedAt: synced, Concurrency: a.Concurrency}
 		if load := loads[a.ID]; load != nil {
 			row.InUse = load.CurrentConcurrency
-			e.InUse += row.InUse
 		}
 		quotaLow := false
 		for _, w := range []struct {
@@ -305,14 +324,17 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		default:
 			e.Ready++
 			e.Healthy++
+		}
+		if row.State == "ready" || row.State == "expiring" {
 			e.Capacity += refillMax(0, a.Concurrency)
+			e.InUse += row.InUse
 		}
 		e.Accounts = append(e.Accounts, row)
 	}
 	minimumGap := refillMax(0, c.MinReady-e.Ready-e.Pending)
 	capacityGap := 0
-	if c.Mode == "capacity" {
-		capacityGap = int(math.Ceil((float64(e.InUse)*100/float64(refillMax(1, c.TargetConcurrency))-float64(e.Capacity))/float64(refillMax(1, c.ImportConcurrency)))) - e.Pending
+	if c.Mode == "capacity" && refillCapacityHigh(c, e) {
+		capacityGap = refillMax(1, int(math.Ceil((float64(e.InUse)*100/float64(refillMax(1, c.TargetConcurrency))-float64(e.Capacity))/float64(refillMax(1, c.ImportConcurrency))))) - e.Pending
 	}
 	e.Needed = refillMax(minimumGap, capacityGap, 0)
 	if minimumGap > 0 {

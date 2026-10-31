@@ -585,6 +585,17 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	if input.ExpiryGraceMinutes != nil {
+		minutes := *input.ExpiryGraceMinutes
+		if !account.IsOpenAIOAuth() || account.IsShadow() || minutes < 0 || minutes > 1440 {
+			return nil, infraerrors.BadRequest("INVALID_EXPIRY_GRACE", "OpenAI OAuth 账号的保留时间须为 0–1440 分钟")
+		}
+		// Atomic metadata merge avoids overwriting concurrent native edits.
+		if err := s.accountRepo.UpdateExtra(ctx, id, map[string]any{AccountImportExpiryGraceExtraKey: minutes * 60}); err != nil {
+			return nil, err
+		}
+		return s.accountRepo.GetByID(ctx, id)
+	}
 	if account.Platform == PlatformTypeSafe && input.Type != "" && input.Type != AccountTypeAPIKey {
 		return nil, errors.New("typesafe accounts only support apikey credentials")
 	}

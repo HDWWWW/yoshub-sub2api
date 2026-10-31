@@ -12,9 +12,42 @@ import (
 // AccountImportExpiryGraceExtraKey is private scheduling metadata. Native admin
 // reads/writes and exports retain the supplier's expires_at and priority values.
 const AccountImportExpiryGraceExtraKey = "yoshub_import_expiry_grace_seconds"
+const AccountSourceExpiryExtraKey = "yoshub_source_expires_at"
+const AccountSourceExpiryOriginExtraKey = "yoshub_source_expiry_origin"
+const AccountSourceExpiryCheckedExtraKey = "yoshub_source_expiry_checked_at"
 
 func isAccountImportExpiryExtra(key string) bool {
-	return key == AccountImportExpiryGraceExtraKey || key == "import_original_expires_at" || key == "import_expiry_offset_seconds"
+	return key == AccountImportExpiryGraceExtraKey || key == AccountSourceExpiryExtraKey || key == AccountSourceExpiryOriginExtraKey || key == AccountSourceExpiryCheckedExtraKey || key == "import_original_expires_at" || key == "import_expiry_offset_seconds"
+}
+
+func (a *Account) SourceExpiresAt() (*time.Time, string) {
+	if a != nil && a.IsOpenAIOAuth() {
+		for _, key := range []string{AccountSourceExpiryExtraKey, "import_original_expires_at"} {
+			raw := fmt.Sprint(a.Extra[key])
+			if numeric, ok := a.Extra[key].(float64); ok {
+				raw = strconv.FormatFloat(numeric, 'f', -1, 64)
+			}
+			valid := len(raw) > 0 && len(raw) <= 12
+			for _, c := range raw {
+				if c < '0' || c > '9' {
+					valid = false
+				}
+			}
+			seconds, err := strconv.ParseInt(raw, 10, 64)
+			if valid && err == nil && seconds > 0 && seconds <= 253402214399 {
+				t := time.Unix(seconds, 0).UTC()
+				origin := "import"
+				if key == AccountSourceExpiryExtraKey && a.Extra[AccountSourceExpiryOriginExtraKey] == "supplier_api" {
+					origin = "supplier_api"
+				}
+				return &t, origin
+			}
+		}
+	}
+	if a == nil {
+		return nil, "unknown"
+	}
+	return a.ExpiresAt, "local"
 }
 
 // NativeAccountExtra removes only the import extension's private metadata.
@@ -53,21 +86,36 @@ func (a *Account) SchedulingExpiresAt() *time.Time {
 	if !a.IsOpenAIOAuth() {
 		return a.ExpiresAt
 	}
-	raw := fmt.Sprint(a.Extra[AccountImportExpiryGraceExtraKey])
+	base := a.ExpiresAt
+	if lease, origin := a.SourceExpiresAt(); origin != "local" && lease != nil && lease.Before(*base) {
+		base = lease
+	}
+	deadline := base.Add(time.Duration(a.ExpiryGraceSeconds()) * time.Second)
+	return &deadline
+}
+
+func (a *Account) ExpiryGraceSeconds() int {
+	if a == nil || !a.IsOpenAIOAuth() {
+		return 0
+	}
+	value, hasGrace := a.Extra[AccountImportExpiryGraceExtraKey]
+	if !hasGrace {
+		value = a.Extra["import_expiry_offset_seconds"]
+	}
+	raw := fmt.Sprint(value)
 	if len(raw) == 0 || len(raw) > 5 {
-		return a.ExpiresAt
+		return 0
 	}
 	for _, c := range raw {
 		if c < '0' || c > '9' {
-			return a.ExpiresAt
+			return 0
 		}
 	}
 	seconds, err := strconv.Atoi(raw)
 	if err != nil || seconds < 1 || seconds > 86400 {
-		return a.ExpiresAt
+		return 0
 	}
-	deadline := a.ExpiresAt.Add(time.Duration(seconds) * time.Second)
-	return &deadline
+	return seconds
 }
 
 func (a *Account) isSchedulingExpired(now time.Time) bool {

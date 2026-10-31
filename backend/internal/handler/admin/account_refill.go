@@ -14,14 +14,18 @@ import (
 
 // External pool imports extend only the scheduling deadline, never token expiry.
 // JWT-authenticated backup restores keep their original timestamps.
-func applyExternalImportExpiry(req *DataImportRequest, authMethod string) {
+func applyExternalImportExpiry(req *DataImportRequest, authMethod string, grace ...int) {
 	if authMethod != "admin_api_key" {
 		return
 	}
 	for i := range req.Data.Accounts {
 		a := &req.Data.Accounts[i]
 		if a.Platform == service.PlatformOpenAI && a.Type == service.AccountTypeOAuth {
-			a.ExpiresAt, a.Extra = service.ImportedAccountExpiry(a.ExpiresAt, a.Extra)
+			minutes := service.AccountImportExpiryOffsetMinutes
+			if len(grace) > 0 {
+				minutes = grace[0]
+			}
+			a.ExpiresAt, a.Extra = service.ImportedAccountExpiryWithGrace(a.ExpiresAt, a.Extra, minutes)
 		}
 	}
 }
@@ -60,6 +64,13 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		APIToken string                      `json:"api_token"`
 		Revision int64                       `json:"revision"`
 	}
+	current, err := h.accountRefill.View(c.Request.Context())
+	if err != nil {
+		response.Error(c, 503, "补号状态读取失败")
+		return
+	}
+	// Older clients omit new extension fields; preserve their saved values.
+	req.Config = current.Config
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128*1024)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "补号设置格式无效")

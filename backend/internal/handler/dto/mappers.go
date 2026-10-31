@@ -425,6 +425,7 @@ func redactAccountManagedExtra(extra map[string]any) map[string]any {
 	for key, value := range extra {
 		switch key {
 		case service.AccountImportExpiryGraceExtraKey,
+			service.AccountSourceExpiryExtraKey, service.AccountSourceExpiryOriginExtraKey, service.AccountSourceExpiryCheckedExtraKey,
 			"import_original_expires_at", "import_expiry_offset_seconds",
 			service.OllamaCloudUsageSessionExtraKey,
 			service.OllamaCloudUsageAutoRefreshExtraKey,

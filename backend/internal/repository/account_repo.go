@@ -2765,7 +2765,6 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 			AND schedulable = TRUE
 			AND auto_pause_on_expired = TRUE
 			AND expires_at IS NOT NULL
-			AND expires_at <= $1
 			AND `+aliasedAccountSchedulingExpirySQL("")+` <= $1
 		RETURNING id
 	`, now)
@@ -3527,7 +3526,6 @@ func notExpiredPredicate(now time.Time) dbpredicate.Account {
 		s.Where(entsql.Or(
 			entsql.IsNull(s.C("expires_at")),
 			entsql.EQ(s.C("auto_pause_on_expired"), false),
-			entsql.GT(s.C("expires_at"), now),
 			entsql.P(func(b *entsql.Builder) { b.WriteString(deadline + " > ").Arg(now) }),
 		))
 	}
