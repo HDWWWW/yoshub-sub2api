@@ -9,8 +9,42 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
+
+type allSchedulingPagesRepo struct {
+	accountRepoStubForBulkUpdate
+	pages int
+	t     *testing.T
+}
+
+func (r *allSchedulingPagesRepo) ListWithFilters(_ context.Context, p pagination.PaginationParams, platform, kind, status, search string, groupID int64, privacy string) ([]Account, *pagination.PaginationResult, error) {
+	r.pages++
+	require.Empty(r.t, platform)
+	require.Empty(r.t, kind)
+	require.Empty(r.t, status)
+	require.Empty(r.t, search)
+	require.Zero(r.t, groupID)
+	require.Empty(r.t, privacy)
+	rows := []Account{}
+	for i := (p.Page-1)*p.PageSize + 1; i <= p.Page*p.PageSize && i <= 603; i++ {
+		rows = append(rows, Account{ID: int64(i), Status: "inactive", Priority: i})
+	}
+	return rows, &pagination.PaginationResult{Total: 603}, nil
+}
+func TestManualSchedulingRestoreAllCrossesPagesAndDoesNotWriteNativePriority(t *testing.T) {
+	r := &allSchedulingPagesRepo{t: t}
+	s := &adminServiceImpl{accountRepo: r}
+	v, err := s.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{Filters: &BulkUpdateAccountFilters{}, SchedulingPriorityMode: "auto"})
+	require.NoError(t, err)
+	require.Equal(t, 603, v.Success)
+	require.Equal(t, 2, r.pages)
+	require.Len(t, r.bulkUpdateIDs, 603)
+	require.Nil(t, r.lastBulkUpdate.Priority)
+	require.Contains(t, r.lastBulkUpdate.Extra, AccountManualPriorityExtraKey)
+	require.Nil(t, r.lastBulkUpdate.Extra[AccountManualPriorityExtraKey])
+}
 
 func TestManualSchedulingOverridesExpiryAndRestoresAutomatic(t *testing.T) {
 	now := time.Now()

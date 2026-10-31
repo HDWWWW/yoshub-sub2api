@@ -18,7 +18,8 @@
           >
             <template #after>
               <button class="btn btn-secondary" data-testid="open-account-scheduling" @click="showScheduling = true">{{ t('accountRefill.schedulingTitle') }}</button>
-              <button class="btn btn-secondary" data-testid="open-account-refill" @click="showAccountRefill = true">{{ t('accountRefill.title') }}</button>
+              <button class="btn btn-secondary" data-testid="open-account-refill" @click="refillInitialTab = 'connection'; showAccountRefill = true">{{ t('accountRefill.title') }}</button>
+              <button class="btn btn-secondary" data-testid="open-manual-refill" @click="refillInitialTab = 'manual'; showAccountRefill = true">{{ t('accountRefill.manual') }}</button>
               <button
                 class="btn btn-secondary"
                 :disabled="!params.group || loading"
@@ -460,7 +461,7 @@
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
-    <AccountRefillModal v-if="showAccountRefill" :show="showAccountRefill" @close="showAccountRefill = false" />
+    <AccountRefillModal v-if="showAccountRefill" :show="showAccountRefill" :initial-tab="refillInitialTab" @close="showAccountRefill = false" />
     <BulkConcurrencyModal
       :show="showBulkConcurrency"
       :filters="bulkConcurrencyFilters"
@@ -611,6 +612,7 @@ const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
 const showAccountRefill = ref(false)
+const refillInitialTab = ref<'connection' | 'manual'>('connection')
 const showScheduling = ref(false)
 const schedulingMetadata = ref<Record<number, AccountSchedulingMetadata>>({})
 const schedulingMetadataFailed = ref(false)

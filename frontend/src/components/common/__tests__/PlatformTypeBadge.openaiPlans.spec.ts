@@ -20,7 +20,7 @@ function mountPlan(platform: AccountPlatform, planType: string) {
 
 describe('PlatformTypeBadge ChatGPT plan tiers', () => {
   it('labels pro / chatgptpro as Pro 200 with the Pro color', () => {
-    for (const planType of ['pro', 'chatgptpro', 'PRO']) {
+    for (const planType of ['pro', 'chatgptpro', 'PRO', 'pro20', 'pro20x']) {
       const wrapper = mountPlan('openai', planType)
 
       expect(wrapper.text()).toContain('Pro 200')
@@ -29,7 +29,7 @@ describe('PlatformTypeBadge ChatGPT plan tiers', () => {
   })
 
   it('labels prolite as Pro 100 sharing the Pro color', () => {
-    for (const planType of ['prolite', 'PROLITE', 'pro_lite']) {
+    for (const planType of ['prolite', 'PROLITE', 'pro_lite', 'pro5', 'pro5x']) {
       const wrapper = mountPlan('openai', planType)
 
       expect(wrapper.text()).toContain('Pro 100')

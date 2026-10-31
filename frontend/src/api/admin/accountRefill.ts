@@ -18,6 +18,7 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
+  notifications: { refill_started: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
   mode: string
@@ -48,6 +49,7 @@ export interface RefillConfig {
   delivery: RefillDeliveryConfig
 }
 export interface RefillJob {
+  manual_request_id?: string
   id: string
   supplier_id?: string
   status: string
@@ -64,7 +66,14 @@ export interface RefillJob {
   attempts: number
   next_attempt_at: string
 }
+export interface ManualRefillRequest {
+  request_id: string
+  plan: string
+  revision: number
+}
 export interface RefillView {
+  webhook_configured: boolean
+  notification_status: { at: string | null; message: string }
   lease_sync_at: string | null
   lease_sync_message: string
   capacity_observation: {
@@ -81,6 +90,7 @@ export interface RefillView {
   identity_at: string | null
   jobs: RefillJob[]
   evaluation: {
+    error?: string
     checked_at: string; ready: number; healthy: number; expiring: number; pending: number
     in_use: number; capacity: number; needed: number; reason: string
     accounts: { id: number; name: string; state: string; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number }[]
@@ -93,10 +103,11 @@ export interface RefillView {
 }
 export const accountRefillAPI = {
   async get() { return (await apiClient.get<RefillView>('/admin/accounts/refill')).data },
-  async save(config: RefillConfig, api_token: string, revision: number) {
-    return (await apiClient.put<RefillView>('/admin/accounts/refill', { config, api_token, revision }, { timeout: 100000 })).data
+  async save(config: RefillConfig, api_token: string, revision: number, wecom_webhook = '') {
+    return (await apiClient.put<RefillView>('/admin/accounts/refill', { config, api_token, revision, wecom_webhook }, { timeout: 100000 })).data
   },
   async check() { return (await apiClient.post<RefillView>('/admin/accounts/refill/check', {}, { timeout: 100000 })).data },
+  async manual(request: ManualRefillRequest) { return (await apiClient.post<RefillView>('/admin/accounts/refill/manual', request, { timeout: 100000 })).data },
   async dismiss(id: string) { return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/dismiss`, { confirm_not_accepted: true })).data },
   async retry(id: string) { return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/retry`)).data }
 }

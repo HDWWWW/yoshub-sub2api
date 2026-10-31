@@ -10,7 +10,10 @@
           </select>
         </label>
         <button class="btn btn-secondary" :disabled="loading || saving !== null" @click="load">{{ t('common.refresh') }}</button>
+        <button class="btn btn-secondary" :disabled="loading || saving !== null" data-testid="restore-all-scheduling" @click="restoreAll">{{ t('accountRefill.restoreAllAutomatic') }}</button>
       </div>
+      <p class="text-xs text-gray-500">{{ t('accountRefill.restoreAllHint') }}</p>
+      <p v-if="notice" class="text-sm text-green-700" role="status">{{ notice }}</p>
       <p class="text-xs text-gray-500">{{ t(expiryEnabled ? 'accountRefill.expirySortEnabled' : 'accountRefill.expirySortDisabled') }}</p>
       <p v-if="error" class="text-sm text-red-600" role="alert">{{ error }}</p>
       <p v-if="loading" role="status">{{ t('common.loading') }}</p>
@@ -46,7 +49,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { accountSchedulingAPI, type AccountSchedulingPreviewItem } from '@/api/admin/accountScheduling'
-import { update } from '@/api/admin/accounts'
+import { update, bulkUpdate } from '@/api/admin/accounts'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTime } from '@/utils/format'
 import type { AdminGroup } from '@/types'
@@ -56,12 +59,13 @@ const emit = defineEmits<{ close: []; updated: [] }>()
 const { t } = useI18n()
 const groupID = ref(0), loading = ref(false), expiryEnabled = ref(false), error = ref('')
 const saving = ref<number | null>(null)
+const notice = ref('')
 const items = ref<AccountSchedulingPreviewItem[]>([]), drafts = ref<Record<number, number>>({})
 let generation = 0
 const valid = (value: number | undefined) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 9999
 watch(() => props.show, (show) => {
   generation++
-  if (show) { groupID.value = props.initialGroup || 0; void load() }
+  if (show) { notice.value = ''; groupID.value = props.initialGroup || 0; void load() }
 })
 async function load() {
   const current = ++generation
@@ -81,6 +85,17 @@ async function save(id: number, mode: 'manual' | 'auto') {
   try {
     await update(id, { yoshub_priority_mode: mode, ...(mode === 'manual' ? { priority: drafts.value[id] } : {}) })
     emit('updated'); await load()
+  } catch (e) { error.value = extractApiErrorMessage(e, t('accountRefill.schedulingError')) }
+  finally { saving.value = null }
+}
+async function restoreAll() {
+  if (saving.value !== null) return
+  saving.value = -1; error.value = ''; notice.value = ''
+  try {
+    const result = await bulkUpdate({ filters: {}, yoshub_priority_mode: 'auto' })
+    emit('updated'); await load()
+    notice.value = t('accountRefill.restoredAll', { count: result.success })
+    if (result.failed) error.value = t('accountRefill.restoreAllFailed', { count: result.failed })
   } catch (e) { error.value = extractApiErrorMessage(e, t('accountRefill.schedulingError')) }
   finally { saving.value = null }
 }

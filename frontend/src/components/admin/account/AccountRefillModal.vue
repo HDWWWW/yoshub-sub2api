@@ -64,8 +64,42 @@
             <p class="input-hint">{{ t('accountRefill.templateHint') }} <code v-pre>{name} {email} {id} {plan_type} {push_time} {expire_time}</code></p>
             <label class="block"><span class="input-label">{{ t('accountRefill.model_mapping') }}</span><textarea v-model="mapping" class="input font-mono text-sm" rows="4" spellcheck="false" placeholder='{"model-a": "model-b"}'></textarea></label>
           </div>
+          <div v-show="activeTab === 'notifications'" class="space-y-5">
+            <p class="text-sm leading-6 text-gray-500">{{ t('accountRefill.notificationsHint') }}</p>
+            <label class="block"><span class="input-label">{{ t('accountRefill.wecomWebhook') }} <span v-if="view.webhook_configured" class="text-green-600">{{ t('accountRefill.configured') }}</span></span><input v-model="webhook" type="password" autocomplete="new-password" class="input" data-testid="refill-webhook" :placeholder="t('accountRefill.webhookPlaceholder')" /></label>
+            <p class="input-hint">{{ t('accountRefill.webhookHint') }}</p>
+            <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.refill_started" type="checkbox" data-testid="refill-notify-start" />{{ t('accountRefill.notifyStarted') }}</label>
+            <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.low_balance" type="checkbox" data-testid="refill-notify-balance" />{{ t('accountRefill.notifyLowBalance') }}</label>
+            <label class="block"><span class="input-label">{{ t('accountRefill.lowBalanceThreshold') }}</span><input v-model.number="form.notifications.low_balance_threshold" type="number" min="0" max="10000000" step="0.01" class="input" data-testid="refill-balance-threshold" /></label>
+            <p class="input-hint">{{ t('accountRefill.lowBalanceHint') }}</p>
+            <div v-if="view.notification_status?.at" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" role="status"><p>{{ view.notification_status.message }}</p><p class="mt-1 text-xs text-gray-500">{{ date(view.notification_status.at) }}</p></div>
+          </div>
         </fieldset>
       </form>
+      <div v-if="activeTab === 'manual'" class="space-y-4">
+        <p class="text-sm leading-6 text-gray-500">{{ t('accountRefill.manualHint') }}</p>
+        <label class="block"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="manualPlan" class="input" :disabled="busy || !!manualPending" data-testid="manual-refill-plan"><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
+        <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
+          <p>{{ t('accountRefill.quote') }}: <strong>{{ number(manualQuote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
+          <p v-if="manualQuote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ manualQuote.terms }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-200 p-4 text-sm dark:border-dark-700" data-testid="manual-refill-settings">
+          <p class="font-medium">{{ t('accountRefill.manualSavedSettings') }}</p>
+          <dl class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div><dt class="text-gray-500">{{ t('accountRefill.deliveryGroups') }}</dt><dd>{{ manualGroups }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.import_concurrency') }}</dt><dd>{{ view.config.import_concurrency }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.proxy_mode') }}</dt><dd>{{ t(`accountRefill.${view.config.delivery.proxy_mode}`) }} {{ view.config.delivery.proxy_mode === 'specified' ? `#${view.config.delivery.proxy_id}` : '' }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.import_expiry_grace_minutes') }}</dt><dd>{{ view.config.import_expiry_grace_minutes }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.priority') }} / {{ t('accountRefill.load_factor') }}</dt><dd>{{ view.config.delivery.priority }} / {{ view.config.delivery.load_factor }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.rate_multiplier') }}</dt><dd>{{ view.config.delivery.rate_multiplier }}</dd></div>
+          </dl>
+          <button type="button" class="mt-3 text-primary-600 underline" @click="activeTab = 'delivery'">{{ t('accountRefill.manualReviewSettings') }}</button>
+        </div>
+        <p v-if="dirty || conflict" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
+        <p v-if="!view.token_configured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
+        <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain') }}</p>
+        <button type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual">{{ t(manualPending ? 'accountRefill.manualRetry' : 'accountRefill.manualSubmit') }}</button>
+      </div>
       <div v-if="activeTab === 'progress'" class="space-y-5">
         <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
           <p>{{ view.lease_sync_message || t('accountRefill.leaseSyncHint') }}</p>
@@ -81,14 +115,16 @@
         <div class="flex flex-wrap gap-5 text-sm"><span>{{ t('accountRefill.nextCheck') }}: {{ date(view.next_check_at) }}</span><span v-if="view.config.mode === 'interval'">{{ t('accountRefill.nextInterval') }}: {{ date(view.next_interval_at) }}</span></div>
         <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b border-gray-200 text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.task') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.points') }}</th><th class="p-2">{{ t('accountRefill.elapsed') }}</th><th class="p-2">{{ t('accountRefill.created') }}</th></tr></thead><tbody><tr v-for="job in view.jobs" :key="job.id" class="border-b border-gray-100 align-top dark:border-dark-800"><td class="p-2"><span class="font-medium">{{ job.plan }}</span><div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || job.id }}</div><div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div></td><td class="max-w-80 p-2"><span class="font-medium">{{ stateLabel(job.status) }}</span><div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div><button v-if="['blocked', 'import_failed'].includes(job.status)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button><details v-if="job.status === 'blocked' && !job.supplier_id" class="mt-2 text-xs"><summary class="cursor-pointer text-amber-700">{{ t('accountRefill.dismiss') }}</summary><label class="mt-2 flex gap-2"><input v-model="confirmedJobs" type="checkbox" :value="job.id" />{{ t('accountRefill.dismissHint') }}</label><button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t('accountRefill.dismiss') }}</button></details></td><td class="p-2 tabular-nums">{{ number(job.price) }}</td><td class="whitespace-nowrap p-2 tabular-nums">{{ elapsed(job) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(job.created_at) }}</td></tr></tbody></table><p v-if="!view.jobs.length" class="py-6 text-center text-sm text-gray-500">{{ t('accountRefill.noJobs') }}</p></div>
         <h4 class="text-sm font-medium">{{ t('accountRefill.evaluation') }}</h4>
-        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in view.evaluation.accounts" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}</td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h === null ? '—' : `${number(account.remaining_5h)}%` }}</td><td class="p-2">{{ account.remaining_7d === null ? '—' : `${number(account.remaining_7d)}%` }}</td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
+        <p class="text-xs text-gray-500">{{ t('accountRefill.evaluationLocalHint') }} {{ t('accountRefill.evaluationUpdated') }}: {{ date(view.evaluation.checked_at) }}</p>
+        <p v-if="view.evaluation.error" class="text-sm text-amber-700" role="alert">{{ view.evaluation.error }}</p>
+        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in view.evaluation.accounts" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}</td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}</td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}</td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
       </div>
       <p v-if="conflict" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.conflict') }}</p>
     </div>
     <p v-if="error" class="mt-3 text-sm text-red-600 dark:text-red-400" role="alert">{{ error }}</p>
     <template #footer>
       <span class="mr-auto text-xs text-gray-500">{{ dirty ? t('accountRefill.dirty') : '' }}</span>
-      <button type="button" class="btn btn-secondary" :disabled="busy || loading" @click="refresh(false)">{{ t('accountRefill.refresh') }}</button>
+      <button type="button" class="btn btn-secondary" :disabled="loading" @click="refresh(false)">{{ t('accountRefill.refresh') }}</button>
       <button type="button" class="btn btn-secondary" :disabled="busy || !view || dirty" :title="t('accountRefill.checkHint')" @click="check">{{ t('accountRefill.check') }}</button>
       <button type="submit" form="refill-settings" class="btn btn-primary" :disabled="busy || !dirty || conflict || !form" data-testid="refill-save">{{ t(busy ? 'accountRefill.saving' : 'accountRefill.save') }}</button>
     </template>
@@ -99,33 +135,39 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import { accountRefillAPI, type RefillConfig, type RefillView, type RefillJob } from '@/api/admin/accountRefill'
+import { accountRefillAPI, type RefillConfig, type RefillView, type RefillJob, type ManualRefillRequest } from '@/api/admin/accountRefill'
 import { getAll } from '@/api/admin/groups'
 import type { AdminGroup } from '@/types'
 import { useAppStore } from '@/stores/app'
 
-const props = defineProps<{ show: boolean }>()
+const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' }>()
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
 const app = useAppStore()
-const tabs = ['connection', 'rules', 'delivery', 'progress'] as const
+const tabs = ['connection', 'rules', 'delivery', 'manual', 'notifications', 'progress'] as const
 const activeTab = ref<typeof tabs[number]>('connection')
 const view = ref<RefillView | null>(null)
 const form = ref<RefillConfig | null>(null)
 const groups = ref<AdminGroup[]>([])
 const confirmedJobs = ref<string[]>([])
 const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
+const webhook = ref('')
+const manualPlan = ref('pro5x'), manualPending = ref<ManualRefillRequest | null>(null)
+const manualStorageKey = 'yoshub:manual-refill:pending'
 const loading = ref(false), busy = ref(false), conflict = ref(false), now = ref(Date.now())
 let revision = 0, generation = 0, fetching = false
 let timer: ReturnType<typeof setInterval> | undefined
 const openAIGroups = computed(() => groups.value.filter(g => g.platform === 'openai' && g.status === 'active'))
-const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
+const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || webhook.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
 const walletItems = computed(() => [{ key: 'balance', value: view.value?.wallet?.balance }, { key: 'held', value: view.value?.wallet?.held }, { key: 'available', value: view.value?.wallet?.available ?? view.value?.catalog?.available }])
 const usageItems = computed(() => {
   const v = view.value
   return [{ key: 'spent', value: v?.daily.spent_points }, { key: 'reserved', value: v?.daily.reserved_points }, { key: 'count', value: v?.daily.count }, { key: 'budget', value: v?.config.daily_max_points }, { key: 'ready', value: v?.evaluation.ready }, { key: 'expiring', value: v?.evaluation.expiring }, { key: 'pending', value: v?.evaluation.pending }, { key: 'needed', value: v?.evaluation.needed }]
 })
 const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === form.value?.plan && q.enabled))
+const manualQuote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && q.enabled))
+const manualGroups = computed(() => view.value?.config.delivery_group_ids.map(id => groups.value.find(g => g.id === id)?.name || `#${id}`).join('、'))
+const manualDisabled = computed(() => busy.value || !view.value || (!manualPending.value && (dirty.value || conflict.value || !view.value.token_configured || !view.value.config.push_enabled)))
 const keyDays = computed(() => { const at = view.value?.key?.expires_at; return at && !at.startsWith('0001') ? (Date.parse(at) - now.value) / 86400000 : null })
 const keyRemaining = computed(() => keyDays.value === null ? '' : keyDays.value <= 0 ? t('accountRefill.expired') : t('accountRefill.keyRemaining', { days: Math.floor(keyDays.value * 10) / 10 }))
 const fixedExpiry = computed({ get: () => form.value?.delivery.fixed_expires_at ? new Date(form.value.delivery.fixed_expires_at * 1000 + 8 * 3600000).toISOString().slice(0, 16) : '', set: v => { if (form.value) form.value.delivery.fixed_expires_at = v ? Math.floor(Date.parse(`${v}:00+08:00`) / 1000) : null } })
@@ -146,6 +188,7 @@ const elapsed = (job: RefillJob) => { const seconds = Math.max(0, Math.floor(((j
 function includeMonitor() { if (form.value && !form.value.delivery_group_ids.includes(form.value.group_id)) form.value.delivery_group_ids.push(form.value.group_id) }
 function accept(data: RefillView, reset: boolean) {
   if (!reset && data.revision < revision) return
+  if (!reset && view.value && Date.parse(data.evaluation.checked_at) < Date.parse(view.value.evaluation.checked_at)) data.evaluation = view.value.evaluation
   if (!reset && dirty.value && data.revision !== revision) conflict.value = true
   if (reset || !dirty.value) {
     form.value = JSON.parse(JSON.stringify(data.config))
@@ -155,11 +198,14 @@ function accept(data: RefillView, reset: boolean) {
     conflict.value = false
   }
   view.value = data
+  if (manualPending.value && data.jobs.some(j => j.manual_request_id === manualPending.value?.request_id)) {
+    clearManualRequest(); activeTab.value = 'progress'
+  }
   now.value = Date.now()
 }
 function message(e: unknown) { const v = e as { response?: { data?: { message?: string; error?: string } } }; return v.response?.data?.message || v.response?.data?.error || t('accountRefill.error') }
 async function refresh(reset: boolean) {
-  if (fetching || busy.value) return
+  if (fetching) return
   const current = generation
   fetching = true
   try { const data = await accountRefillAPI.get(); if (current === generation) { accept(data, reset); error.value = '' } }
@@ -175,25 +221,58 @@ async function save() {
   try {
     const config = JSON.parse(JSON.stringify(form.value)) as RefillConfig
     config.delivery.model_mapping = parsed as Record<string, string>
-    const data = await accountRefillAPI.save(config, token.value, revision)
-    token.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
+    const data = await accountRefillAPI.save(config, token.value, revision, webhook.value)
+    token.value = ''; webhook.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
   } catch (e) { error.value = message(e) }
   finally { busy.value = false }
 }
 async function check() { if (busy.value || dirty.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.check(), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
 async function retry(id: string) { if (busy.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.retry(id), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
 async function dismiss(id: string) { if (busy.value || !confirmedJobs.value.includes(id)) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.dismiss(id), false); confirmedJobs.value = confirmedJobs.value.filter(v => v !== id) } catch (e) { error.value = message(e) } finally { busy.value = false } }
+function clearManualRequest() {
+  manualPending.value = null
+  try { sessionStorage.removeItem(manualStorageKey) } catch { /* Already acknowledged in memory. */ }
+}
+function restoreManualRequest() {
+  try {
+    const raw = sessionStorage.getItem(manualStorageKey)
+    if (raw) {
+      const request = JSON.parse(raw) as ManualRefillRequest
+      if (typeof request.request_id === 'string' && ['pro5x', 'pro20x'].includes(request.plan) && Number.isInteger(request.revision)) {
+        manualPending.value = request; manualPlan.value = request.plan
+      }
+    }
+  } catch { /* Invalid session data cannot initiate a purchase. */ }
+}
+async function submitManual() {
+  if (manualDisabled.value) return
+  const request = manualPending.value || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision }
+  try { sessionStorage.setItem(manualStorageKey, JSON.stringify(request)) }
+  catch { error.value = t('accountRefill.manualStorageError'); return }
+  manualPending.value = request; busy.value = true; error.value = ''; generation++
+  try {
+    const data = await accountRefillAPI.manual(request)
+    accept(data, false); clearManualRequest(); activeTab.value = 'progress'
+    app.showSuccess(t('accountRefill.manualAccepted'))
+  } catch (e) {
+    const status = (e as { response?: { status?: number } }).response?.status
+    if (status === 400 || status === 401 || status === 403) clearManualRequest()
+    error.value = message(e)
+  } finally { busy.value = false }
+}
 function close() { if (!busy.value) emit('close') }
 watch(() => props.show, async show => {
   const current = ++generation
   if (timer) clearInterval(timer)
   token.value = ''
+  webhook.value = ''
   if (!show) return
-  loading.value = true; error.value = ''; form.value = null; view.value = null; activeTab.value = 'connection'
+  loading.value = true; error.value = ''; form.value = null; view.value = null; activeTab.value = props.initialTab || 'connection'
+  restoreManualRequest()
   try { const [data, allGroups] = await Promise.all([accountRefillAPI.get(), getAll('openai')]); if (current === generation) { groups.value = allGroups; accept(data, true) } }
   catch { if (current === generation) error.value = t('accountRefill.loadError') }
   finally { if (current === generation) loading.value = false }
   if (current === generation) timer = setInterval(() => { now.value = Date.now(); void refresh(false) }, 15000)
 }, { immediate: true })
-onBeforeUnmount(() => { generation++; token.value = ''; if (timer) clearInterval(timer) })
+onBeforeUnmount(() => { generation++; token.value = ''; webhook.value = ''; if (timer) clearInterval(timer) })
 </script>

@@ -23,34 +23,35 @@ type AccountRefillStore interface {
 }
 
 type AccountRefillConfig struct {
-	Enabled                   bool                        `json:"enabled"`
-	MonitorEnabled            bool                        `json:"monitor_enabled"`
-	Mode                      string                      `json:"mode"`
-	GroupID                   int64                       `json:"group_id"`
-	DeliveryGroupIDs          []int64                     `json:"delivery_group_ids"`
-	PushEnabled               bool                        `json:"push_enabled"`
-	MaxInFlight               int                         `json:"max_in_flight"`
-	IntervalMinutes           int                         `json:"interval_minutes"`
-	IntervalQuantity          int                         `json:"interval_quantity"`
-	Plan                      string                      `json:"plan"`
-	MinReady                  int                         `json:"min_ready"`
-	MaxReady                  int                         `json:"max_ready"`
-	LeadMinutes               int                         `json:"lead_minutes"`
-	MinRemaining5h            float64                     `json:"min_remaining_5h"`
-	MinRemaining7d            float64                     `json:"min_remaining_7d"`
-	TargetConcurrency         int                         `json:"target_concurrency_percent"`
-	ConcurrencySustainSeconds int                         `json:"concurrency_sustain_seconds"`
-	ImportExpiryGraceMinutes  int                         `json:"import_expiry_grace_minutes"`
-	CheckSeconds              int                         `json:"check_seconds"`
-	CooldownSeconds           int                         `json:"cooldown_seconds"`
-	DailyMaxCount             int                         `json:"daily_max_count"`
-	DailyMaxPoints            float64                     `json:"daily_max_points"`
-	MaxUnitPrice              float64                     `json:"max_unit_price"`
-	ImportConcurrency         int                         `json:"import_concurrency"`
-	WindowEnabled             bool                        `json:"window_enabled"`
-	WindowStart               string                      `json:"window_start"`
-	WindowEnd                 string                      `json:"window_end"`
-	Delivery                  AccountRefillDeliveryConfig `json:"delivery"`
+	Notifications             AccountRefillNotificationConfig `json:"notifications"`
+	Enabled                   bool                            `json:"enabled"`
+	MonitorEnabled            bool                            `json:"monitor_enabled"`
+	Mode                      string                          `json:"mode"`
+	GroupID                   int64                           `json:"group_id"`
+	DeliveryGroupIDs          []int64                         `json:"delivery_group_ids"`
+	PushEnabled               bool                            `json:"push_enabled"`
+	MaxInFlight               int                             `json:"max_in_flight"`
+	IntervalMinutes           int                             `json:"interval_minutes"`
+	IntervalQuantity          int                             `json:"interval_quantity"`
+	Plan                      string                          `json:"plan"`
+	MinReady                  int                             `json:"min_ready"`
+	MaxReady                  int                             `json:"max_ready"`
+	LeadMinutes               int                             `json:"lead_minutes"`
+	MinRemaining5h            float64                         `json:"min_remaining_5h"`
+	MinRemaining7d            float64                         `json:"min_remaining_7d"`
+	TargetConcurrency         int                             `json:"target_concurrency_percent"`
+	ConcurrencySustainSeconds int                             `json:"concurrency_sustain_seconds"`
+	ImportExpiryGraceMinutes  int                             `json:"import_expiry_grace_minutes"`
+	CheckSeconds              int                             `json:"check_seconds"`
+	CooldownSeconds           int                             `json:"cooldown_seconds"`
+	DailyMaxCount             int                             `json:"daily_max_count"`
+	DailyMaxPoints            float64                         `json:"daily_max_points"`
+	MaxUnitPrice              float64                         `json:"max_unit_price"`
+	ImportConcurrency         int                             `json:"import_concurrency"`
+	WindowEnabled             bool                            `json:"window_enabled"`
+	WindowStart               string                          `json:"window_start"`
+	WindowEnd                 string                          `json:"window_end"`
+	Delivery                  AccountRefillDeliveryConfig     `json:"delivery"`
 }
 
 type AccountRefillDeliveryConfig struct {
@@ -72,7 +73,7 @@ type AccountRefillDeliveryConfig struct {
 }
 
 func DefaultAccountRefillConfig() AccountRefillConfig {
-	return AccountRefillConfig{MonitorEnabled: true, Mode: "capacity", DeliveryGroupIDs: []int64{}, PushEnabled: true, MaxInFlight: 1, IntervalMinutes: 60, IntervalQuantity: 1,
+	return AccountRefillConfig{Notifications: AccountRefillNotificationConfig{LowBalanceThreshold: 100}, MonitorEnabled: true, Mode: "capacity", DeliveryGroupIDs: []int64{}, PushEnabled: true, MaxInFlight: 1, IntervalMinutes: 60, IntervalQuantity: 1,
 		Plan: "pro5x", MinReady: 1, MaxReady: 20, LeadMinutes: 30,
 		MinRemaining5h: 15, MinRemaining7d: 15, TargetConcurrency: 85, ConcurrencySustainSeconds: 30, ImportExpiryGraceMinutes: 60, CheckSeconds: 60,
 		CooldownSeconds: 300, DailyMaxCount: 50, DailyMaxPoints: 3000, MaxUnitPrice: 60,
@@ -81,6 +82,9 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
+	if math.IsNaN(c.Notifications.LowBalanceThreshold) || math.IsInf(c.Notifications.LowBalanceThreshold, 0) || c.Notifications.LowBalanceThreshold < 0 || c.Notifications.LowBalanceThreshold > 1e7 {
+		return errors.New("余额预警阈值须为 0–10000000 积分")
+	}
 	if c.GroupID <= 0 || !slices.Contains([]string{"pro5x", "pro20x"}, c.Plan) ||
 		!slices.Contains([]string{"capacity", "fixed", "interval"}, c.Mode) || !slices.Contains(c.DeliveryGroupIDs, c.GroupID) || len(c.DeliveryGroupIDs) > 100 ||
 		c.MaxInFlight < 1 || c.MaxInFlight > 20 || c.IntervalMinutes < 1 || c.IntervalMinutes > 10080 || c.IntervalQuantity < 1 || c.IntervalQuantity > 100 ||
@@ -132,29 +136,32 @@ func (c AccountRefillConfig) Validate() error {
 }
 
 type AccountRefillJob struct {
-	ExpiryGraceMinutes *int                        `json:"expiry_grace_minutes,omitempty"`
-	ID                 string                      `json:"id"`
-	SupplierID         string                      `json:"supplier_id,omitempty"`
-	Status             string                      `json:"status"`
-	SupplierStatus     string                      `json:"supplier_status,omitempty"`
-	Reason             string                      `json:"reason"`
-	Plan               string                      `json:"plan"`
-	Price              float64                     `json:"price"`
-	PriceVersion       int64                       `json:"price_version"`
-	GroupID            int64                       `json:"group_id"`
-	Concurrency        int                         `json:"concurrency"`
-	DeliveryGroupIDs   []int64                     `json:"delivery_group_ids"`
-	DeliveryConfig     AccountRefillDeliveryConfig `json:"delivery_config"`
-	BudgetReleased     bool                        `json:"budget_released"`
-	AccountID          int64                       `json:"account_id,omitempty"`
-	CreatedAt          time.Time                   `json:"created_at"`
-	UpdatedAt          time.Time                   `json:"updated_at"`
-	FinishedAt         *time.Time                  `json:"finished_at,omitempty"`
-	ExpiresAt          *int64                      `json:"expires_at,omitempty"`
-	ResultReady        bool                        `json:"result_ready"`
-	Error              string                      `json:"error,omitempty"`
-	Attempts           int                         `json:"attempts"`
-	NextAttemptAt      time.Time                   `json:"next_attempt_at"`
+	StartedNotificationAt *time.Time                  `json:"started_notification_at,omitempty"`
+	ManualRequestID       string                      `json:"manual_request_id,omitempty"`
+	ConfigRevision        int64                       `json:"config_revision,omitempty"`
+	ExpiryGraceMinutes    *int                        `json:"expiry_grace_minutes,omitempty"`
+	ID                    string                      `json:"id"`
+	SupplierID            string                      `json:"supplier_id,omitempty"`
+	Status                string                      `json:"status"`
+	SupplierStatus        string                      `json:"supplier_status,omitempty"`
+	Reason                string                      `json:"reason"`
+	Plan                  string                      `json:"plan"`
+	Price                 float64                     `json:"price"`
+	PriceVersion          int64                       `json:"price_version"`
+	GroupID               int64                       `json:"group_id"`
+	Concurrency           int                         `json:"concurrency"`
+	DeliveryGroupIDs      []int64                     `json:"delivery_group_ids"`
+	DeliveryConfig        AccountRefillDeliveryConfig `json:"delivery_config"`
+	BudgetReleased        bool                        `json:"budget_released"`
+	AccountID             int64                       `json:"account_id,omitempty"`
+	CreatedAt             time.Time                   `json:"created_at"`
+	UpdatedAt             time.Time                   `json:"updated_at"`
+	FinishedAt            *time.Time                  `json:"finished_at,omitempty"`
+	ExpiresAt             *int64                      `json:"expires_at,omitempty"`
+	ResultReady           bool                        `json:"result_ready"`
+	Error                 string                      `json:"error,omitempty"`
+	Attempts              int                         `json:"attempts"`
+	NextAttemptAt         time.Time                   `json:"next_attempt_at"`
 }
 
 func (j AccountRefillJob) pending() bool {
@@ -176,6 +183,7 @@ type AccountRefillAccount struct {
 }
 
 type AccountRefillEvaluation struct {
+	Error     string                 `json:"error,omitempty"`
 	CheckedAt time.Time              `json:"checked_at"`
 	Ready     int                    `json:"ready"`
 	Healthy   int                    `json:"healthy"`
@@ -189,27 +197,32 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
-	LeaseSyncAt       *time.Time                         `json:"lease_sync_at,omitempty"`
-	LeaseSyncMessage  string                             `json:"lease_sync_message"`
-	LeaseSyncCursor   int                                `json:"lease_sync_cursor"`
-	Config            AccountRefillConfig                `json:"config"`
-	EncryptedToken    string                             `json:"encrypted_token,omitempty"`
-	Revision          int64                              `json:"revision"`
-	Jobs              []AccountRefillJob                 `json:"jobs"`
-	Catalog           *RefillCatalog                     `json:"catalog,omitempty"`
-	CatalogAt         *time.Time                         `json:"catalog_at,omitempty"`
-	Evaluation        AccountRefillEvaluation            `json:"evaluation"`
-	NextCheckAt       time.Time                          `json:"next_check_at"`
-	LastSubmitAt      time.Time                          `json:"last_submit_at"`
-	DemandSince       *time.Time                         `json:"demand_since,omitempty"`
-	Usage             map[string]AccountRefillDailyUsage `json:"usage"`
-	NextIntervalAt    time.Time                          `json:"next_interval_at"`
-	IntervalRemaining int                                `json:"interval_remaining"`
-	Wallet            *RefillWallet                      `json:"wallet,omitempty"`
-	Key               *RefillKeyInfo                     `json:"key,omitempty"`
-	IdentityAt        *time.Time                         `json:"identity_at,omitempty"`
-	Message           string                             `json:"message"`
-	ProviderRetryAt   time.Time                          `json:"provider_retry_at"`
+	EncryptedWebhook   string                             `json:"encrypted_webhook,omitempty"`
+	NotificationStatus AccountRefillNotificationStatus    `json:"notification_status"`
+	LowBalanceAlerted  bool                               `json:"low_balance_alerted"`
+	LowBalanceRequired float64                            `json:"low_balance_required"`
+	NextBalanceCheckAt time.Time                          `json:"next_balance_check_at"`
+	LeaseSyncAt        *time.Time                         `json:"lease_sync_at,omitempty"`
+	LeaseSyncMessage   string                             `json:"lease_sync_message"`
+	LeaseSyncCursor    int                                `json:"lease_sync_cursor"`
+	Config             AccountRefillConfig                `json:"config"`
+	EncryptedToken     string                             `json:"encrypted_token,omitempty"`
+	Revision           int64                              `json:"revision"`
+	Jobs               []AccountRefillJob                 `json:"jobs"`
+	Catalog            *RefillCatalog                     `json:"catalog,omitempty"`
+	CatalogAt          *time.Time                         `json:"catalog_at,omitempty"`
+	Evaluation         AccountRefillEvaluation            `json:"evaluation"`
+	NextCheckAt        time.Time                          `json:"next_check_at"`
+	LastSubmitAt       time.Time                          `json:"last_submit_at"`
+	DemandSince        *time.Time                         `json:"demand_since,omitempty"`
+	Usage              map[string]AccountRefillDailyUsage `json:"usage"`
+	NextIntervalAt     time.Time                          `json:"next_interval_at"`
+	IntervalRemaining  int                                `json:"interval_remaining"`
+	Wallet             *RefillWallet                      `json:"wallet,omitempty"`
+	Key                *RefillKeyInfo                     `json:"key,omitempty"`
+	IdentityAt         *time.Time                         `json:"identity_at,omitempty"`
+	Message            string                             `json:"message"`
+	ProviderRetryAt    time.Time                          `json:"provider_retry_at"`
 }
 
 type AccountRefillDailyUsage struct {
@@ -302,6 +315,10 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 			minimum     float64
 			destination **float64
 		}{{"5h", c.MinRemaining5h, &row.Remaining5h}, {"7d", c.MinRemaining7d, &row.Remaining7d}} {
+			used, valid := resolveAccountExtraNumber(a.Extra, "codex_"+w.name+"_used_percent")
+			if !valid || math.IsNaN(used) || math.IsInf(used, 0) || used < 0 || used > 100 {
+				continue
+			}
 			if candidate := openAIThresholdCandidate(a.Extra, w.name, now); candidate != nil {
 				remaining := math.Max(0, 100-candidate.usedPercent)
 				*w.destination = &remaining

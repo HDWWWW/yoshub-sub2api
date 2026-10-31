@@ -8,6 +8,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -63,6 +64,7 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		Config   service.AccountRefillConfig `json:"config"`
 		APIToken string                      `json:"api_token"`
 		Revision int64                       `json:"revision"`
+		Webhook  string                      `json:"wecom_webhook"`
 	}
 	current, err := h.accountRefill.View(c.Request.Context())
 	if err != nil {
@@ -76,7 +78,7 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		response.BadRequest(c, "补号设置格式无效")
 		return
 	}
-	if err := h.accountRefill.Configure(c.Request.Context(), req.Config, req.APIToken, req.Revision); err != nil {
+	if err := h.accountRefill.Configure(c.Request.Context(), req.Config, req.APIToken, req.Revision, req.Webhook); err != nil {
 		refillResponseError(c, err)
 		return
 	}
@@ -102,6 +104,30 @@ func (h *AccountHandler) RetryAccountRefill(c *gin.Context) {
 	}
 	if err := h.accountRefill.Retry(c.Request.Context(), c.Param("job_id")); err != nil {
 		refillResponseError(c, err)
+		return
+	}
+	h.GetAccountRefill(c)
+}
+
+func (h *AccountHandler) ManualAccountRefill(c *gin.Context) {
+	if !h.refillAvailable(c) {
+		return
+	}
+	middleware.SetAuditAction(c, "admin.accounts.refill.manual")
+	var req service.ManualAccountRefillRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "手动补号参数无效")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
+	defer cancel()
+	if err := h.accountRefill.Manual(ctx, req); err != nil {
+		if errors.Is(err, service.ErrAccountRefillBusy) || service.IsManualRefillValidationError(err) {
+			refillResponseError(c, err)
+		} else {
+			response.Error(c, 503, "请求状态暂无法确认，请使用原请求重试或刷新任务进度")
+		}
 		return
 	}
 	h.GetAccountRefill(c)

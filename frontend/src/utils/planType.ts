@@ -6,6 +6,8 @@ export function normalizePlanType(value?: string | null): string {
 /** Canonical comparison key; labels may be shared by distinct SKUs. */
 export function openAIPlanTypeKey(value?: string | null): string {
   const key = normalizePlanType(value)
+  if (key === 'pro5' || key === 'pro5x') return 'prolite'
+  if (key === 'pro20' || key === 'pro20x') return 'pro'
   return key === 'chatgptpro' ? 'pro' : key
 }
 

@@ -69,7 +69,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AccountPlatform, AccountType } from '@/types'
 import { platformLabel as sharedPlatformLabel } from '@/utils/platformColors'
-import { normalizePlanType, openAIPlanTypeLabel } from '@/utils/planType'
+import { normalizePlanType, openAIPlanTypeKey, openAIPlanTypeLabel } from '@/utils/planType'
 import GrokFreeIcon from './GrokFreeIcon.vue'
 import PlatformIcon from './PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -114,7 +114,7 @@ const typeLabel = computed(() => {
   }
 })
 
-const normalizedPlanType = computed(() => normalizePlanType(props.planType))
+const normalizedPlanType = computed(() => props.platform === 'openai' ? openAIPlanTypeKey(props.planType) : normalizePlanType(props.planType))
 
 const planLabel = computed(() => {
   if (!normalizedPlanType.value) return ''

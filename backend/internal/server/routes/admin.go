@@ -365,6 +365,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/scheduling-preview", h.Admin.Account.GetAccountSchedulingPreview)
 		accounts.PUT("/refill", h.Admin.Account.UpdateAccountRefill)
 		accounts.POST("/refill/check", h.Admin.Account.CheckAccountRefill)
+		accounts.POST("/refill/manual", h.Admin.Account.ManualAccountRefill)
 		accounts.POST("/refill/jobs/:job_id/retry", h.Admin.Account.RetryAccountRefill)
 		accounts.POST("/refill/jobs/:job_id/dismiss", h.Admin.Account.DismissAccountRefill)
 		accounts.GET("", h.Admin.Account.List)

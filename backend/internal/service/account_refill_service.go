@@ -35,6 +35,7 @@ type accountRefillLoads interface {
 }
 
 type AccountRefillService struct {
+	notifier   refillNotifier
 	capacityMu sync.Mutex
 	capacity   refillCapacityTracker
 	store      AccountRefillStore
@@ -107,6 +108,8 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
+	WebhookConfigured         bool                             `json:"webhook_configured"`
+	NotificationStatus        AccountRefillNotificationStatus  `json:"notification_status"`
 	LeaseSyncAt               *time.Time                       `json:"lease_sync_at"`
 	LeaseSyncMessage          string                           `json:"lease_sync_message"`
 	CapacityObservation       AccountRefillCapacityObservation `json:"capacity_observation"`
@@ -136,6 +139,16 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	if err != nil {
 		return nil, err
 	}
+	// GET is independent of the provider worker/advisory lock. Always evaluate
+	// current local accounts and Redis loads, never its persisted old snapshot.
+	if state.Config.GroupID > 0 {
+		localCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := s.evaluate(localCtx, &state, time.Now())
+		cancel()
+		if err != nil {
+			state.Evaluation = AccountRefillEvaluation{CheckedAt: time.Now(), Accounts: []AccountRefillAccount{}, Error: err.Error(), Reason: err.Error()}
+		}
+	}
 	day := time.Now().In(refillTimezone).Format("2006-01-02")
 	daily := state.Usage[day]
 	for _, j := range state.Jobs {
@@ -144,7 +157,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		}
 	}
 	daily.SpentPoints = refillMax(0, daily.Points-daily.ReservedPoints)
-	return &AccountRefillView{Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
+	return &AccountRefillView{WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: state.Jobs, Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now())}, nil
@@ -166,9 +179,18 @@ func (s *AccountRefillService) validateGroups(ctx context.Context, c AccountRefi
 	}
 	return nil
 }
-func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillConfig, token string, revision int64) error {
+func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillConfig, token string, revision int64, webhooks ...string) error {
 	if err := c.Validate(); err != nil {
 		return err
+	}
+	webhook := ""
+	if len(webhooks) > 0 {
+		webhook = strings.TrimSpace(webhooks[0])
+	}
+	if webhook != "" {
+		if err := validateRefillWebhook(webhook); err != nil {
+			return err
+		}
 	}
 	if c.Enabled {
 		if err := s.validateGroups(ctx, c); err != nil {
@@ -189,6 +211,21 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		}
 		if revision != state.Revision {
 			return errors.New("配置已被其他页面修改，请刷新后再保存")
+		}
+		if webhook != "" {
+			cipher, err := s.encryptor.Encrypt(webhook)
+			if err != nil {
+				return errors.New("机器人地址加密失败")
+			}
+			state.EncryptedWebhook = cipher
+		}
+		if (c.Notifications.RefillStarted || c.Notifications.LowBalance) && state.EncryptedWebhook == "" {
+			return errors.New("启用通知前请配置企业微信群机器人 Webhook")
+		}
+		if webhook != "" || c.Notifications != state.Config.Notifications {
+			state.LowBalanceAlerted = false
+			state.LowBalanceRequired = 0
+			state.NextBalanceCheckAt = time.Time{}
 		}
 		if c.GroupID != state.Config.GroupID {
 			for _, j := range state.Jobs {
@@ -316,6 +353,14 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		if time.Now().Before(state.ProviderRetryAt) {
 			return nil
 		}
+		if !preview {
+			if err := s.checkRefillNotificationBalance(ctx, token, &state, now, persist); err != nil {
+				return err
+			}
+			if time.Now().Before(state.ProviderRetryAt) {
+				return nil
+			}
+		}
 		if !preview && (now.Before(state.NextCheckAt) || !state.Config.MonitorEnabled) {
 			return nil
 		}
@@ -442,6 +487,9 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		if catalog.Available+1e-8 < quote.Price {
 			state.Message = "号商可用积分不足"
+			if err := s.notifyRefillBalance(ctx, &state, catalog.Available, quote.Price, persist); err != nil {
+				return err
+			}
 			return persist()
 		}
 		if state.Evaluation.Reason == "并发利用率超过目标" {
@@ -463,21 +511,30 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}
 		graceMinutes := state.Config.ImportExpiryGraceMinutes
+		// Provider calls may be slow. Every trigger rechecks local demand just
+		// before reserving money, so a stale quota snapshot cannot cause a refill.
+		if err := s.evaluate(ctx, &state, time.Now()); err != nil {
+			state.Message = err.Error()
+			return persist()
+		}
+		if state.Config.Mode == "interval" {
+			state.Evaluation.Needed = refillMin(state.IntervalRemaining, refillMax(0, state.Config.MaxReady-state.Evaluation.Ready-state.Evaluation.Pending), refillMax(0, state.Config.MaxInFlight-state.Evaluation.Pending))
+			state.Evaluation.Reason = "定时补号"
+		}
+		if state.Evaluation.Needed <= 0 {
+			state.Message = state.Evaluation.Reason
+			return persist()
+		}
+		if state.Evaluation.Reason == "并发利用率超过目标" && !s.capacityObservation(state.Config, state.Revision, time.Now()).Ready {
+			state.Message = "并发观察尚未连续达标，等待下次检查"
+			return persist()
+		}
 		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: state.Config.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ExpiryGraceMinutes: &graceMinutes,
 			GroupID:            state.Config.GroupID, Concurrency: state.Config.ImportConcurrency, DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
 		state.Jobs = append([]AccountRefillJob{job}, state.Jobs...)
-		// Retain pending jobs; historical totals live separately from the bounded list.
-		if len(state.Jobs) > 200 {
-			kept := state.Jobs[:200]
-			for _, j := range state.Jobs[200:] {
-				if j.pending() {
-					kept = append(kept, j)
-				}
-			}
-			state.Jobs = kept
-		}
+		state.Jobs = trimAccountRefillJobs(state.Jobs, now)
 		usage.Count++
 		usage.Points += quote.Price
 		state.Usage[day] = usage
@@ -510,6 +567,9 @@ func refillRetryDelay(err error, attempt int) time.Duration {
 	return delay
 }
 func (s *AccountRefillService) advance(ctx context.Context, token string, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
+	if err := s.notifyRefillStarted(ctx, state, j, persist); err != nil {
+		return err
+	}
 	now := time.Now()
 	j.UpdatedAt = now
 	if j.SupplierID != "" && j.SupplierStatus == "succeeded" && j.ResultReady {
