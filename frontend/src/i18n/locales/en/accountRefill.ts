@@ -61,7 +61,7 @@ export default {
   "proxy_id": "Proxy ID",
   "direct": "Direct connection",
   "specified": "Specified proxy",
-  "random": "Random available proxy",
+  "random": "Random unused proxy (one account per proxy)",
   "name_template": "Account name template",
   "notes_template": "Account notes template",
   "templateHint": "Leave blank to use the delivered name. Supported variables:",

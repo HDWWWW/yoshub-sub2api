@@ -66,7 +66,14 @@ func (s *adminServiceImpl) scopedAccountProxySelection(ctx context.Context, mode
 		return nil, err
 	}
 	if selected <= 0 {
-		return nil, infraerrors.BadRequest("PROXY_POOL_EMPTY", "没有启用且未过期的代理")
+		return nil, infraerrors.BadRequest("PROXY_POOL_EMPTY", "没有启用、未过期且未绑定账号的空闲代理，请添加代理或释放已有绑定后重试")
 	}
 	return &selected, nil
+}
+
+// CreateAccountWithProxySelection is the custom refill entry point. Selecting a
+// free proxy and creating its account share the same transaction as scoped API
+// delivery. Native CreateAccount and explicit proxy_id imports stay unchanged.
+func (s *adminServiceImpl) CreateAccountWithProxySelection(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	return s.scopedAdminCreateTransaction(ctx, input)
 }

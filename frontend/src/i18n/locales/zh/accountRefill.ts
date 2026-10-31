@@ -61,7 +61,7 @@ export default {
   "proxy_id": "指定代理 ID",
   "direct": "不使用代理",
   "specified": "指定代理",
-  "random": "随机可用代理",
+  "random": "随机空闲代理（一号一代理）",
   "name_template": "账号名称模板",
   "notes_template": "账号备注模板",
   "templateHint": "留空沿用交付名称；支持以下变量：",

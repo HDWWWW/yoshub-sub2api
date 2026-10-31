@@ -2,12 +2,10 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"slices"
 	"strings"
 	"sync"
@@ -718,9 +716,12 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 			notes = &n
 		}
 		autoPause := j.DeliveryConfig.AutoPauseOnExpired
-		proxyID, err := s.selectProxy(ctx, j.DeliveryConfig)
-		if err != nil {
-			return err
+		var proxyID *int64
+		if j.DeliveryConfig.ProxyMode != "random" {
+			proxyID, err = s.selectProxy(ctx, j.DeliveryConfig)
+			if err != nil {
+				return err
+			}
 		}
 		var load *int
 		if j.DeliveryConfig.LoadFactor > 0 {
@@ -731,7 +732,18 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		input := &CreateAccountInput{Name: name, Notes: notes, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: credentials, Extra: extra,
 			GroupIDs: j.DeliveryGroupIDs, Concurrency: j.Concurrency, Priority: j.DeliveryConfig.Priority, RateMultiplier: &j.DeliveryConfig.RateMultiplier, LoadFactor: load,
 			ExpiresAt: deadline, AutoPauseOnExpired: &autoPause, ProxyID: proxyID, InitiallyInactive: true, SkipDefaultGroupBind: true}
-		account, err = s.admin.CreateAccount(ctx, input)
+		if j.DeliveryConfig.ProxyMode == "random" {
+			creator, ok := s.admin.(interface {
+				CreateAccountWithProxySelection(context.Context, *CreateAccountInput) (*Account, error)
+			})
+			if !ok {
+				return errors.New("事务代理分配服务不可用，请稍后重试")
+			}
+			input.ProxyMode = "random"
+			account, err = creator.CreateAccountWithProxySelection(ctx, input)
+		} else {
+			account, err = s.admin.CreateAccount(ctx, input)
+		}
 		if err != nil {
 			return err
 		}
@@ -753,11 +765,26 @@ func (s *AccountRefillService) selectProxy(ctx context.Context, d AccountRefillD
 	if d.ProxyMode == "direct" {
 		return nil, nil
 	}
+	if d.ProxyMode == "random" {
+		pool, ok := s.proxies.(interface {
+			HasFreeAccountProxy(context.Context) (bool, error)
+		})
+		if !ok {
+			return nil, errors.New("空闲代理查询不可用，请稍后重试")
+		}
+		free, err := pool.HasFreeAccountProxy(ctx)
+		if err != nil {
+			return nil, errors.New("无法读取空闲代理，请稍后重试")
+		}
+		if !free {
+			return nil, errors.New("没有未绑定账号的有效空闲代理，暂停新增补号")
+		}
+		return nil, nil // Preflight only; reserve atomically when creating the account.
+	}
 	proxies, err := s.proxies.ListActive(ctx)
 	if err != nil {
 		return nil, errors.New("无法读取代理，请稍后重试")
 	}
-	eligible := make([]int64, 0, len(proxies))
 	now := time.Now()
 	for _, p := range proxies {
 		if !p.IsExpired(now) {
@@ -765,16 +792,7 @@ func (s *AccountRefillService) selectProxy(ctx context.Context, d AccountRefillD
 				id := p.ID
 				return &id, nil
 			}
-			eligible = append(eligible, p.ID)
 		}
-	}
-	if d.ProxyMode == "random" && len(eligible) > 0 {
-		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(eligible))))
-		if err != nil {
-			return nil, errors.New("代理抽取失败")
-		}
-		id := eligible[idx.Int64()]
-		return &id, nil
 	}
 	return nil, errors.New("没有可用且未过期的代理，请检查推送设置")
 }

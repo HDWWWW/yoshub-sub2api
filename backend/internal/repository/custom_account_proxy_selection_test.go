@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,7 +107,7 @@ func TestAccountProxySelectionLargePoolAndTransactionalLeastUsed(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 9, selected)
 	require.NoError(t, tx.Rollback())
-	// 绑定数相同时按 ID 稳定选择。
+	// 所有启用代理都已绑定时，最空闲也不能复用。
 	_, err = db.Exec(`UPDATE proxies SET status='active' WHERE id IN(5,6,7);UPDATE proxies SET status='inactive' WHERE id=9`)
 	require.NoError(t, err)
 	tx, err = client.Tx(context.Background())
@@ -114,7 +115,7 @@ func TestAccountProxySelectionLargePoolAndTransactionalLeastUsed(t *testing.T) {
 	ctx = dbent.NewTxContext(context.Background(), tx)
 	selected, err = repo.SelectAccountProxy(ctx, "least_used")
 	require.NoError(t, err)
-	require.EqualValues(t, 5, selected)
+	require.Zero(t, selected)
 	require.NoError(t, tx.Rollback())
 	_, err = db.Exec(`UPDATE proxies SET status='inactive'`)
 	require.NoError(t, err)
@@ -126,4 +127,72 @@ func TestAccountProxySelectionLargePoolAndTransactionalLeastUsed(t *testing.T) {
 	require.Zero(t, selected)
 	require.NoError(t, tx.Rollback())
 	require.NoError(t, db.Ping(), "测试结束连接可用")
+}
+
+func TestAccountProxySelectionConcurrentRandomAndLeastUsedExclusive(t *testing.T) {
+	db := scopedAdminKeyTestDB(t)
+	_, err := db.Exec(`CREATE TABLE proxies(id BIGINT PRIMARY KEY,status TEXT DEFAULT 'active',expires_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ);
+ CREATE TABLE accounts(id BIGINT PRIMARY KEY,proxy_id BIGINT,deleted_at TIMESTAMPTZ,status TEXT DEFAULT 'inactive');
+ INSERT INTO proxies(id) SELECT generate_series(1,8);`)
+	require.NoError(t, err)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	repo := newProxyRepositoryWithSQL(client, db)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	start := make(chan struct{})
+	errors := make(chan error, 24)
+	var wg sync.WaitGroup
+	for i := 1; i <= 24; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			tx, e := client.Tx(ctx)
+			if e != nil {
+				errors <- e
+				return
+			}
+			defer tx.Rollback()
+			txctx := dbent.NewTxContext(ctx, tx)
+			mode := "random"
+			if id%2 == 0 {
+				mode = "least_used"
+			}
+			proxyID, e := repo.SelectAccountProxy(txctx, mode)
+			if e == nil && proxyID > 0 {
+				_, e = tx.Client().ExecContext(txctx, `INSERT INTO accounts(id,proxy_id) VALUES($1,$2)`, id, proxyID)
+			}
+			if e == nil {
+				e = tx.Commit()
+			}
+			errors <- e
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+	var total, distinct int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*),COUNT(DISTINCT proxy_id) FROM accounts`).Scan(&total, &distinct))
+	require.Equal(t, 8, total)
+	require.Equal(t, total, distinct, "随机、最空闲和补号共用的选择器不得重复分配，停用账号也占用")
+	free, err := repo.HasFreeAccountProxy(ctx)
+	require.NoError(t, err)
+	require.False(t, free)
+	// Rollback must release the lock and leave no reservation. Deleted accounts release their proxy.
+	_, err = db.Exec(`UPDATE accounts SET deleted_at=NOW() WHERE proxy_id=1`)
+	require.NoError(t, err)
+	free, err = repo.HasFreeAccountProxy(ctx)
+	require.NoError(t, err)
+	require.True(t, free)
+	for i := 0; i < 2; i++ {
+		tx, err := client.Tx(ctx)
+		require.NoError(t, err)
+		id, err := repo.SelectAccountProxy(dbent.NewTxContext(ctx, tx), "random")
+		require.NoError(t, err)
+		require.EqualValues(t, 1, id)
+		require.NoError(t, tx.Rollback())
+	}
 }

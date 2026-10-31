@@ -7,30 +7,39 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 )
 
+const freeAccountProxyPredicate = `p.deleted_at IS NULL AND p.status='active'
+ AND (p.expires_at IS NULL OR p.expires_at>NOW())
+ AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.proxy_id=p.id AND a.deleted_at IS NULL)`
+
+// HasFreeAccountProxy is a read-only purchase preflight, not a reservation.
+// Delivery always rechecks under SelectAccountProxy's transaction lock.
+func (r *proxyRepository) HasFreeAccountProxy(ctx context.Context) (bool, error) {
+	var available bool
+	err := scanSingleRow(ctx, r.sql, `SELECT EXISTS (SELECT 1 FROM proxies p WHERE `+freeAccountProxyPredicate+`)`, nil, &available)
+	return available, err
+}
+
 // SelectAccountProxy 在数据库内选出单个 ID，不把整个代理池或密码载入应用。
-// 最空闲选择持有事务级锁到绑定提交，防止并发推送全部观察到同一份空闲计数。
+// 二开自动分配只使用未绑定的代理。随机与最空闲共用事务锁，持有到账号绑定提交，
+// 避免跨实例的推送和补号同时拿到同一个空闲代理；不改变原生显式绑定语义。
 func (r *proxyRepository) SelectAccountProxy(ctx context.Context, mode string) (int64, error) {
 	tx := dbent.TxFromContext(ctx)
 	if tx == nil {
 		return 0, fmt.Errorf("代理选择需要写事务")
 	}
 	client := tx.Client()
-	query := `SELECT p.id FROM proxies p WHERE p.deleted_at IS NULL AND p.status='active' AND (p.expires_at IS NULL OR p.expires_at>NOW()) ORDER BY random() LIMIT 1`
+	order := "random()"
 	switch mode {
 	case "random":
 	case "least_used":
-		if _, err := client.ExecContext(ctx, `SELECT pg_advisory_xact_lock(742319830125)`); err != nil {
-			return 0, err
-		}
-		query = `WITH bindings AS (
-   SELECT a.id AS account_id,a.proxy_id FROM accounts a WHERE a.deleted_at IS NULL AND a.proxy_id IS NOT NULL
-  ), counts AS (SELECT proxy_id,COUNT(*) AS n FROM bindings GROUP BY proxy_id)
-  SELECT p.id FROM proxies p LEFT JOIN counts c ON c.proxy_id=p.id
-  WHERE p.deleted_at IS NULL AND p.status='active' AND (p.expires_at IS NULL OR p.expires_at>NOW())
-  ORDER BY COALESCE(c.n,0),p.id LIMIT 1`
+		order = "p.id"
 	default:
 		return 0, fmt.Errorf("不支持的代理选择模式")
 	}
+	if _, err := client.ExecContext(ctx, `SELECT pg_advisory_xact_lock(742319830125)`); err != nil {
+		return 0, err
+	}
+	query := `SELECT p.id FROM proxies p WHERE ` + freeAccountProxyPredicate + ` ORDER BY ` + order + ` LIMIT 1`
 	rows, err := client.QueryContext(ctx, query)
 	if err != nil {
 		return 0, err

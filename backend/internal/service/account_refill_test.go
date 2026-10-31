@@ -154,6 +154,21 @@ type refillTestAccounts struct {
 	accounts        []Account
 	creates         int
 	failAfterCreate bool
+	selectionCalls  int
+	selectionError  error
+	selectedProxyID int64
+}
+
+func (a *refillTestAccounts) CreateAccountWithProxySelection(ctx context.Context, in *CreateAccountInput) (*Account, error) {
+	a.selectionCalls++
+	if in.ProxyMode != "random" || in.ProxyID != nil {
+		return nil, errors.New("expected transactional random selection without a preselected proxy")
+	}
+	if a.selectionError != nil {
+		return nil, a.selectionError
+	}
+	in.ProxyID = &a.selectedProxyID
+	return a.CreateAccount(ctx, in)
 }
 
 func (a *refillTestAccounts) ListByGroup(context.Context, int64) ([]Account, error) {
@@ -229,6 +244,13 @@ func (a *refillTestAccounts) UpdateAccount(_ context.Context, id int64, in *Upda
 }
 
 type refillTestGroups struct{}
+
+type refillTestProxies struct {
+	accountRefillProxies
+	free bool
+}
+
+func (p *refillTestProxies) HasFreeAccountProxy(context.Context) (bool, error) { return p.free, nil }
 
 func (refillTestGroups) GetByID(context.Context, int64) (*Group, error) {
 	return &Group{Platform: PlatformOpenAI, Status: StatusActive}, nil
@@ -341,6 +363,45 @@ func TestAccountRefillDoesNotPayWhenReservationCannotPersist(t *testing.T) {
 	store.failSave = true
 	require.Error(t, s.run(context.Background(), false))
 	require.Empty(t, p.submitted)
+}
+
+func TestAccountRefillRandomProxyWaitsForFreeProxyAndRetriesSameOrder(t *testing.T) {
+	s, store, p, a := refillHarness(t)
+	s.proxies = &refillTestProxies{free: true}
+	ctx := context.Background()
+	store.mutate(t, func(v *accountRefillState) { v.Config.Delivery.ProxyMode = "random" })
+	require.NoError(t, s.run(ctx, false))
+	p.status = "succeeded"
+	refillDue(t, store)
+	require.NoError(t, s.run(ctx, false))
+	a.selectionError = errors.New("没有未绑定账号的空闲代理")
+	refillDue(t, store)
+	require.NoError(t, s.run(ctx, false))
+	v, err := s.View(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "import_failed", v.Jobs[0].Status)
+	require.Zero(t, a.creates)
+	require.Equal(t, 1, a.selectionCalls)
+	jobID := v.Jobs[0].ID
+	a.selectionError = nil
+	a.selectedProxyID = 73
+	require.NoError(t, s.Retry(ctx, jobID))
+	require.NoError(t, s.run(ctx, false))
+	require.Equal(t, 1, a.creates)
+	require.EqualValues(t, 73, *a.accounts[0].ProxyID)
+	require.Len(t, p.submitted, 1, "空闲代理耗尽后的重试不得重新购买")
+	require.Equal(t, jobID, p.submitted[0].ID)
+}
+
+func TestAccountRefillRandomProxyDoesNotPurchaseWhenPoolOccupied(t *testing.T) {
+	s, store, p, _ := refillHarness(t)
+	s.proxies = &refillTestProxies{free: false}
+	store.mutate(t, func(v *accountRefillState) { v.Config.Delivery.ProxyMode = "random" })
+	require.NoError(t, s.run(context.Background(), false))
+	require.Empty(t, p.submitted)
+	v, err := s.View(context.Background())
+	require.NoError(t, err)
+	require.Contains(t, v.Message, "空闲代理")
 }
 func TestAccountRefillPreviewAndLimits(t *testing.T) {
 	for _, scenario := range []string{"preview", "disabled", "budget", "unit_price", "window", "monitor_off"} {
