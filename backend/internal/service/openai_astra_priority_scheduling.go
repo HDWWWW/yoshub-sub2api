@@ -28,8 +28,8 @@ func buildOpenAIPrioritySelectionOrder(
 		return req.SubscriptionPriority && candidate.account.IsOpenAIChatGPTSubscription()
 	}
 	sort.SliceStable(pool, func(i, j int) bool {
-		if pool[i].account.Priority != pool[j].account.Priority {
-			return pool[i].account.Priority < pool[j].account.Priority
+		if pool[i].account.SchedulingPriority() != pool[j].account.SchedulingPriority() {
+			return pool[i].account.SchedulingPriority() < pool[j].account.SchedulingPriority()
 		}
 		if compactTier(pool[i]) != compactTier(pool[j]) {
 			return compactTier(pool[i]) > compactTier(pool[j])
@@ -39,7 +39,7 @@ func buildOpenAIPrioritySelectionOrder(
 	order := make([]openAIAccountCandidateScore, 0, len(pool))
 	for start := 0; start < len(pool); {
 		end := start + 1
-		for end < len(pool) && pool[end].account.Priority == pool[start].account.Priority &&
+		for end < len(pool) && pool[end].account.SchedulingPriority() == pool[start].account.SchedulingPriority() &&
 			compactTier(pool[end]) == compactTier(pool[start]) && subscription(pool[end]) == subscription(pool[start]) {
 			end++
 		}

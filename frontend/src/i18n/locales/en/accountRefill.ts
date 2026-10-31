@@ -54,7 +54,7 @@ export default {
   "ruleHint": "Expiring accounts remain usable but do not count toward future reserves. Even a single account triggers refill before its original lease ends. Pending tasks offset the shortage; concurrency demand must last at least 30 seconds.",
   "fixedHint": "Maintain the minimum healthy reserve, checking expiry and quota without concurrency expansion.",
   "intervalHint": "Purchase the configured quantity each interval, subject to account, pending, cooldown and budget limits.",
-  "importHint": "External API and refill imports add 60 minutes to the original JSON account expiry once. OAuth token expiry is unchanged.",
+  "importHint": "Imports preserve the original JSON account expiry and allow 60 extra minutes for internal scheduling. Reimports never accumulate grace. OAuth token expiry is unchanged.",
   "pushHint": "Pausing delivery also pauses new purchases. Accepted tasks continue to be tracked and wait for delivery to resume.",
   "ws_mode": "WebSocket mode",
   "proxy_mode": "Proxy selection",

@@ -20,7 +20,9 @@ func TestExternalAccountImportExpiryScope(t *testing.T) {
 			applyExternalImportExpiry(&req, auth)
 			expected := expiry
 			if auth == "admin_api_key" {
-				expected += 3600
+				require.Equal(t, 3600, req.Data.Accounts[0].Extra[service.AccountImportExpiryGraceExtraKey])
+			} else {
+				require.Nil(t, req.Data.Accounts[0].Extra)
 			}
 			require.Equal(t, expected, *req.Data.Accounts[0].ExpiresAt)
 			require.Equal(t, "token-expiry", req.Data.Accounts[0].Credentials["expires_at"])

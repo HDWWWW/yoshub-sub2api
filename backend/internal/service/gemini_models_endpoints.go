@@ -104,9 +104,9 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelsEndpoints(ctx contex
 			continue
 		}
 
-		if acc.Priority < selected.Priority {
+		if acc.SchedulingPriority() < selected.SchedulingPriority() {
 			selected = acc
-		} else if acc.Priority == selected.Priority {
+		} else if acc.SchedulingPriority() == selected.SchedulingPriority() {
 			switch {
 			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
 				selected = acc

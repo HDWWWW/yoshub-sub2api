@@ -946,8 +946,8 @@ func (s *BatchImagePublicService) selectProviderAndAccount(ctx context.Context, 
 		}
 		// 与普通账号调度一致：priority 数值越小越优先，同优先级按 ID 排序。
 		sort.SliceStable(accounts, func(i, j int) bool {
-			if accounts[i].Priority != accounts[j].Priority {
-				return accounts[i].Priority < accounts[j].Priority
+			if accounts[i].SchedulingPriority() != accounts[j].SchedulingPriority() {
+				return accounts[i].SchedulingPriority() < accounts[j].SchedulingPriority()
 			}
 			return accounts[i].ID < accounts[j].ID
 		})
@@ -968,6 +968,14 @@ func (s *BatchImagePublicService) selectProviderAndAccount(ctx context.Context, 
 }
 
 func (s *BatchImagePublicService) listCandidateAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
+	accounts, err := s.listCandidateAccountsUnranked(ctx, groupID, platform)
+	if err != nil {
+		return accounts, err
+	}
+	return accountsWithExpiryPriority(accounts, s.Config, time.Now()), nil
+}
+
+func (s *BatchImagePublicService) listCandidateAccountsUnranked(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	if s.AccountRepo == nil {
 		return nil, ErrBatchImageNoAccountAvailable
 	}

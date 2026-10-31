@@ -7,32 +7,27 @@ Enable `gateway.scheduling.account_expiry_priority_enabled` or set
 `GATEWAY_SCHEDULING_ACCOUNT_EXPIRY_PRIORITY_ENABLED=true` in the application environment.
 The default is disabled; Yoshub production and local deployments enable it explicitly.
 
-The account expiry worker runs at startup and every minute. It rewrites the visible
-account priority using the account management **Expires at** field (`accounts.expires_at`):
+From `0.2.19-yoshub.native-compat.1`, expiry ordering is calculated on private
+candidate copies for each scheduling decision. It never writes `accounts.priority`.
+Native admin requests, responses and exports retain the exact configured priority.
 
-- Unexpired accounts come first, from earliest expiry to latest, starting at priority 1.
-- Identical expiry instants have identical priorities and keep normal load balancing.
-- Accounts without an expiry follow dated accounts, retaining their relative priority order.
-- Expired accounts are placed last; the existing per-account auto-pause option still decides
-  whether to stop scheduling them. Deleted accounts are excluded.
+- Accounts with an effective scheduling expiry in the future come first, earliest first.
+- Identical expiry instants share a tier for normal load balancing.
+- Undated accounts follow, retaining their relative manual priority.
+- Expired accounts come last; auto-pause still obeys the per-account option.
+- Imported OpenAI OAuth accounts use their private 60-minute grace when computing
+  the scheduling deadline. Their native `expires_at` remains the supplier timestamp.
 
-Adding/importing accounts, changing/removing expiry, renewing an account, or the passage
-of its expiry automatically triggers the appropriate ordering on the next minute's scan.
-While enabled, manual priority edits are overwritten. OAuth access-token expiration and
-quota-window reset times are not account expiration and are not used for this ordering.
+The normal and advanced OpenAI schedulers, legacy fallback, cached candidates and
+mixed-platform gateway use this internal rank. Refreshes never mutate shared snapshots.
+The expiry worker now only pauses accounts, using the same internal grace as selection.
+Manual priority changes are no longer overwritten, including during external delivery.
+Disabling the expiry flag restores selection from the native priorities immediately
+on application restart. No schema change or OAuth credential change is required.
 
-Priority changes and scheduler cache notifications commit in one SQL statement. Only changed
-accounts are written/notified. Concurrent expiry or priority edits are left for the next scan.
-No schema migration or account credential change is required.
-
-This controls the scheduler's priority input. For models without a dedicated policy, normal scheduling picks the smallest
-available priority, then falls back when accounts are busy or unavailable. Existing sticky
-sessions, previous-response bindings, model/group restrictions, and quota/health checks remain
-in effect. The optional advanced weighted scheduler still treats priority as one score factor;
-The GPT-6 Astra policy below makes numeric priority a strict ordering for that model.
-
-Disable the environment flag and restart the application to stop automatic priority updates.
-The last assigned priorities remain editable; old manual values are not automatically restored.
+Existing sticky/previous-response bindings, group/model eligibility and health/quota
+checks retain their behavior. The Astra policy below treats the internal rank as a
+strict tier; advanced scheduling for other models retains its scoring policy.
 
 ## GPT-6 Astra priority consumption
 
@@ -64,7 +59,7 @@ these selections as load-balanced selections.
 
 Set `GATEWAY_SCHEDULING_OPENAI_ASTRA_PRIORITY_ENABLED=false` and recreate only the application
 to restore the previous Astra selection policy. This switch does not rewrite account priorities
-or change the expiry worker. No schema migration is introduced.
+or change auto-pause behavior. No schema migration is introduced.
 
 ## Account threshold override
 

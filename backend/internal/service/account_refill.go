@@ -223,27 +223,28 @@ func decodeAccountRefillState(raw string) (accountRefillState, error) {
 	return state, nil
 }
 
-// ImportedAccountExpiry adds the local grace period only to the account
-// scheduling deadline. OAuth expiry remains untouched. Export/reimport is stable.
+// ImportedAccountExpiry preserves the native timestamp and records only a private
+// scheduling grace. Legacy exports with an exact original+offset marker normalize
+// once; subsequent imports never accumulate another offset.
 func ImportedAccountExpiry(expires *int64, extra map[string]any) (*int64, map[string]any) {
-	if expires == nil || *expires <= 0 || *expires > 253402298999 {
+	if expires == nil || *expires <= 0 || *expires > 253402214399 {
 		return expires, extra
 	}
-	copyExtra := make(map[string]any, len(extra)+2)
-	for k, v := range extra {
-		copyExtra[k] = v
-	}
 	original := *expires
-	if v, ok := resolveAccountExtraNumber(extra, "import_original_expires_at"); ok && v > 0 {
-		offset, marked := resolveAccountExtraNumber(extra, "import_expiry_offset_seconds")
-		if v+float64(AccountImportExpiryOffsetMinutes*60) == float64(original) || (marked && offset > 0 && v+offset == float64(original)) {
-			original = int64(v)
+	if _, current := extra[AccountImportExpiryGraceExtraKey]; !current {
+		if v, ok := resolveAccountExtraNumber(extra, "import_original_expires_at"); ok && v > 0 {
+			offset, marked := resolveAccountExtraNumber(extra, "import_expiry_offset_seconds")
+			if marked && offset > 0 && offset <= 86400 && v+offset == float64(original) {
+				original = int64(v)
+			}
 		}
 	}
-	copyExtra["import_original_expires_at"] = original
-	copyExtra["import_expiry_offset_seconds"] = AccountImportExpiryOffsetMinutes * 60
-	deadline := original + AccountImportExpiryOffsetMinutes*60
-	return &deadline, copyExtra
+	copyExtra := NativeAccountExtra(extra)
+	if copyExtra == nil {
+		copyExtra = make(map[string]any)
+	}
+	copyExtra[AccountImportExpiryGraceExtraKey] = AccountImportExpiryOffsetMinutes * 60
+	return &original, copyExtra
 }
 
 var refillTimezone = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -271,11 +272,7 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		if !a.IsOpenAIOAuth() || a.IsShadow() || !slices.Contains(a.GroupIDs, c.GroupID) {
 			continue
 		}
-		row := AccountRefillAccount{ID: a.ID, Name: a.Name, State: "ready", ExpiresAt: a.ExpiresAt, SourceExpiresAt: a.ExpiresAt, Concurrency: a.Concurrency}
-		if original, ok := resolveAccountExtraNumber(a.Extra, "import_original_expires_at"); ok && original > 0 && a.ExpiresAt != nil && original <= float64(a.ExpiresAt.Unix()) {
-			t := time.Unix(int64(original), 0)
-			row.SourceExpiresAt = &t
-		}
+		row := AccountRefillAccount{ID: a.ID, Name: a.Name, State: "ready", ExpiresAt: a.SchedulingExpiresAt(), SourceExpiresAt: a.ExpiresAt, Concurrency: a.Concurrency}
 		if load := loads[a.ID]; load != nil {
 			row.InUse = load.CurrentConcurrency
 			e.InUse += row.InUse

@@ -642,7 +642,7 @@ func openAIAccountSchedulingPriority(account *Account) int {
 	if account == nil {
 		return 0
 	}
-	return account.Priority
+	return account.SchedulingPriority()
 }
 
 func (s *defaultOpenAIAccountScheduler) shouldEscapeStickyAccount(accountID int64, cfg openAIStickyEscapeConfig) (reason string, errorRate float64, ttft float64, shouldEscape bool) {
@@ -705,8 +705,8 @@ func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right open
 	if left.score != right.score {
 		return left.score > right.score
 	}
-	if left.account.Priority != right.account.Priority {
-		return left.account.Priority < right.account.Priority
+	if left.account.SchedulingPriority() != right.account.SchedulingPriority() {
+		return left.account.SchedulingPriority() < right.account.SchedulingPriority()
 	}
 	if left.loadInfo.LoadRate != right.loadInfo.LoadRate {
 		return left.loadInfo.LoadRate < right.loadInfo.LoadRate
@@ -1150,8 +1150,8 @@ func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []open
 	ordered := append([]openAIAccountCandidateScore(nil), pool...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
-		if a.account.Priority != b.account.Priority {
-			return a.account.Priority < b.account.Priority
+		if a.account.SchedulingPriority() != b.account.SchedulingPriority() {
+			return a.account.SchedulingPriority() < b.account.SchedulingPriority()
 		}
 		if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
 			return a.loadInfo.LoadRate < b.loadInfo.LoadRate
@@ -2766,6 +2766,7 @@ func (s *RateLimitService) BuildOpenAIAccountSchedulerScoreSnapshot(
 	if s != nil {
 		gateway.cfg = s.cfg
 	}
+	accounts = accountPointersWithExpiryPriority(accounts, gateway.cfg, time.Now())
 	return buildOpenAIAccountSchedulerScoreSnapshot(
 		accounts,
 		loadMap,

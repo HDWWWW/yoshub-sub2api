@@ -1075,6 +1075,9 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	if len(eligible) == 0 {
 		return nil, compactBlocked, filterStats
 	}
+	// Fresh account reads return native fields. Re-rank private copies after
+	// refreshing so the legacy path also honors expiry without mutating caches.
+	eligible = accountPointersWithExpiryPriority(eligible, s.cfg, time.Now())
 	rateOrder := openAILegacyUpstreamRateOrder{}
 	if preferLowUpstreamRate {
 		rateOrder = newOpenAILegacyUpstreamRateOrder(eligible, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
@@ -1100,10 +1103,10 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 func (s *OpenAIGatewayService) isBetterAccount(candidate, current *Account) bool {
 	// 优先级更高（数值更小）
 	// Higher priority (lower value)
-	if candidate.Priority < current.Priority {
+	if candidate.SchedulingPriority() < current.SchedulingPriority() {
 		return true
 	}
-	if candidate.Priority > current.Priority {
+	if candidate.SchedulingPriority() > current.SchedulingPriority() {
 		return false
 	}
 
@@ -1339,8 +1342,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 
 		sort.SliceStable(available, func(i, j int) bool {
 			a, b := available[i], available[j]
-			if a.account.Priority != b.account.Priority {
-				return a.account.Priority < b.account.Priority
+			if a.account.SchedulingPriority() != b.account.SchedulingPriority() {
+				return a.account.SchedulingPriority() < b.account.SchedulingPriority()
 			}
 			if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
 				return a.loadInfo.LoadRate < b.loadInfo.LoadRate
@@ -1498,6 +1501,14 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
+	accounts, err := s.listSchedulableAccountsUnranked(ctx, groupID, platform)
+	if err != nil {
+		return accounts, err
+	}
+	return accountsWithExpiryPriority(accounts, s.cfg, time.Now()), nil
+}
+
+func (s *OpenAIGatewayService) listSchedulableAccountsUnranked(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)

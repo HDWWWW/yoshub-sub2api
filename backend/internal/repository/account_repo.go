@@ -2138,7 +2138,7 @@ func (r *accountRepository) ListSchedulableCapacityByGroupIDs(ctx context.Contex
 			AND a.status = $2
 			AND a.schedulable = TRUE
 			AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= $3)
-			AND (a.expires_at IS NULL OR a.expires_at > $3 OR a.auto_pause_on_expired = FALSE)
+			AND (a.expires_at IS NULL OR `+aliasedAccountSchedulingExpirySQL("a")+` > $3 OR a.auto_pause_on_expired = FALSE)
 			AND (a.overload_until IS NULL OR a.overload_until <= $3)
 			AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= $3)
 		ORDER BY ag.group_id ASC, ag.priority ASC, a.priority ASC, a.id ASC
@@ -2766,6 +2766,7 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 			AND auto_pause_on_expired = TRUE
 			AND expires_at IS NOT NULL
 			AND expires_at <= $1
+			AND `+aliasedAccountSchedulingExpirySQL("")+` <= $1
 		RETURNING id
 	`, now)
 	if err != nil {
@@ -3521,11 +3522,15 @@ func tempUnschedulablePredicate() dbpredicate.Account {
 }
 
 func notExpiredPredicate(now time.Time) dbpredicate.Account {
-	return dbaccount.Or(
-		dbaccount.ExpiresAtIsNil(),
-		dbaccount.ExpiresAtGT(now),
-		dbaccount.AutoPauseOnExpiredEQ(false),
-	)
+	return func(s *entsql.Selector) {
+		deadline := accountSchedulingExpirySQL(s.C("expires_at"), s.C("platform"), s.C("type"), s.C("extra"))
+		s.Where(entsql.Or(
+			entsql.IsNull(s.C("expires_at")),
+			entsql.EQ(s.C("auto_pause_on_expired"), false),
+			entsql.GT(s.C("expires_at"), now),
+			entsql.P(func(b *entsql.Builder) { b.WriteString(deadline + " > ").Arg(now) }),
+		))
+	}
 }
 
 func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (map[int64]*service.Proxy, error) {

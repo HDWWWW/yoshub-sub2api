@@ -394,10 +394,10 @@ func (s *GeminiMessagesCompatService) buildPreCheckUsageResultMap(ctx context.Co
 // Rules: higher priority (lower value) wins; same priority: never used (OAuth > non-OAuth) > least recently used.
 func (s *GeminiMessagesCompatService) isBetterGeminiAccount(candidate, current *Account) bool {
 	// 优先级更高（数值更小）
-	if candidate.Priority < current.Priority {
+	if candidate.SchedulingPriority() < current.SchedulingPriority() {
 		return true
 	}
-	if candidate.Priority > current.Priority {
+	if candidate.SchedulingPriority() > current.SchedulingPriority() {
 		return false
 	}
 
@@ -456,6 +456,14 @@ func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context
 }
 
 func (s *GeminiMessagesCompatService) listSchedulableAccountsOnce(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, error) {
+	accounts, err := s.listSchedulableAccountsUnranked(ctx, groupID, platform, hasForcePlatform)
+	if err != nil {
+		return accounts, err
+	}
+	return accountsWithExpiryPriority(accounts, s.cfg, time.Now()), nil
+}
+
+func (s *GeminiMessagesCompatService) listSchedulableAccountsUnranked(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, error) {
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 		return accounts, err
