@@ -18,12 +18,15 @@ const openAIHappyFirstTokenDeadlineKey = "openai_happy_first_token_deadline"
 
 // Called only after an upstream HTTP success has opened a Responses SSE stream.
 // HTTP authentication/rate-limit failures before this point keep their status.
-func (s *OpenAIGatewayService) startOpenAIResponseSignals(ctx context.Context, c *gin.Context, account *Account, upstream http.Header, started time.Time, heartbeat time.Duration) func() {
+func (s *OpenAIGatewayService) startOpenAIResponseSignals(ctx context.Context, c *gin.Context, account *Account, _ http.Header, started time.Time, heartbeat time.Duration, initialFrame ...[]byte) func() {
 	var initialDelay *time.Duration
-	// A preamble commits HTTP headers before the winning account is known.
-	// Preserve Codex turn-state staging/provenance when upstream supplies it;
-	// neither forwarding a losing account's state nor dropping it is safe.
-	if c != nil && account != nil && account.Platform == PlatformOpenAI && account.IsOAuth() && extractOpenAICodexTurnState(upstream) == "" && !IsOpenAIResponsesCompactPath(c) && !openAICompactClientWantsStream(c) {
+	// The notification describes this gateway, not a particular account. If it
+	// wins the race with model output, the stream commits without attempt-bound
+	// headers (including the optional Codex turn-state). The stream handlers keep
+	// those headers staged, so a failed account's state can never escape or be
+	// attributed to the successful account. Real output arriving first still
+	// commits the original headers through the normal forwarding path.
+	if c != nil && account != nil && account.Platform == PlatformOpenAI && account.IsOAuth() && !IsOpenAIResponsesCompactPath(c) && !openAICompactClientWantsStream(c) {
 		settings := s.settingService.happyFirstTokenSettings(ctx)
 		if settings.Enabled {
 			value, _ := c.Get(openAIHappyFirstTokenDeadlineKey)
@@ -44,5 +47,5 @@ func (s *OpenAIGatewayService) startOpenAIResponseSignals(ctx context.Context, c
 			initialDelay = &delay
 		}
 	}
-	return startOpenAISSESignals(c, heartbeat, initialDelay)
+	return startOpenAISSESignals(c, heartbeat, initialDelay, initialFrame...)
 }

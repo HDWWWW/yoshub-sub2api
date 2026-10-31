@@ -15,7 +15,7 @@ export default {
   limits: 'Accepts 0–60 seconds with millisecond precision.',
   timingHint: 'Timing starts when forwarding begins. The notification waits for an upstream stream to open, so connection time may exceed the selected delay. Earlier model output is never held back.',
   scopeTitle: 'Scope',
-  scope: 'Streaming HTTP Responses requests through OpenAI OAuth. Requests with Codex turn-state response headers skip the early notification to preserve session state. Non-streaming, native WebSocket and compaction requests do not send it.',
+  scope: 'Streaming HTTP Responses and Chat Completions requests through OpenAI OAuth. Early notifications omit account-bound session response headers; model output arriving first retains normal headers. Non-streaming, native WebSocket and compaction requests do not send it.',
   accuracyTitle: 'First response and model output',
   accuracy: 'Changes when the downstream receives a preamble, without accelerating generation. Sub2 keeps its existing time-to-first-token measurement.',
   privacyTitle: 'No account quota',

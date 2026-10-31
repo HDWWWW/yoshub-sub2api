@@ -441,10 +441,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize)
 		}
 
-		// x-codex-turn-state 溯源：下游回传由 writeOpenAIPassthroughResponseHeaders
-		// 在各 handler 的写头点强制放行，铸造账号在此统一记录，供出站守卫剥离
-		// failover 换号后的跨账号回带（openai_codex_turn_state.go）。
-		if extractOpenAICodexTurnState(resp.Header) != "" {
+		// Streaming attempts publish provenance only when their staged response
+		// headers are committed. A gateway notification may commit without them.
+		if !reqStream && extractOpenAICodexTurnState(resp.Header) != "" {
 			s.noteOpenAICodexTurnStateProvenance(c, account)
 		}
 
@@ -1877,7 +1876,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
-	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	attemptHeaders := make(http.Header)
+	writeOpenAIPassthroughResponseHeaders(attemptHeaders, resp.Header, s.responseHeaderFilter)
 
 	// SSE headers
 	c.Header("Content-Type", "text/event-stream")
@@ -1885,7 +1885,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	if v := resp.Header.Get("x-request-id"); v != "" {
-		c.Header("x-request-id", v)
+		attemptHeaders.Set("x-request-id", v)
 	}
 
 	heartbeatInterval := time.Duration(0)
@@ -1894,6 +1894,20 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	stopResponseSignals := s.startOpenAIResponseSignals(ctx, c, account, resp.Header, startTime, heartbeatInterval)
 	defer stopResponseSignals()
+	applyAttemptHeaders := func() {
+		stopResponseSignals()
+		if c.Writer.Written() {
+			return
+		}
+		for key, values := range attemptHeaders {
+			c.Writer.Header()[key] = append([]string(nil), values...)
+		}
+		s.noteStagedOpenAICodexTurnStateCommitted(c, account, attemptHeaders)
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+	}
 	w := c.Writer
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -1970,6 +1984,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	defer flushPendingOutput()
 	writePendingLines := func() bool {
+		applyAttemptHeaders()
 		for _, pending := range pendingLines {
 			if _, err := fmt.Fprintln(w, pending); err != nil {
 				clientDisconnected = true
@@ -2220,6 +2235,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			// 建立 happens-before —— 之后 ResponseWriter 由本循环独占。
 			if !clientOutputStarted {
 				stopKeepalive()
+				applyAttemptHeaders()
 			}
 			if !clientOutputStarted && len(pendingLines) > 0 {
 				if !writePendingLines() {

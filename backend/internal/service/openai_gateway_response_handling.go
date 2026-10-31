@@ -89,7 +89,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		v := resp.Header.Get("x-request-id")
 		c.Header("x-request-id", v)
 	}
+	stopResponseSignals := func() {}
 	applyAttemptResponseHeaders := func() {
+		// Serialize header publication with the early-notification writer.
+		stopResponseSignals()
 		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() {
 			return
 		}
@@ -109,7 +112,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		c.Header("X-Accel-Buffering", "no")
 	}
 
-	stopResponseSignals := s.startOpenAIResponseSignals(ctx, c, account, resp.Header, startTime, 0)
+	stopResponseSignals = s.startOpenAIResponseSignals(ctx, c, account, resp.Header, startTime, 0)
 	defer stopResponseSignals()
 	w := c.Writer
 	flusher, ok := w.(http.Flusher)

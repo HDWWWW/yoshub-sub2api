@@ -66,7 +66,7 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 
 // A single writer lock covers both the optional initial event and heartbeats.
 // Their bytes remain excluded from semantic-output/failover accounting.
-func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay *time.Duration) func() {
+func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay *time.Duration, initialFrame ...[]byte) func() {
 	if c == nil || c.Writer == nil || (interval <= 0 && initialDelay == nil) {
 		return func() {}
 	}
@@ -88,6 +88,10 @@ func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay 
 	c.Set(openAICompactSSEKeepaliveKey, k)
 	wrappedWriter := &openAICompactKeepaliveWriter{ResponseWriter: originalWriter, k: k}
 	c.Writer = wrappedWriter
+	frame := []byte(openAIHappyFirstTokenEvent)
+	if len(initialFrame) > 0 {
+		frame = initialFrame[0]
+	}
 
 	var reqDone <-chan struct{}
 	if c.Request != nil {
@@ -117,7 +121,7 @@ func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay 
 				return
 			case <-initial:
 				initial = nil
-				if !k.writeSignal([]byte(openAIHappyFirstTokenEvent), true) || heartbeat == nil {
+				if !k.writeSignal(frame, true) || heartbeat == nil {
 					return
 				}
 				continue

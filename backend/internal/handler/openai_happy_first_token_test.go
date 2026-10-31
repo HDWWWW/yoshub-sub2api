@@ -26,7 +26,7 @@ type happyHandlerRecorder struct {
 
 func (r *happyHandlerRecorder) Flush() {
 	r.ResponseRecorder.Flush()
-	if strings.Contains(r.Body.String(), `"type":"response.metadata"`) {
+	if strings.Contains(r.Body.String(), `"gateway_status":"upstream_connected"`) {
 		r.once.Do(func() { close(r.ready) })
 	}
 }
@@ -56,7 +56,7 @@ func (u *happyHandlerUpstream) Do(_ *http.Request, _ string, accountID int64, _ 
 		}
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\",\"message\":\"Too many requests\"}}}\n\n")
 	}()
-	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: reader}, nil
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Codex-Turn-State": {"account-bound-state"}}, Body: reader}, nil
 }
 
 func (u *happyHandlerUpstream) DoWithTLS(r *http.Request, proxy string, id int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
@@ -66,10 +66,17 @@ func (u *happyHandlerUpstream) DoWithTLS(r *http.Request, proxy string, id int64
 // Exercise the handler's real account switching and final-error fallback after
 // Sub2 has already sent a metadata event. Transport 200 must not hide the 429.
 func TestHappyFirstTokenHandlerKeepsRateLimitAndAccountFailover(t *testing.T) {
-	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
+	for _, tc := range []struct {
+		status int
+		chat   bool
+	}{{200, false}, {429, false}, {200, true}, {429, true}} {
+		status := tc.status
 		name := "stream_error_after_metadata"
 		if status != http.StatusOK {
 			name = "http_error_before_metadata"
+		}
+		if tc.chat {
+			name = "chat/" + name
 		}
 		t.Run(name, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
@@ -101,17 +108,29 @@ func TestHappyFirstTokenHandlerKeepsRateLimitAndAccountFailover(t *testing.T) {
 				User:  &service.User{ID: 9982, Status: service.StatusActive},
 				Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive}})
 			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 9982})
-			h.Responses(c)
+			if tc.chat {
+				c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"stream":true}`))
+				c.Request.Header.Set("Content-Type", "application/json")
+				h.ChatCompletions(c)
+			} else {
+				h.Responses(c)
+			}
 			upstream.mu.Lock()
 			attempts := append([]int64(nil), upstream.attempts...)
 			upstream.mu.Unlock()
 			// Existing OAuth 429 policy retries each account once before switching.
 			require.Equal(t, []int64{9901, 9901, 9902, 9902}, attempts, "status=%d body=%s", rec.Code, rec.Body.String())
 			if status == http.StatusOK {
-				require.Contains(t, rec.Body.String(), "rate_limit_exceeded")
+				if tc.chat {
+					require.Contains(t, rec.Body.String(), "rate_limit_error")
+				} else {
+					require.Contains(t, rec.Body.String(), "rate_limit_exceeded")
+				}
 				require.Equal(t, http.StatusOK, rec.Code)
-				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.metadata"`))
-				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.failed"`))
+				require.Equal(t, 1, strings.Count(rec.Body.String(), `"gateway_status":"upstream_connected"`))
+				if !tc.chat {
+					require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.failed"`))
+				}
 				require.NotContains(t, rec.Body.String(), "response.completed")
 			} else {
 				require.Equal(t, http.StatusTooManyRequests, rec.Code)

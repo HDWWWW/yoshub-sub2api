@@ -15,7 +15,7 @@ export default {
   limits: '支持 0–60 秒，精确到毫秒。',
   timingHint: '从转发请求开始计时，只有上游建立流式响应后才发送。连接耗时可能使首响应晚于设定值；正文更早到达时不会额外等待。',
   scopeTitle: '生效范围',
-  scope: '适用于 OpenAI OAuth 的 HTTP Responses 流式转发。需要保留 Codex 会话状态响应头时跳过提前通知；非流式、原生 WebSocket 和压缩请求不发送。',
+  scope: '适用于 OpenAI OAuth 的 HTTP Responses 和 Chat Completions 流式转发。提前通知不包含账号绑定的会话响应头；正文先到时仍正常回传。非流式、原生 WebSocket 和压缩请求不发送。',
   accuracyTitle: '首响应与真实出字',
   accuracy: '改变的是下游收到前导事件的时间，不会加快模型生成。Sub2 的真实首字统计保持原有口径。',
   privacyTitle: '不包含账号额度',

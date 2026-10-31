@@ -65,7 +65,7 @@ type happySignalRecorder struct {
 
 func (r *happySignalRecorder) Flush() {
 	r.ResponseRecorder.Flush()
-	if strings.Contains(r.Body.String(), `"type":"response.metadata"`) {
+	if strings.Contains(r.Body.String(), `"gateway_status":"upstream_connected"`) {
 		select {
 		case r.flushed <- time.Now():
 		default:
@@ -79,6 +79,7 @@ func happyTestContext(t *testing.T) (*gin.Context, *happySignalRecorder) {
 	r := &happySignalRecorder{ResponseRecorder: httptest.NewRecorder(), flushed: make(chan time.Time, 1)}
 	c, _ := gin.CreateTestContext(r)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("session_id", "happy-first-response-session")
 	return c, r
 }
 
@@ -139,11 +140,18 @@ func TestHappyFirstTokenPrecedesOutputWithoutChangingTTFT(t *testing.T) {
 			c, rec := happyTestContext(t)
 			originalWriter := c.Writer
 			s := happyTestService(t, 0)
-			resp := &http.Response{StatusCode: 200, Header: http.Header{}, Body: happyBodyAfterSignal(t, rec, happySuccessStream, 30*time.Millisecond)}
+			// Real Codex OAuth responses carry turn-state even for generic API
+			// clients. It must not disable the notification, or leak an account's
+			// state before the pre-output failover decision has been made.
+			resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {"attempt-state"}, "X-Request-Id": {"attempt-request"}}, Body: happyBodyAfterSignal(t, rec, happySuccessStream, 30*time.Millisecond)}
 			result, err := happyRunStream(s, c, resp, passthrough, time.Now())
 			require.NoError(t, err)
 			require.True(t, strings.HasPrefix(rec.Body.String(), openAIHappyFirstTokenEvent))
 			require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.metadata"`))
+			require.Empty(t, rec.Result().Header.Get(openAICodexTurnStateHeader))
+			require.Empty(t, rec.Result().Header.Get("X-Request-Id"))
+			_, tracked := s.openaiCodexTurnStateOrigins.Load(openAICodexTurnStateSeed(c))
+			require.False(t, tracked, "withheld state must not change client-state provenance")
 			require.NotNil(t, result.firstTokenMs)
 			require.GreaterOrEqual(t, *result.firstTokenMs, 30, "metadata must not become Sub2's TTFT")
 			require.EqualValues(t, 5, result.usage.InputTokens)
@@ -173,7 +181,7 @@ func TestHappyFirstTokenPreservesFailuresAndRetry(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				c, rec := happyTestContext(t)
 				s := happyTestService(t, 0)
-				resp := &http.Response{StatusCode: 200, Header: http.Header{}, Body: happyBodyAfterSignal(t, rec, tc.body, 0)}
+				resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {"losing-account-state"}}, Body: happyBodyAfterSignal(t, rec, tc.body, 0)}
 				_, err := happyRunStream(s, c, resp, passthrough, time.Now())
 				require.Error(t, err)
 				var failover *UpstreamFailoverError
@@ -186,12 +194,14 @@ func TestHappyFirstTokenPreservesFailuresAndRetry(t *testing.T) {
 				require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "preamble must not prevent account failover")
 				require.Equal(t, openAIHappyFirstTokenEvent, rec.Body.String(), "failed attempt output must remain staged")
 				resp.Body = io.NopCloser(strings.NewReader(happySuccessStream))
+				resp.Header.Set(openAICodexTurnStateHeader, "winning-account-state")
 				_, err = happyRunStream(s, c, resp, passthrough, time.Now())
 				require.NoError(t, err)
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.metadata"`))
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
 				require.NotContains(t, rec.Body.String(), `"type":"response.failed"`)
 				require.Greater(t, OpenAICompactKeepaliveAdjustedWrittenSize(c), 0)
+				require.Empty(t, rec.Result().Header.Get(openAICodexTurnStateHeader), "a preamble must not attach either account's state")
 			})
 		}
 	}
@@ -203,7 +213,7 @@ func TestHappyFirstTokenNeverDelaysRealOutputOrDropsTurnState(t *testing.T) {
 		delay int
 		state string
 	}{
-		{"output_first", 60000, ""}, {"turn_state", 0, "opaque-session-state"},
+		{"output_first", 60000, ""}, {"turn_state", 60000, "opaque-session-state"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, rec := happyTestContext(t)
@@ -219,6 +229,28 @@ func TestHappyFirstTokenNeverDelaysRealOutputOrDropsTurnState(t *testing.T) {
 			require.Equal(t, tc.state, rec.Result().Header.Get(openAICodexTurnStateHeader))
 		})
 	}
+}
+
+func TestHappyFirstTokenChatNotificationPrecedesModelOutput(t *testing.T) {
+	c, rec := happyTestContext(t)
+	c.Request.URL.Path = "/v1/chat/completions"
+	s := happyTestService(t, 0)
+	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"response-real\"}}\n\n" + happySuccessStream
+	resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {"attempt-state"}}, Body: happyBodyAfterSignal(t, rec, body, 30*time.Millisecond)}
+	result, err := s.handleChatStreamingResponse(resp, c, happyAccount(), "test-model", "test-model", "test-model", time.Now(), 1)
+	require.NoError(t, err)
+	require.NotNil(t, result.FirstTokenMs)
+	require.GreaterOrEqual(t, *result.FirstTokenMs, 30, "the existing log measurement remains upstream-based")
+	first, _, found := strings.Cut(rec.Body.String(), "\n\n")
+	require.True(t, found)
+	var notification map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(first, "data: ")), &notification))
+	require.Equal(t, "chat.completion.chunk", notification["object"])
+	require.Empty(t, notification["choices"])
+	require.NotContains(t, notification, "usage")
+	require.Contains(t, rec.Body.String(), `"content":"hello"`)
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "upstream_connected"))
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "data: [DONE]"))
 }
 
 func TestHappyFirstTokenRetryKeepsOriginalDeadline(t *testing.T) {
