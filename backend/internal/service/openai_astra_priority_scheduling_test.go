@@ -237,7 +237,7 @@ func TestAstraPriorityScopeAndRollback(t *testing.T) {
 			bindAstraPriorityTestSession(t, svc, accounts[1].ID)
 			selection, _ := selectAstraPriorityTestAccount(t, svc, tc.model, "", false, nil)
 			require.Equal(t, accounts[tc.want].ID, selection.Account.ID)
-			require.False(t, svc.preferOpenAIAstraPriority(PlatformGrok, tc.model))
+			require.False(t, svc.preferOpenAIAstraPriority(context.Background(), PlatformGrok, tc.model))
 		})
 	}
 }

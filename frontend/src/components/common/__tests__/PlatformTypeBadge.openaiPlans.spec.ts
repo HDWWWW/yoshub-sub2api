@@ -108,3 +108,15 @@ describe('new Codex subscription labels', () => {
     if (color) expect(wrapper.html()).toContain(color)
   })
 })
+
+
+describe('OpenAI actual privacy result', () => {
+  it('shows Shared only for successfully enabled training sharing', () => {
+    const success = mount(PlatformTypeBadge, { props: { platform: 'openai', type: 'oauth', privacyMode: 'training_on' } })
+    expect(success.text()).toContain('Shared')
+    for (const privacyMode of ['training_set_failed', 'training_set_cf_blocked']) {
+      const failure = mount(PlatformTypeBadge, { props: { platform: 'openai', type: 'oauth', privacyMode } })
+      expect(failure.text()).not.toContain('Shared')
+    }
+  })
+})

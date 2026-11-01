@@ -68,6 +68,13 @@ An active lease is immutable; switch an account by creating a new lease, binding
 it, and retiring the old one. Deleting only an account shadow must not retire its
 parent's lease.
 
+The application also supports explicit `proxy_mode: ovh_ipv6` and administrator
+allocation of one unbound pool entry. Such reserved entries activate after their
+database transaction commits and remain active until first binding or deletion.
+They use the existing agent protocol; see `docs/yoshub-ovh-ipv6.md` for application
+permissions and lifecycle rules. The global random-proxy toggle does not gate
+explicit allocation.
+
 ## Durable state and recovery
 
 `counter.json` and `counter.guard.json` hold the same monotonic decimal counter.

@@ -22,6 +22,8 @@ import (
 const codexImportClockSkewSeconds int64 = 120
 
 type CodexSessionImportRequest struct {
+	ProxyMode               string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
+	PrivacyEnabled          *bool          `json:"privacy_enabled"`
 	Content                 string         `json:"content"`
 	Contents                []string       `json:"contents"`
 	Name                    string         `json:"name"`
@@ -277,6 +279,8 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 			mergedCredentials := mergeCodexImportCredentials(existing.Credentials, credentials, item)
 			mergedExtra := mergeCodexImportMap(existing.Extra, extra)
 			updateInput := &service.UpdateAccountInput{
+				ProxyMode:          req.ProxyMode,
+				PrivacyEnabled:     req.PrivacyEnabled,
 				Credentials:        mergedCredentials,
 				Extra:              mergedExtra,
 				Concurrency:        req.Concurrency,
@@ -329,12 +333,14 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 		}
 
 		account, createErr := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
+			PrivacyEnabled:        req.PrivacyEnabled,
 			Name:                  accountName,
 			Notes:                 req.Notes,
 			Platform:              service.PlatformOpenAI,
 			Type:                  service.AccountTypeOAuth,
 			Credentials:           credentials,
 			Extra:                 extra,
+			ProxyMode:             req.ProxyMode,
 			ProxyID:               req.ProxyID,
 			Concurrency:           concurrency,
 			Priority:              priority,

@@ -174,6 +174,8 @@ type OpenAIRefreshTokenRequest struct {
 }
 
 type OpenAICodexPATCreateRequest struct {
+	ProxyMode               string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
+	PrivacyEnabled          *bool          `json:"privacy_enabled"`
 	AccessToken             string         `json:"access_token" binding:"required"`
 	Name                    string         `json:"name"`
 	Notes                   *string        `json:"notes"`
@@ -305,6 +307,7 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		State       string  `json:"state" binding:"required"`
 		RedirectURI string  `json:"redirect_uri"`
 		ProxyID     *int64  `json:"proxy_id"`
+		ProxyMode   string  `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
 		Name        string  `json:"name"`
 		Concurrency int     `json:"concurrency"`
 		Priority    int     `json:"priority"`
@@ -344,6 +347,7 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 
 	// Create account
 	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{
+		ProxyMode:   req.ProxyMode,
 		Name:        name,
 		Platform:    platform,
 		Type:        "oauth",
@@ -434,6 +438,8 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 	}
 
 	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{
+		ProxyMode:             req.ProxyMode,
+		PrivacyEnabled:        req.PrivacyEnabled,
 		Name:                  buildOpenAICodexPATAccountName(req.Name, tokenInfo),
 		Notes:                 req.Notes,
 		Platform:              service.PlatformOpenAI,

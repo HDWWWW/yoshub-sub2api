@@ -1887,8 +1887,11 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <ProxySelector v-model="form.proxy_id" v-model:proxy-mode="proxyMode" :proxies="proxies" allow-automatic allow-reserved />
+        <p v-if="proxyMode === 'ovh_ipv6'" class="input-hint">{{ t('ovhIPv6.allocateOnSave') }}</p>
       </div>
+
+      <OpenAIPrivacyControl v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" v-model="privacyEnabled" />
 
       <UpstreamRequestIdHeaderField
         v-model="upstreamRequestIdHeader"
@@ -3397,6 +3400,9 @@ import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestId
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
+import OpenAIPrivacyControl from '@/components/account/OpenAIPrivacyControl.vue'
+import { accountProxyPayload } from '@/utils/accountProxySelection'
+import type { AccountProxyMode } from '@/types'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
@@ -4472,6 +4478,9 @@ const mixedChannelWarningMessageText = computed(() => {
   return mixedChannelWarningRawMessage.value
 })
 
+const proxyMode = ref<AccountProxyMode>('')
+const privacyEnabled = ref(true)
+
 const form = reactive({
   name: '',
   notes: '',
@@ -4572,6 +4581,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.name = newAccount.name
   form.notes = newAccount.notes || ''
   form.proxy_id = newAccount.proxy_id
+  proxyMode.value = ''
+  privacyEnabled.value = newAccount.extra?.openai_privacy_enabled !== false
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
@@ -5580,7 +5591,12 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
   try {
     let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
     updatedAccount = await persistGrokMediaEligibility(accountID, updatedAccount)
-    appStore.showSuccess(t('admin.accounts.accountUpdated'))
+    const expectedPrivacyMode = updatePayload.privacy_enabled ? 'training_off' : 'training_on'
+    if (typeof updatePayload.privacy_enabled === 'boolean' && updatedAccount.extra?.privacy_mode !== expectedPrivacyMode) {
+      appStore.showWarning(t('admin.accounts.privacySavedUnconfirmed'))
+    } else {
+      appStore.showSuccess(t('admin.accounts.accountUpdated'))
+    }
     emit('updated', updatedAccount)
     handleClose()
   } catch (error: any) {
@@ -5619,9 +5635,12 @@ const handleSubmit = async () => {
   const updatePayload: Record<string, unknown> = { ...form }
   if (form.priority !== props.account.priority) updatePayload.yoshub_priority_mode = 'manual'
   try {
-    // 后端期望 proxy_id: 0 表示清除代理，而不是 null
-    if (updatePayload.proxy_id === null) {
-      updatePayload.proxy_id = 0
+    delete updatePayload.proxy_id
+    if (!isSparkShadow.value && (proxyMode.value || (form.proxy_id ?? null) !== (props.account.proxy_id ?? null))) {
+      Object.assign(updatePayload, accountProxyPayload(proxyMode.value, form.proxy_id, true))
+    }
+    if (!isSparkShadow.value && props.account.platform === 'openai' && props.account.type === 'oauth' && privacyEnabled.value !== (props.account.extra?.openai_privacy_enabled !== false)) {
+      updatePayload.privacy_enabled = privacyEnabled.value
     }
     if (form.expires_at === null) {
       updatePayload.expires_at = 0

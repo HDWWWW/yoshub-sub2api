@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"context"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -46,3 +48,33 @@ func (h *ProxyHandler) ovhIPv6(c *gin.Context, update bool) {
 
 func (h *ProxyHandler) GetOVHIPv6(c *gin.Context) { h.ovhIPv6(c, false) }
 func (h *ProxyHandler) SetOVHIPv6(c *gin.Context) { h.ovhIPv6(c, true) }
+
+func (h *ProxyHandler) AllocateOVHIPv6(c *gin.Context) {
+	if adminaccess.FromContext(c.Request.Context()) != nil {
+		response.Error(c, 403, "OVH IPv6 预分配仅限完整管理员访问")
+		return
+	}
+	var req struct {
+		Name string `json:"name" binding:"max=100"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "请求须为 JSON 对象，name 最多 100 字符")
+		return
+	}
+	svc, ok := h.adminService.(interface {
+		AllocateOVHIPv6(context.Context, string) (*service.Proxy, error)
+	})
+	if !ok {
+		response.Error(c, 503, "OVH IPv6 服务不可用")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	middleware.SetAuditAction(c, "admin.proxies.ovh_ipv6.allocate")
+	executeAdminIdempotentJSON(c, "admin.proxies.ovh_ipv6.allocate", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+		p, err := svc.AllocateOVHIPv6(ctx, req.Name)
+		if err != nil {
+			return nil, err
+		}
+		return dto.ProxyFromService(p), nil
+	})
+}

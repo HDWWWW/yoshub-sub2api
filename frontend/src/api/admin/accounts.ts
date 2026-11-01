@@ -758,10 +758,14 @@ export async function exportData(options?: {
 
 export async function importData(payload: {
   data: AdminDataPayload
+  proxy_mode?: import('@/types').AccountProxyMode
+  proxy_id?: number | null
   skip_default_group_bind?: boolean
 }): Promise<AdminDataImportResult> {
   const { data } = await apiClient.post<AdminDataImportResult>('/admin/accounts/data', {
     data: payload.data,
+    proxy_mode: payload.proxy_mode,
+    proxy_id: payload.proxy_id,
     skip_default_group_bind: payload.skip_default_group_bind
   })
   return data
@@ -879,8 +883,8 @@ export async function batchRefresh(accountIds: number[]): Promise<BatchOperation
  * @param id - Account ID
  * @returns Updated account
  */
-export async function setPrivacy(id: number): Promise<Account> {
-  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/set-privacy`)
+export async function setPrivacy(id: number, enabled?: boolean): Promise<Account> {
+  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/set-privacy`, enabled === undefined ? undefined : { enabled })
   return data
 }
 

@@ -169,7 +169,7 @@
           </template>
 
           <template #cell-auth="{ row }">
-            <span v-if="row.managed_ipv6" class="text-xs text-gray-500 dark:text-gray-400" :title="t('ovhIPv6.managedHint')">{{ t('ovhIPv6.exclusive') }}</span>
+            <span v-if="row.managed_ipv6" class="text-xs text-gray-500 dark:text-gray-400" :title="t('ovhIPv6.managedHint')">{{ t(row.managed_ipv6_state === 'reserved' ? 'ovhIPv6.reserved' : 'ovhIPv6.exclusive') }}</span>
             <div v-else-if="row.username || row.password" class="flex items-center gap-1.5">
               <div class="flex flex-col text-xs">
                 <span v-if="row.username" class="text-gray-700 dark:text-gray-200">{{ row.username }}</span>
@@ -342,7 +342,7 @@
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
               <button
-                v-if="!row.managed_ipv6"
+                v-if="!row.managed_ipv6 || row.managed_ipv6_state === 'reserved'"
                 @click="handleDelete(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
@@ -388,16 +388,19 @@
       :show="showCreateModal"
       :title="t('admin.proxies.createProxy')"
       width="normal"
-      @close="closeCreateModal"
+      :close-on-escape="!submitting"
+      :show-close-button="!submitting"
+      @close="!submitting && closeCreateModal()"
     >
       <!-- Tab Switch -->
       <div
-        class="mb-6 flex items-center justify-between gap-3 border-b border-gray-200 dark:border-dark-600"
+        class="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 dark:border-dark-600"
       >
-        <div class="flex min-w-0 shrink-0">
+        <div class="flex min-w-0 flex-wrap">
           <button
             type="button"
             @click="createMode = 'standard'"
+            :disabled="submitting"
             :class="[
               '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
               createMode === 'standard'
@@ -411,6 +414,7 @@
           <button
             type="button"
             @click="createMode = 'batch'"
+            :disabled="submitting"
             :class="[
               '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
               createMode === 'batch'
@@ -432,6 +436,11 @@
               />
             </svg>
             {{ t('admin.proxies.batchAdd') }}
+          </button>
+          <button type="button" data-testid="add-ovh-ipv6-tab" :disabled="submitting" @click="createMode = 'ovh_ipv6'"
+            class="-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors"
+            :class="createMode === 'ovh_ipv6' ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 dark:text-gray-400'">
+            {{ t('ovhIPv6.addSingle') }}
           </button>
         </div>
         <ProxyAdBanner />
@@ -548,7 +557,7 @@
       </form>
 
       <!-- Batch Add Form -->
-      <div v-else class="space-y-5">
+      <div v-else-if="createMode === 'batch'" class="space-y-5">
         <div>
           <label class="input-label">{{ t('admin.proxies.batchInput') }}</label>
           <textarea
@@ -606,9 +615,15 @@
 
       </div>
 
+      <form v-else id="allocate-ovh-ipv6-form" class="space-y-4" @submit.prevent="handleAllocateIPv6">
+        <p class="text-sm text-gray-600 dark:text-gray-300">{{ t('ovhIPv6.addSingleHint') }}</p>
+        <label class="block"><span class="input-label">{{ t('ovhIPv6.optionalName') }}</span><input v-model="allocateIPv6Name" type="text" maxlength="100" :disabled="submitting" class="input" /></label>
+        <p v-if="allocateIPv6Error" class="text-sm text-red-600 dark:text-red-400" role="alert">{{ allocateIPv6Error }}</p>
+      </form>
+
       <template #footer>
         <div class="flex justify-end gap-3">
-          <button @click="closeCreateModal" type="button" class="btn btn-secondary">
+          <button @click="closeCreateModal" :disabled="submitting" type="button" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
           <button
@@ -641,7 +656,7 @@
             {{ submitting ? t('admin.proxies.creating') : t('common.create') }}
           </button>
           <button
-            v-else
+            v-else-if="createMode === 'batch'"
             @click="handleBatchCreate"
             type="button"
             :disabled="submitting || batchParseResult.valid === 0"
@@ -673,6 +688,7 @@
                 : t('admin.proxies.importProxies', { count: batchParseResult.valid })
             }}
           </button>
+          <button v-else type="submit" form="allocate-ovh-ipv6-form" class="btn btn-primary" :disabled="submitting" data-testid="allocate-ovh-ipv6">{{ t(submitting ? 'admin.proxies.creating' : 'ovhIPv6.addSingle') }}</button>
         </div>
       </template>
     </BaseDialog>
@@ -998,6 +1014,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
 import OvhIPv6Control from '@/components/admin/proxy/OvhIPv6Control.vue'
+import { ovhIPv6API } from '@/api/admin/ovhIPv6'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -1148,7 +1165,9 @@ const qualityReportProxy = ref<Proxy | null>(null)
 const qualityReport = ref<ProxyQualityCheckResult | null>(null)
 
 // Batch import state
-const createMode = ref<'standard' | 'batch'>('standard')
+const createMode = ref<'standard' | 'batch' | 'ovh_ipv6'>('standard')
+const allocateIPv6Name = ref('')
+const allocateIPv6Error = ref('')
 const batchInput = ref('')
 const batchParseResult = reactive({
   total: 0,
@@ -1316,6 +1335,8 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 const closeCreateModal = () => {
   showCreateModal.value = false
   createMode.value = 'standard'
+  allocateIPv6Name.value = ''
+  allocateIPv6Error.value = ''
   createForm.name = ''
   createForm.protocol = 'http'
   createForm.host = ''
@@ -1434,6 +1455,21 @@ const handleBatchCreate = async () => {
   } finally {
     submitting.value = false
   }
+}
+
+const handleAllocateIPv6 = async () => {
+  if (submitting.value) return
+  submitting.value = true
+  allocateIPv6Error.value = ''
+  try {
+    await ovhIPv6API.allocate(allocateIPv6Name.value)
+    appStore.showSuccess(t('ovhIPv6.allocated'))
+    closeCreateModal()
+    await loadProxies()
+    ovhIPv6Control.value?.refresh?.()
+  } catch (cause) {
+    allocateIPv6Error.value = extractApiErrorMessage(cause, t('ovhIPv6.allocateFailed'))
+  } finally { submitting.value = false }
 }
 
 const handleCreateProxy = async () => {
@@ -2011,7 +2047,7 @@ const handleExportData = async () => {
 }
 
 const handleDelete = (proxy: Proxy) => {
-  if (proxy.managed_ipv6) return
+  if (proxy.managed_ipv6 && proxy.managed_ipv6_state !== 'reserved') return
   if ((proxy.account_count || 0) > 0) {
     appStore.showError(t('admin.proxies.deleteBlockedInUse'))
     return
@@ -2028,7 +2064,7 @@ const openBatchDelete = () => {
 }
 
 const confirmDelete = async () => {
-  if (!deletingProxy.value || deletingProxy.value.managed_ipv6) return
+  if (!deletingProxy.value || (deletingProxy.value.managed_ipv6 && deletingProxy.value.managed_ipv6_state !== 'reserved')) return
 
   try {
     await adminAPI.proxies.delete(deletingProxy.value.id)

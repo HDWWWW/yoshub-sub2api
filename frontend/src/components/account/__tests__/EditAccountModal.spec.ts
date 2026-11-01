@@ -7,8 +7,10 @@ import {
   setPlatformCatalog
 } from '@/constants/platformCatalog'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode, privacyWarningMock, accountSuccessMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
+  privacyWarningMock: vi.fn(),
+  accountSuccessMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
@@ -16,7 +18,8 @@ const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.ho
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError: vi.fn(),
-    showSuccess: vi.fn(),
+    showSuccess: accountSuccessMock,
+    showWarning: privacyWarningMock,
     showInfo: vi.fn()
   })
 }))
@@ -60,6 +63,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 import EditAccountModal from '../EditAccountModal.vue'
+import ProxySelector from '@/components/common/ProxySelector.vue'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -2083,6 +2087,75 @@ describe('EditAccountModal temp-unschedulable rule scope', () => {
     await addRule!.trigger('click')
 
     expect(checkedScopes(wrapper)).toEqual(['temp-unsched-scope-model'])
+    wrapper.unmount()
+  })
+})
+
+
+describe('account proxy ownership and privacy preference', () => {
+  beforeEach(() => { authIsSimpleMode.value = true; updateAccountMock.mockReset().mockResolvedValue(buildOpenAIOAuthParentAccount()); checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false }) })
+
+  it('does not submit proxy changes or allocate when an existing account is saved unchanged', async () => {
+    const account = { ...buildOpenAIOAuthParentAccount(), proxy_id: 91 }
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]![1]).not.toHaveProperty('proxy_id')
+    expect(updateAccountMock.mock.calls[0]![1]).not.toHaveProperty('proxy_mode')
+    expect(updateAccountMock.mock.calls[0]![1]).not.toHaveProperty('privacy_enabled')
+    wrapper.unmount()
+  })
+
+  it('requests a new dedicated IPv6 only after explicit selection', async () => {
+    const wrapper = mountModal({ ...buildOpenAIOAuthParentAccount(), proxy_id: 91 })
+    const selector = wrapper.getComponent(ProxySelector)
+    selector.vm.$emit('update:modelValue', null)
+    selector.vm.$emit('update:proxyMode', 'ovh_ipv6')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]![1]).toMatchObject({ proxy_mode: 'ovh_ipv6', proxy_id: null })
+    await wrapper.setProps({ account: { ...buildOpenAIOAuthParentAccount(), proxy_id: 92 } })
+    expect(selector.props('proxyMode')).toBe('')
+    wrapper.unmount()
+  })
+
+  it('supports disabling and re-enabling privacy without touching the proxy', async () => {
+    const wrapper = mountModal(buildOpenAIOAuthParentAccount())
+    const privacy = wrapper.get('[data-testid="openai-privacy-enabled"]')
+    expect((privacy.element as HTMLInputElement).checked).toBe(true)
+    await privacy.setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]![1].privacy_enabled).toBe(false)
+    expect(updateAccountMock.mock.calls[0]![1]).not.toHaveProperty('proxy_id')
+    await wrapper.setProps({ account: { ...buildOpenAIOAuthParentAccount(), extra: { openai_privacy_enabled: false, privacy_mode: 'training_on' } } })
+    expect((privacy.element as HTMLInputElement).checked).toBe(false)
+    await privacy.setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls.at(-1)![1].privacy_enabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it.each(['training_set_failed', 'training_set_cf_blocked', 'training_off'])('reports an unconfirmed sharing update for %s without a success toast', async (privacyMode) => {
+    privacyWarningMock.mockClear(); accountSuccessMock.mockClear()
+    updateAccountMock.mockResolvedValue({ ...buildOpenAIOAuthParentAccount(), extra: { openai_privacy_enabled: false, privacy_mode: privacyMode } })
+    const wrapper = mountModal(buildOpenAIOAuthParentAccount())
+    await wrapper.get('[data-testid="openai-privacy-enabled"]').setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(privacyWarningMock).toHaveBeenCalledWith('admin.accounts.privacySavedUnconfirmed')
+    expect(accountSuccessMock).not.toHaveBeenCalled()
+    expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({ extra: { openai_privacy_enabled: false, privacy_mode: privacyMode } })
+    wrapper.unmount()
+  })
+
+  it('does not expose or submit owned proxy or privacy fields for a credential shadow', async () => {
+    const wrapper = mountModal({ ...buildOpenAISparkShadowAccount(), proxy_id: 91 })
+    expect(wrapper.findComponent(ProxySelector).exists()).toBe(false)
+    expect(wrapper.find('[data-testid="openai-privacy-enabled"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    const payload = updateAccountMock.mock.calls[0]![1]
+    expect(payload).not.toHaveProperty('proxy_id')
+    expect(payload).not.toHaveProperty('proxy_mode')
+    expect(payload).not.toHaveProperty('privacy_enabled')
     wrapper.unmount()
   })
 })

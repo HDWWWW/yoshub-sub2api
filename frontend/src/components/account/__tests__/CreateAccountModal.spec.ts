@@ -74,6 +74,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 import CreateAccountModal from '../CreateAccountModal.vue'
+import ProxySelector from '@/components/common/ProxySelector.vue'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -858,6 +859,43 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(payload?.upstream_billing_probe_enabled).toBe(true)
     // 创建成功后前端立即发起一次首探（与其他 apikey 平台一致）。
     expect(probeUpstreamBillingMock).toHaveBeenCalledWith(42)
+  })
+
+  it.each([false, true])('preserves untouched routing or explicitly clears it on Codex updates (direct=%s)', async (explicitDirect) => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    if (explicitDirect) {
+      const selector = wrapper.getComponent(ProxySelector)
+      selector.vm.$emit('update:modelValue', null)
+      selector.vm.$emit('update:proxyMode', 'direct')
+    }
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex account')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+    const payload = importCodexSessionMock.mock.calls[0]![0]
+    expect(payload.update_existing).toBe(true)
+    expect(payload.proxy_id).toBeNull()
+    expect(payload.proxy_mode).toBe(explicitDirect ? 'direct' : undefined)
+    wrapper.unmount()
+  })
+
+  it.each(['session', 'pat'])('preserves explicit IPv6 and disabled privacy in %s import', async (method) => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    const proxy = wrapper.getComponent(ProxySelector)
+    proxy.vm.$emit('update:modelValue', null)
+    proxy.vm.$emit('update:proxyMode', 'ovh_ipv6')
+    expect((wrapper.get('[data-testid="openai-privacy-enabled"]').element as HTMLInputElement).checked).toBe(true)
+    await wrapper.get('[data-testid="openai-privacy-enabled"]').setValue(false)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('IPv6 account')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get(`[data-testid="import-codex-${method}"]`).trigger('click')
+    await flushPromises()
+    const api = method === 'session' ? importCodexSessionMock : createOpenAICodexPATMock
+    expect(api).toHaveBeenCalledTimes(1)
+    expect(api.mock.calls[0]![0]).toMatchObject({ proxy_mode: 'ovh_ipv6', proxy_id: null, privacy_enabled: false })
+    wrapper.unmount()
   })
 
   it('leaves Codex session import billing ownership to the backend', async () => {

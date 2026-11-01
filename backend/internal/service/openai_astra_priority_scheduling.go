@@ -1,10 +1,18 @@
 package service
 
-import "sort"
+import (
+	"context"
+	"sort"
+)
 
-func (s *OpenAIGatewayService) preferOpenAIAstraPriority(platform, model string) bool {
-	return s != nil && s.cfg != nil && s.cfg.Gateway.Scheduling.OpenAIAstraPriorityEnabled &&
-		NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI && isOpenAIGPT6AstraModel(model)
+func (s *OpenAIGatewayService) preferOpenAIAstraPriority(ctx context.Context, platform, model string) bool {
+	if s == nil || NormalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI || !isOpenAIGPT6AstraModel(model) {
+		return false
+	}
+	if s.settingService != nil {
+		return s.settingService.astraPriorityEnabled(ctx)
+	}
+	return s.cfg != nil && s.cfg.Gateway.Scheduling.OpenAIAstraPriorityEnabled
 }
 
 // buildOpenAIPrioritySelectionOrder exhausts each priority tier before trying the

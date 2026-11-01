@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, shallowMount } from '@vue/test-utils'
 import ProxiesView from '../ProxiesView.vue'
 
-const { list, getAllWithCount, get, save, batchDelete } = vi.hoisted(() => ({
-  list: vi.fn(), getAllWithCount: vi.fn(), get: vi.fn(), save: vi.fn(), batchDelete: vi.fn()
+const { list, getAllWithCount, get, save, batchDelete, allocate, deleteProxy } = vi.hoisted(() => ({
+  list: vi.fn(), getAllWithCount: vi.fn(), get: vi.fn(), save: vi.fn(), batchDelete: vi.fn(), allocate: vi.fn(), deleteProxy: vi.fn()
 }))
-vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { list, getAllWithCount, batchDelete } } }))
+vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { list, getAllWithCount, batchDelete, delete: deleteProxy } } }))
+vi.mock('@/api/admin/ovhIPv6', () => ({ ovhIPv6API: { allocate } }))
 vi.mock('@/api/admin/proxyBindingLimits', () => ({ proxyBindingLimitsAPI: { get, save } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn(), showInfo: vi.fn() }) }))
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key }) }))
@@ -83,5 +84,47 @@ describe('managed IPv6 proxy entries', () => {
     await wrapper.get('[data-test="confirm-delete"]').trigger('click')
     await flushPromises()
     expect(batchDelete).toHaveBeenCalledWith([2])
+  })
+})
+
+
+describe('single reserved IPv6', () => {
+  it('allocates exactly one address and refreshes the list', async () => {
+    let finish!: (value: object) => void
+    allocate.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('admin.proxies.createProxy'))!.trigger('click')
+    await wrapper.get('[data-testid="add-ovh-ipv6-tab"]').trigger('click')
+    await wrapper.get('#allocate-ovh-ipv6-form input').setValue('new reservation')
+    await wrapper.get('#allocate-ovh-ipv6-form').trigger('submit')
+    expect(allocate).toHaveBeenCalledWith('new reservation')
+    expect(wrapper.get('[data-testid="allocate-ovh-ipv6"]').attributes('disabled')).toBeDefined()
+    finish({ id: 3, managed_ipv6: '2001:db8::3', managed_ipv6_state: 'reserved' }); await flushPromises()
+    expect(allocate).toHaveBeenCalledTimes(1)
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('#allocate-ovh-ipv6-form').exists()).toBe(false)
+  })
+
+  it('keeps allocation errors visible and lets the user retry without pretending it succeeded', async () => {
+    allocate.mockRejectedValue(new Error('egress service unavailable'))
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('admin.proxies.createProxy'))!.trigger('click')
+    await wrapper.get('[data-testid="add-ovh-ipv6-tab"]').trigger('click')
+    await wrapper.get('#allocate-ovh-ipv6-form').trigger('submit'); await flushPromises()
+    expect(wrapper.get('#allocate-ovh-ipv6-form [role="alert"]').text()).toContain('egress service unavailable')
+    expect(wrapper.get('[data-testid="allocate-ovh-ipv6"]').attributes('disabled')).toBeUndefined()
+    expect(list).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows unused reservations to be retired with the normal delete action', async () => {
+    list.mockResolvedValue({ items: [{ ...managed, account_count: 0, managed_ipv6_state: 'reserved' }], total: 1, pages: 1 })
+    deleteProxy.mockResolvedValue({})
+    const wrapper = mountView(); await flushPromises()
+    const row = wrapper.get('[data-row="1"]')
+    expect(row.text()).toContain('ovhIPv6.reserved')
+    expect(row.text()).not.toContain('common.edit')
+    await row.findAll('button').find(button => button.text() === 'common.delete')!.trigger('click')
+    await wrapper.get('[data-test="confirm-delete"]').trigger('click'); await flushPromises()
+    expect(deleteProxy).toHaveBeenCalledWith(1)
   })
 })

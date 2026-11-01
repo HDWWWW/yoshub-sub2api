@@ -13,6 +13,7 @@ export interface RefillDeliveryConfig {
   schedulable: boolean
   auto_pause_on_expired: boolean
   fingerprint_mode: string
+  privacy_enabled?: boolean
   expiry_mode: string
   fixed_expires_at: number | null
   model_mapping: Record<string, string>

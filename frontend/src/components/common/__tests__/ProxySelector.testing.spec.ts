@@ -88,3 +88,48 @@ describe('managed IPv6 proxy selection', () => {
     expect(testProxy.mock.calls.map(([id]) => id)).toEqual([1])
   })
 })
+
+
+describe('explicit allocation and reservations', () => {
+  it('emits a mode separately from numeric proxy IDs and clears it on manual selection', async () => {
+    const wrapper = mount(ProxySelector, { props: { modelValue: 1, proxyMode: '', allowAutomatic: true, proxies: [{ id: 1, name: 'manual', host: 'proxy.example', port: 8080, protocol: 'http' } as Proxy] }, global: { stubs: { Icon: true } } })
+    await wrapper.get('.select-trigger').trigger('click')
+    await wrapper.get('[data-proxy-mode="ovh_ipv6"]').trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([null])
+    expect(wrapper.emitted('update:proxyMode')?.at(-1)).toEqual(['ovh_ipv6'])
+    await wrapper.setProps({ modelValue: null, proxyMode: 'ovh_ipv6' })
+    expect(wrapper.get('.select-trigger').text()).toContain('ovhIPv6.mode.ovh_ipv6')
+    await wrapper.get('.select-trigger').trigger('click')
+    await wrapper.findAll('.select-option').find(item => item.text().includes('manual'))!.trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([1])
+    expect(wrapper.emitted('update:proxyMode')?.at(-1)).toEqual([''])
+  })
+
+  it('only offers unused reserved addresses when explicitly permitted', async () => {
+    const proxies = [
+      { id: 2, name: 'reserved address', managed_ipv6: '2001:db8::2', managed_ipv6_state: 'reserved', protocol: 'socks5', port: 1080, host: 'internal' },
+      { id: 3, name: 'bound address', managed_ipv6: '2001:db8::3', managed_ipv6_state: 'bound', protocol: 'socks5', port: 1080, host: 'internal' }
+    ] as Proxy[]
+    const wrapper = mount(ProxySelector, { props: { modelValue: null, proxies }, global: { stubs: { Icon: true } } })
+    await wrapper.get('.select-trigger').trigger('click')
+    expect(wrapper.text()).not.toContain('reserved address')
+    await wrapper.setProps({ allowReserved: true })
+    expect(wrapper.text()).toContain('reserved address')
+    expect(wrapper.text()).not.toContain('bound address')
+    await wrapper.findAll('.select-option').find(item => item.text().includes('reserved address'))!.trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([2])
+  })
+})
+
+
+it('distinguishes an explicit no-proxy choice from untouched import routing', async () => {
+  const wrapper = mount(ProxySelector, { props: { modelValue: null, proxyMode: '', allowAutomatic: true, proxies: [] }, global: { stubs: { Icon: true } } })
+  expect(wrapper.emitted('update:proxyMode')).toBeUndefined()
+  await wrapper.get('.select-trigger').trigger('click')
+  await wrapper.findAll('.select-option').find(option => option.text() === 'admin.accounts.noProxy')!.trigger('click')
+  expect(wrapper.emitted('update:proxyMode')?.at(-1)).toEqual(['direct'])
+  expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([null])
+  await wrapper.setProps({ proxyMode: 'direct' })
+  await wrapper.get('.select-trigger').trigger('click')
+  expect(wrapper.get('.select-option-selected').text()).toBe('admin.accounts.noProxy')
+})

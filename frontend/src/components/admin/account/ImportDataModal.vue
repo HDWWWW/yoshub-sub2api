@@ -51,6 +51,12 @@
         />
       </div>
 
+      <div class="space-y-2">
+        <label class="flex items-center gap-2 text-sm"><input v-model="overrideProxy" type="checkbox" :disabled="importing" data-testid="import-override-proxy" />{{ t('ovhIPv6.overrideFileProxy') }}</label>
+        <p class="input-hint">{{ t(overrideProxy ? 'ovhIPv6.importHint' : 'ovhIPv6.keepFileProxy') }}</p>
+        <ProxySelector v-if="overrideProxy" v-model="proxyId" v-model:proxy-mode="proxyMode" :proxies="proxies || []" :disabled="importing" allow-automatic />
+      </div>
+
       <div
         v-if="result"
         class="space-y-2 rounded-xl border border-gray-200 p-4 dark:border-dark-700"
@@ -99,12 +105,15 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ProxySelector from '@/components/common/ProxySelector.vue'
+import { accountProxyPayload } from '@/utils/accountProxySelection'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
-import type { AdminDataImportResult, AdminDataPayload } from '@/types'
+import type { AdminDataImportResult, AdminDataPayload, AccountProxyMode, Proxy } from '@/types'
 
 interface Props {
   show: boolean
+  proxies?: Proxy[]
 }
 
 interface Emits {
@@ -118,6 +127,9 @@ const emit = defineEmits<Emits>()
 const { t } = useI18n()
 const appStore = useAppStore()
 
+const overrideProxy = ref(false)
+const proxyMode = ref<AccountProxyMode>('')
+const proxyId = ref<number | null>(null)
 const importing = ref(false)
 const files = ref<File[]>([])
 const dragDepth = ref(0)
@@ -139,6 +151,9 @@ watch(
   () => props.show,
   (open) => {
     if (open) {
+      overrideProxy.value = false
+      proxyMode.value = ''
+      proxyId.value = null
       files.value = []
       dragDepth.value = 0
       hasCreatedData.value = false
@@ -295,7 +310,8 @@ const handleImport = async () => {
 
     const res = await adminAPI.accounts.importData({
       data: dataPayload,
-      skip_default_group_bind: true
+      skip_default_group_bind: true,
+      ...(overrideProxy.value ? accountProxyPayload(proxyMode.value || (proxyId.value ? 'specified' : 'direct'), proxyId.value) : {})
     })
 
     result.value = res

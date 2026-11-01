@@ -65,6 +65,8 @@ type DataProxy struct {
 // 影子的独立调度配置(priority/并发/分组/status 管理员可单独调)亦不在本备份范围,属已知局限
 // (外审第6轮裁决:保持排除 + 前端警告,而非升级格式做完整往返)。
 type DataAccount struct {
+	ProxyMode          string         `json:"proxy_mode,omitempty"`
+	ProxyID            *int64         `json:"proxy_id,omitempty"`
 	Name               string         `json:"name"`
 	Notes              *string        `json:"notes,omitempty"`
 	Platform           string         `json:"platform"`
@@ -80,6 +82,8 @@ type DataAccount struct {
 }
 
 type DataImportRequest struct {
+	ProxyMode            string      `json:"proxy_mode,omitempty"`
+	ProxyID              *int64      `json:"proxy_id,omitempty"`
 	Data                 DataPayload `json:"data"`
 	SkipDefaultGroupBind *bool       `json:"skip_default_group_bind"`
 }
@@ -471,6 +475,13 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 
 	for i := range dataPayload.Accounts {
 		item := dataPayload.Accounts[i]
+		var selectionErr error
+		item, selectionErr = resolveDataAccountProxy(req, item)
+		if selectionErr != nil {
+			result.AccountFailed++
+			result.Errors = append(result.Errors, DataImportError{Kind: "account", Name: item.Name, Message: selectionErr.Error()})
+			continue
+		}
 		if item.ProxyKey != nil && managedProxyKeys[*item.ProxyKey] {
 			result.AccountFailed++
 			result.Errors = append(result.Errors, DataImportError{
@@ -488,7 +499,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			continue
 		}
 
-		var proxyID *int64
+		proxyID := item.ProxyID
 		if item.ProxyKey != nil && *item.ProxyKey != "" {
 			if id, ok := proxyKeyToID[*item.ProxyKey]; ok {
 				proxyID = &id
@@ -507,6 +518,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		enrichCredentialsFromIDToken(&item)
 
 		accountInput := &service.CreateAccountInput{
+			ProxyMode:            item.ProxyMode,
 			Name:                 item.Name,
 			Notes:                item.Notes,
 			Platform:             item.Platform,
@@ -756,6 +768,9 @@ func validateDataProxy(item DataProxy) error {
 }
 
 func validateDataAccount(item DataAccount) error {
+	if _, err := service.NormalizeAccountProxyMode(item.ProxyMode, item.ProxyID, false); err != nil {
+		return err
+	}
 	if item.ProxyKey != nil && isManagedDataProxyKey(*item.ProxyKey) {
 		return errors.New(managedIPv6ImportError)
 	}
@@ -786,6 +801,21 @@ func validateDataAccount(item DataAccount) error {
 		return errors.New("priority must be >= 0")
 	}
 	return nil
+}
+
+// A deliberate selection overrides file routing, including the non-transferable
+// managed-export marker. It always allocates a fresh lease for ovh_ipv6.
+func resolveDataAccountProxy(req DataImportRequest, item DataAccount) (DataAccount, error) {
+	if req.ProxyMode != "" || req.ProxyID != nil {
+		item.ProxyMode, item.ProxyID = req.ProxyMode, req.ProxyID
+	}
+	if _, err := service.NormalizeAccountProxyMode(item.ProxyMode, item.ProxyID, false); err != nil {
+		return item, err
+	}
+	if item.ProxyMode != "" || item.ProxyID != nil {
+		item.ProxyKey = nil
+	}
+	return item, nil
 }
 
 func defaultProxyName(name string) string {

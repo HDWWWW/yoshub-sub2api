@@ -1,9 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AccountRefillModal from '../AccountRefillModal.vue'
+import type { Proxy } from '@/types'
 
 const { get, save, check, retry, manual } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn() }))
 vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, save, check, retry, manual } }))
+vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [{ id: 2, name: 'OpenAI', platform: 'openai', status: 'active' }, { id: 3, name: 'Second group', platform: 'openai', status: 'active' }] }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn() }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
@@ -30,6 +32,40 @@ function responseWithJobs(count: number) {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('offers only manual proxies for specified replenishment and saves a real selected ID', async () => {
+  const w = await open()
+  await w.setProps({ proxies: [
+   { id: 1, name: 'manual proxy', host: 'manual', port: 8080, protocol: 'http' },
+   { id: 2, name: 'reserved IPv6', host: 'internal', port: 8080, protocol: 'http', managed_ipv6: '2001:db8::2', managed_ipv6_state: 'reserved' },
+   { id: 3, name: 'bound IPv6', host: 'internal', port: 8080, protocol: 'http', managed_ipv6: '2001:db8::3', managed_ipv6_state: 'bound' }
+  ] as Proxy[] })
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.delivery')!.trigger('click')
+  const proxy = w.findAll('select').find(s => s.find('option[value="specified"]').exists())!
+  await proxy.setValue('specified')
+  await w.get('.select-trigger').trigger('click')
+  expect(w.text()).toContain('manual proxy')
+  expect(w.text()).not.toContain('reserved IPv6')
+  expect(w.text()).not.toContain('bound IPv6')
+  await w.findAll('.select-option').find(option => option.text().includes('manual proxy'))!.trigger('click')
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ proxy_mode: 'specified', proxy_id: 1 }) }), '', 1, '')
+  w.unmount()
+ })
+ it('defaults legacy delivery privacy on and persists false with explicit OVH allocation', async () => {
+  const w = await open()
+  const privacy = w.get('[data-testid="openai-privacy-enabled"]')
+  expect((privacy.element as HTMLInputElement).checked).toBe(true)
+  expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.delivery')!.trigger('click')
+  await privacy.setValue(false)
+  const proxy = w.findAll('select').find(s => s.find('option[value="ovh_ipv6"]').exists())!
+  await proxy.setValue('ovh_ipv6')
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ privacy_enabled: false, proxy_mode: 'ovh_ipv6', proxy_id: null }) }), '', 1, '')
+  expect((privacy.element as HTMLInputElement).checked).toBe(false)
+  expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it('separates live utilization from departure observation without submitting an order', async () => {
   const observation = { since: null, last_sample_at: '2026-11-01T04:00:00Z', sustained_seconds: 30, required_seconds: 30, samples: 31, no_capacity: false }
   const data = {

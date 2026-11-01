@@ -69,11 +69,19 @@
           <!-- No Proxy option -->
           <div
             @click="selectOption(null)"
-            :class="['select-option', modelValue === null && 'select-option-selected']"
+            :class="['select-option', modelValue === null && (!proxyMode || proxyMode === 'direct') && 'select-option-selected']"
           >
             <span class="select-option-label">{{ t('admin.accounts.noProxy') }}</span>
-            <Icon v-if="modelValue === null" name="check" size="sm" class="text-primary-500" />
+            <Icon v-if="modelValue === null && (!proxyMode || proxyMode === 'direct')" name="check" size="sm" class="text-primary-500" />
           </div>
+
+          <button v-for="mode in automaticModes" :key="mode" type="button"
+            class="select-option w-full text-left" :class="proxyMode === mode && 'select-option-selected'"
+            :data-proxy-mode="mode" @click="selectMode(mode)">
+            <div><span class="font-medium">{{ t(`ovhIPv6.mode.${mode}`) }}</span>
+              <p v-if="mode === 'ovh_ipv6'" class="mt-0.5 text-xs text-gray-500">{{ t('ovhIPv6.allocateOnSave') }}</p></div>
+            <Icon v-if="proxyMode === mode" name="check" size="sm" class="text-primary-500" />
+          </button>
 
           <!-- Proxy options -->
           <div
@@ -86,6 +94,7 @@
               <div class="flex items-center gap-2">
                 <span class="truncate font-medium">{{ proxy.name }}</span>
                 <span v-if="proxy.managed_ipv6" class="badge badge-primary">{{ t('ovhIPv6.source') }}</span>
+                <span v-if="proxy.managed_ipv6_state === 'reserved'" class="text-xs text-gray-500">{{ t('ovhIPv6.reserved') }}</span>
                 <!-- Account count badge -->
                 <span
                   v-if="proxy.account_count !== undefined"
@@ -173,7 +182,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import Icon from '@/components/icons/Icon.vue'
-import type { Proxy } from '@/types'
+import type { AccountProxyMode, Proxy } from '@/types'
 
 const { t } = useI18n()
 
@@ -191,15 +200,24 @@ interface Props {
   modelValue: number | null
   proxies: Proxy[]
   disabled?: boolean
+  proxyMode?: AccountProxyMode
+  allowAutomatic?: boolean
+  allowReserved?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  disabled: false
+  disabled: false,
+  proxyMode: '',
+  allowAutomatic: false,
+  allowReserved: false
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: number | null]
+  'update:proxyMode': [value: AccountProxyMode]
 }>()
+
+const automaticModes = computed<AccountProxyMode[]>(() => props.allowAutomatic ? ['ovh_ipv6', 'random', 'least_used'] : [])
 
 const isOpen = ref(false)
 const searchQuery = ref('')
@@ -217,6 +235,7 @@ const selectedProxy = computed(() => {
 })
 
 const selectedLabel = computed(() => {
+  if (props.proxyMode && props.proxyMode !== 'specified' && props.proxyMode !== 'direct') return t(`ovhIPv6.mode.${props.proxyMode}`)
   if (!selectedProxy.value) {
     return t('admin.accounts.noProxy')
   }
@@ -224,7 +243,7 @@ const selectedLabel = computed(() => {
   return `${proxy.name} (${proxy.managed_ipv6 || `${proxy.protocol}://${proxy.host}:${proxy.port}`})`
 })
 
-const selectableProxies = computed(() => props.proxies.filter(proxy => !proxy.managed_ipv6 || proxy.id === props.modelValue))
+const selectableProxies = computed(() => props.proxies.filter(proxy => !proxy.managed_ipv6 || proxy.id === props.modelValue || (props.allowReserved && proxy.managed_ipv6_state === 'reserved')))
 
 const filteredProxies = computed(() => {
   if (!searchQuery.value) {
@@ -256,8 +275,18 @@ watch(() => props.disabled, (disabled) => {
 })
 
 const selectOption = (value: number | null) => {
+  if (props.disabled) return
   if (value !== null && !selectableProxies.value.some(proxy => proxy.id === value)) return
+  emit('update:proxyMode', props.allowAutomatic && value === null ? 'direct' : '')
   emit('update:modelValue', value)
+  isOpen.value = false
+  searchQuery.value = ''
+}
+
+const selectMode = (mode: AccountProxyMode) => {
+  if (props.disabled || !automaticModes.value.includes(mode)) return
+  emit('update:modelValue', null)
+  emit('update:proxyMode', mode)
   isOpen.value = false
   searchQuery.value = ''
 }

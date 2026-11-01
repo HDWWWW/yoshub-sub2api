@@ -2348,7 +2348,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		guardianParentAccountID = s.resolveOpenAIGuardianParentAccountID(ctx, groupID)
 	}
 	scheduler := s.getOpenAIAccountScheduler(ctx)
-	priorityFirst := s.preferOpenAIAstraPriority(platform, requestedModel)
+	priorityFirst := s.preferOpenAIAstraPriority(ctx, platform, requestedModel)
 	if scheduler == nil && priorityFirst {
 		// Share eligibility, capacity fallback and final DB checks with the advanced
 		// scheduler without enabling its policy for other models.

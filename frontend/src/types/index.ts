@@ -967,6 +967,7 @@ export interface ClaudeModel {
 export interface Proxy {
   id: number
   managed_ipv6?: string
+  managed_ipv6_state?: 'reserved' | 'bound' | 'retiring'
   name: string
   protocol: ProxyProtocol
   host: string
@@ -1590,6 +1591,8 @@ export interface OpenAIResponsesState {
   openai_responses_supported?: boolean
 }
 
+export type AccountProxyMode = '' | 'direct' | 'specified' | 'random' | 'least_used' | 'ovh_ipv6'
+
 export interface CreateAccountRequest {
   name: string
   notes?: string | null
@@ -1598,6 +1601,8 @@ export interface CreateAccountRequest {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
+  proxy_mode?: AccountProxyMode
+  privacy_enabled?: boolean
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1617,6 +1622,8 @@ export interface UpdateAccountRequest {
   credentials?: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
+  proxy_mode?: AccountProxyMode
+  privacy_enabled?: boolean
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1716,6 +1723,9 @@ export interface AdminDataAccount {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_key?: string | null
+  proxy_mode?: AccountProxyMode
+  proxy_id?: number | null
+  privacy_enabled?: boolean
   concurrency: number
   priority: number
   rate_multiplier?: number | null
@@ -1746,6 +1756,8 @@ export interface CodexSessionImportRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
+  proxy_mode?: AccountProxyMode
+  privacy_enabled?: boolean
   concurrency?: number
   priority?: number
   rate_multiplier?: number
@@ -1765,6 +1777,8 @@ export interface OpenAICodexPATCreateRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
+  proxy_mode?: AccountProxyMode
+  privacy_enabled?: boolean
   concurrency?: number
   priority?: number
   rate_multiplier?: number

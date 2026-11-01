@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,27 +18,161 @@ type PrivacyClientFactory func(proxyURL string) (*req.Client, error)
 const (
 	openAISettingsURL = "https://chatgpt.com/backend-api/settings/account_user_setting"
 
-	PrivacyModeTrainingOff = "training_off"
-	PrivacyModeFailed      = "training_set_failed"
-	PrivacyModeCFBlocked   = "training_set_cf_blocked"
+	PrivacyModeTrainingOff       = "training_off"
+	PrivacyModeTrainingOn        = "training_on"
+	PrivacyModeFailed            = "training_set_failed"
+	PrivacyModeCFBlocked         = "training_set_cf_blocked"
+	OpenAIPrivacyEnabledExtraKey = "openai_privacy_enabled"
 )
 
+// OpenAIPrivacyEnabled preserves the native opt-out default for old accounts.
+// The saved preference is separate from privacy_mode, which records an outcome.
+func OpenAIPrivacyEnabled(extra map[string]any) bool {
+	enabled, ok := extra[OpenAIPrivacyEnabledExtraKey].(bool)
+	return !ok || enabled
+}
+
 func shouldSkipOpenAIPrivacyEnsure(extra map[string]any) bool {
-	if extra == nil {
-		return false
-	}
-	raw, ok := extra["privacy_mode"]
-	if !ok {
-		return false
-	}
-	mode, _ := raw.(string)
+	mode, _ := extra["privacy_mode"].(string)
 	mode = strings.TrimSpace(mode)
-	return mode != PrivacyModeFailed && mode != PrivacyModeCFBlocked
+	if !OpenAIPrivacyEnabled(extra) {
+		return mode == PrivacyModeTrainingOn
+	}
+	return mode == PrivacyModeTrainingOff || mode == "training_opt_out"
+}
+
+// Production repositories implement the conditional write so a late request
+// cannot publish an outcome for a preference the administrator already changed.
+type openAIPrivacyStateRepository interface {
+	UpdateOpenAIPrivacyMode(context.Context, int64, bool, string) (bool, error)
+}
+
+type openAIPrivacyPreferenceWriteKey struct{}
+
+// MergeLockedOpenAIPrivacy keeps an unrelated edit/import snapshot from
+// reverting a newer preference or a completed upstream outcome under row lock.
+func MergeLockedOpenAIPrivacy(ctx context.Context, account, current *Account) {
+	if account == nil || current == nil || !account.IsOpenAIOAuth() {
+		return
+	}
+	for _, key := range []string{OpenAIPrivacyEnabledExtraKey, "privacy_mode"} {
+		delete(account.Extra, key)
+		if value, exists := current.Extra[key]; exists {
+			if account.Extra == nil {
+				account.Extra = make(map[string]any)
+			}
+			account.Extra[key] = value
+		}
+	}
+	if enabled, explicit := ctx.Value(openAIPrivacyPreferenceWriteKey{}).(bool); explicit {
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		account.Extra[OpenAIPrivacyEnabledExtraKey] = enabled
+	}
+}
+
+func applyAccountOpenAIPrivacy(ctx context.Context, accountRepo AccountRepository, proxyRepo ProxyRepository, factory PrivacyClientFactory, account *Account, accessTokenOverride string, force bool) string {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || factory == nil {
+		return ""
+	}
+	conditional, canReconcile := accountRepo.(openAIPrivacyStateRepository)
+	if canReconcile {
+		// The preference is already durable. A disconnected editor must not
+		// prevent correction of an older request that changed upstream state.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer cancel()
+	}
+	originalAccessToken := account.GetCredential("access_token")
+	current := account
+	if canReconcile {
+		var err error
+		current, err = accountRepo.GetByID(ctx, account.ID)
+		if err != nil || current == nil {
+			return ""
+		}
+	}
+	// A changed preference invalidates even an apparently matching stored
+	// outcome: the late request may just have overwritten upstream state.
+	for attempt := 0; attempt < 3; attempt++ {
+		if !current.IsOpenAIOAuth() || current.IsCredentialShadow() {
+			return ""
+		}
+		if attempt == 0 && !force && shouldSkipOpenAIPrivacyEnsure(current.Extra) {
+			return ""
+		}
+		enabled := OpenAIPrivacyEnabled(current.Extra)
+		token := current.GetCredential("access_token")
+		if accessTokenOverride != "" && (token == originalAccessToken || token == accessTokenOverride) {
+			token = accessTokenOverride
+		}
+		if token == "" {
+			return ""
+		}
+		proxyURL := ""
+		if current.ProxyID != nil {
+			if proxyRepo == nil {
+				return ""
+			}
+			proxy, err := proxyRepo.GetByID(ctx, *current.ProxyID)
+			if err != nil || proxy == nil {
+				return ""
+			}
+			proxyURL = proxy.URL()
+		}
+		mode := setOpenAIPrivacy(ctx, factory, token, proxyURL, enabled)
+		if mode == "" {
+			return ""
+		}
+		if canReconcile {
+			latest, err := accountRepo.GetByID(ctx, account.ID)
+			if err != nil || latest == nil {
+				return ""
+			}
+			if OpenAIPrivacyEnabled(latest.Extra) != enabled {
+				current = latest
+				continue
+			}
+			saved, err := conditional.UpdateOpenAIPrivacyMode(ctx, account.ID, enabled, mode)
+			if err != nil {
+				slog.Warn("openai_privacy_save_failed", "account_id", account.ID, "error", err)
+				return ""
+			}
+			if !saved {
+				current, err = accountRepo.GetByID(ctx, account.ID)
+				if err != nil || current == nil {
+					return ""
+				}
+				continue
+			}
+		} else if accountRepo != nil {
+			if err := accountRepo.UpdateExtra(ctx, account.ID, map[string]any{"privacy_mode": mode}); err != nil {
+				return ""
+			}
+		}
+		return mode
+	}
+	if canReconcile {
+		// Repeated toggles leave the upstream result uncertain. Mark only the
+		// currently requested state as retryable, never a stale success.
+		if latest, err := accountRepo.GetByID(ctx, account.ID); err == nil && latest != nil {
+			_, _ = conditional.UpdateOpenAIPrivacyMode(ctx, account.ID, OpenAIPrivacyEnabled(latest.Extra), PrivacyModeFailed)
+		}
+	}
+	slog.Warn("openai_privacy_preference_changed_repeatedly", "account_id", account.ID)
+	return ""
 }
 
 // disableOpenAITraining calls ChatGPT settings API to turn off "Improve the model for everyone".
 // Returns privacy_mode value: "training_off" on success, "cf_blocked" / "failed" on failure.
 func disableOpenAITraining(ctx context.Context, clientFactory PrivacyClientFactory, accessToken, proxyURL string) string {
+	return setOpenAIPrivacy(ctx, clientFactory, accessToken, proxyURL, true)
+}
+
+// setOpenAIPrivacy applies the requested training preference. A failed request
+// never reports either success state, regardless of the requested direction.
+func setOpenAIPrivacy(ctx context.Context, clientFactory PrivacyClientFactory, accessToken, proxyURL string, enabled bool) string {
 	if accessToken == "" || clientFactory == nil {
 		return ""
 	}
@@ -61,7 +196,7 @@ func disableOpenAITraining(ctx context.Context, clientFactory PrivacyClientFacto
 		SetHeader("sec-fetch-site", "same-origin").
 		SetHeader("sec-fetch-dest", "empty").
 		SetQueryParam("feature", "training_allowed").
-		SetQueryParam("value", "false").
+		SetQueryParam("value", strconv.FormatBool(!enabled)).
 		Patch(openAISettingsURL)
 
 	if err != nil {
@@ -82,8 +217,11 @@ func disableOpenAITraining(ctx context.Context, clientFactory PrivacyClientFacto
 		return PrivacyModeFailed
 	}
 
-	slog.Info("openai_privacy_training_disabled")
-	return PrivacyModeTrainingOff
+	slog.Info("openai_privacy_set", "enabled", enabled)
+	if enabled {
+		return PrivacyModeTrainingOff
+	}
+	return PrivacyModeTrainingOn
 }
 
 // isCloudflareChallengeResponse 判断 chatgpt.com 返回的是否为 Cloudflare 质询/拦截页。

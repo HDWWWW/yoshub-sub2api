@@ -33,6 +33,39 @@ func (s *ovhAdminStub) SetOVHIPv6(_ context.Context, enabled bool) (*ovhipv6.Sta
 	s.enabled = enabled
 	return s.GetOVHIPv6(context.Background())
 }
+
+func (s *ovhAdminStub) AllocateOVHIPv6(_ context.Context, name string) (*service.Proxy, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &service.Proxy{ID: 42, Name: name, ManagedIPv6: "2604:2dc0:205:b900::42", ManagedIPv6State: "reserved", Password: "must-not-be-returned"}, nil
+}
+
+func TestOVHIPv6AllocateAdminOnlyAndSafeDTO(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, scoped := range []bool{false, true} {
+		svc := &ovhAdminStub{}
+		h := &ProxyHandler{adminService: svc}
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/proxies/ovh-ipv6/allocate", strings.NewReader(`{"name":"reserved proxy"}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		if scoped {
+			c.Request = c.Request.WithContext(adminaccess.WithPrincipal(c.Request.Context(), &adminaccess.Principal{KeyID: "scoped"}))
+		}
+		h.AllocateOVHIPv6(c)
+		if scoped {
+			require.Equal(t, 403, w.Code)
+			require.Zero(t, svc.calls)
+		} else {
+			require.Equal(t, 200, w.Code)
+			require.Equal(t, 1, svc.calls)
+			require.Contains(t, w.Body.String(), `"managed_ipv6_state":"reserved"`)
+			require.NotContains(t, w.Body.String(), "must-not-be-returned")
+		}
+	}
+}
 func TestOVHIPv6AdminToggleAndPermissions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {

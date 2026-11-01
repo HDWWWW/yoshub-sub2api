@@ -37,7 +37,7 @@ func ovhRepoFixture(t *testing.T) (*sql.DB, *proxyRepository, *ovhTestHost) {
 CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxies(id) ON DELETE SET NULL,parent_account_id BIGINT,deleted_at TIMESTAMPTZ,status TEXT DEFAULT 'active',schedulable BOOLEAN DEFAULT TRUE,expires_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT NOW());
 INSERT INTO proxies(name,protocol,host,port) VALUES('manual','http','192.0.2.1',8080);`)
 	require.NoError(t, err)
-	for _, file := range []string{"250_yoshub_proxy_binding_limits.sql", "251_ovh_ipv6_egress.sql"} {
+	for _, file := range []string{"250_yoshub_proxy_binding_limits.sql", "251_ovh_ipv6_egress.sql", "252_ovh_ipv6_reserved.sql"} {
 		source, err := os.ReadFile(filepath.Join("..", "..", "migrations", file))
 		require.NoError(t, err)
 		_, err = db.Exec(string(source))
@@ -186,6 +186,50 @@ func TestOVHIPv6LifecycleExclusiveSwitchDeleteAndNoHistoricalRows(t *testing.T) 
 	require.EqualValues(t, 1, id)
 }
 
+func TestOVHIPv6ReservedNeverEntersManualRandomOrLeastUsedPool(t *testing.T) {
+	db, r, host := ovhRepoFixture(t)
+	ctx := context.Background()
+	reserved, err := r.AllocateOVHIPv6(ctx, "reserved")
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE proxies SET status='inactive' WHERE id=1`)
+	require.NoError(t, err)
+	free, err := r.HasFreeAccountProxy(ctx)
+	require.NoError(t, err)
+	require.False(t, free, "reserved IPv6 must not authorize a random-pool purchase")
+	selectProxy := func(mode string) int64 {
+		t.Helper()
+		tx, err := r.client.Tx(ctx)
+		require.NoError(t, err)
+		defer tx.Rollback()
+		id, err := r.SelectAccountProxy(dbent.NewTxContext(ctx, tx), mode)
+		require.NoError(t, err)
+		return id
+	}
+	for _, mode := range []string{"random", "least_used"} {
+		require.Zero(t, selectProxy(mode), mode+" must ignore the only reserved entry")
+	}
+	_, err = db.Exec(`UPDATE proxies SET status='active' WHERE id=1`)
+	require.NoError(t, err)
+	free, err = r.HasFreeAccountProxy(ctx)
+	require.NoError(t, err)
+	require.True(t, free)
+	for _, mode := range []string{"random", "least_used"} {
+		require.EqualValues(t, 1, selectProxy(mode), mode+" must select the manual proxy")
+	}
+	_, err = r.SetOVHIPv6(ctx, true)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, selectProxy("least_used"), "least-used remains a manual-pool operation")
+	freshID := selectProxy("random")
+	require.NotZero(t, freshID)
+	require.NotEqual(t, reserved.ID, freshID, "enabled random allocates fresh, never consumes reserved")
+	var state string
+	require.NoError(t, db.QueryRow(`SELECT state FROM yoshub_ovh_ipv6_leases WHERE proxy_id=$1`, reserved.ID).Scan(&state))
+	require.Equal(t, "reserved", state)
+	host.mu.Lock()
+	require.Equal(t, 2, host.issued)
+	host.mu.Unlock()
+}
+
 func TestOVHIPv6RollbackConcurrencyAndAgentOutage(t *testing.T) {
 	db, r, host := ovhRepoFixture(t)
 	ctx := context.Background()
@@ -281,4 +325,131 @@ func TestOVHIPv6OneConnectionTransactionAndMissingProxyCleanup(t *testing.T) {
 	var count int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM yoshub_ovh_ipv6_leases`).Scan(&count))
 	require.Zero(t, count, "cleanup must finish even if the proxy row was already removed")
+}
+
+func TestOVHIPv6ExplicitModeIgnoresRandomToggleAndNeverFallsBack(t *testing.T) {
+	db, r, host := ovhRepoFixture(t)
+	ctx := context.Background()
+	status, err := r.GetOVHIPv6(ctx)
+	require.NoError(t, err)
+	require.False(t, status.Enabled)
+	tx, err := r.client.Tx(ctx)
+	require.NoError(t, err)
+	c := dbent.NewTxContext(ctx, tx)
+	id, err := r.SelectAccountProxy(c, "ovh_ipv6")
+	require.NoError(t, err)
+	_, err = tx.Client().ExecContext(c, `INSERT INTO accounts(id,proxy_id) VALUES(201,$1)`, id)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	var sequence string
+	require.NoError(t, db.QueryRow(`SELECT lease_id FROM yoshub_ovh_ipv6_leases WHERE proxy_id=$1`, id).Scan(&sequence))
+	require.Equal(t, "1", sequence)
+	host.mu.Lock()
+	host.fail = true
+	host.mu.Unlock()
+	tx, err = r.client.Tx(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = r.SelectAccountProxy(dbent.NewTxContext(ctx, tx), "ovh_ipv6")
+	require.Error(t, err)
+	var proxies int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM proxies WHERE deleted_at IS NULL`).Scan(&proxies))
+	require.Equal(t, 2, proxies, "outage cannot silently bind the available manual proxy")
+}
+
+func TestOVHIPv6ReservedFirstClaimConcurrentAndPermanentRetirement(t *testing.T) {
+	db, r, _ := ovhRepoFixture(t)
+	ctx := context.Background()
+	p, err := r.AllocateOVHIPv6(ctx, "manual IPv6 reservation")
+	require.NoError(t, err)
+	require.Equal(t, "reserved", p.ManagedIPv6State)
+	require.NotEmpty(t, p.ManagedIPv6)
+	require.Equal(t, "manual IPv6 reservation", p.Name)
+	var confirmed bool
+	require.NoError(t, db.QueryRow(`SELECT confirmed FROM yoshub_ovh_ipv6_leases WHERE proxy_id=$1 AND owner_account_id IS NULL`, p.ID).Scan(&confirmed))
+	require.True(t, confirmed, "unused reservation must survive the agent's pending timeout")
+	// A failed account transaction cannot consume the reservation's first owner.
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.Exec(`INSERT INTO accounts(id,proxy_id) VALUES(300,$1)`, p.ID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	var state string
+	require.NoError(t, db.QueryRow(`SELECT state FROM yoshub_ovh_ipv6_leases WHERE proxy_id=$1`, p.ID).Scan(&state))
+	require.Equal(t, "reserved", state)
+	var wg sync.WaitGroup
+	winners := make(chan int64, 12)
+	for n := 0; n < 12; n++ {
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			if _, e := db.Exec(`INSERT INTO accounts(id,proxy_id) VALUES($1,$2)`, id, p.ID); e == nil {
+				winners <- id
+			}
+		}(int64(310 + n))
+	}
+	wg.Wait()
+	close(winners)
+	ids := []int64{}
+	for id := range winners {
+		ids = append(ids, id)
+	}
+	require.Len(t, ids, 1)
+	_, err = db.Exec(`UPDATE proxies SET deleted_at=NOW() WHERE id=$1`, p.ID)
+	require.Error(t, err, "a concurrent/manual delete must not discard a claimed lease")
+	_, err = db.Exec(`UPDATE accounts SET proxy_id=NULL WHERE id=$1`, ids[0])
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE accounts SET proxy_id=$1 WHERE id=$2`, p.ID, ids[0])
+	require.Error(t, err, "even the same account cannot reactivate a retired address")
+	// Blue/green reconciliation is idempotent.
+	failures := make(chan error, 2)
+	for n := 0; n < 2; n++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); failures <- r.SyncOVHIPv6(ctx) }()
+	}
+	wg.Wait()
+	close(failures)
+	for e := range failures {
+		require.NoError(t, e)
+	}
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM yoshub_ovh_ipv6_leases WHERE proxy_id=$1`, p.ID).Scan(&count))
+	require.Zero(t, count)
+	next, err := r.AllocateOVHIPv6(ctx, "")
+	require.NoError(t, err)
+	require.NotEqual(t, p.ManagedIPv6, next.ManagedIPv6)
+}
+
+func TestOVHIPv6UnboundDeletionOutageAndAllocationRollback(t *testing.T) {
+	db, r, host := ovhRepoFixture(t)
+	ctx := context.Background()
+	tx, err := r.client.Tx(ctx)
+	require.NoError(t, err)
+	_, err = r.allocateOVHIPv6Lease(dbent.NewTxContext(ctx, tx), "rolled back", true)
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	p, err := r.AllocateOVHIPv6(ctx, "")
+	require.NoError(t, err)
+	require.Equal(t, "ovh6_2", p.Username)
+	host.mu.Lock()
+	host.fail = true
+	host.mu.Unlock()
+	require.NoError(t, r.Delete(ctx, p.ID))
+	require.NoError(t, r.SyncOVHIPv6(ctx))
+	var state, lastError string
+	require.NoError(t, db.QueryRow(`SELECT state,last_error FROM yoshub_ovh_ipv6_leases WHERE proxy_id=$1`, p.ID).Scan(&state, &lastError))
+	require.Equal(t, "retiring", state)
+	require.Contains(t, lastError, "503")
+	host.mu.Lock()
+	host.fail = false
+	host.mu.Unlock()
+	_, err = db.Exec(`UPDATE yoshub_ovh_ipv6_leases SET next_attempt_at=NOW()`)
+	require.NoError(t, err)
+	require.NoError(t, r.SyncOVHIPv6(ctx))
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM yoshub_ovh_ipv6_leases`).Scan(&count))
+	require.Zero(t, count)
+	next, err := r.AllocateOVHIPv6(ctx, "")
+	require.NoError(t, err)
+	require.Equal(t, "ovh6_3", next.Username)
 }

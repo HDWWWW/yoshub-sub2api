@@ -74,7 +74,7 @@ func TestScopedAccountProxySelectionPermissionsAndRollback(t *testing.T) {
 	s := &adminServiceImpl{accountRepo: repo, proxyRepo: proxy, groupRepo: &scopedAdminWriteTestGroups{}, entClient: dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))}
 	principal := &adminaccess.Principal{Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{Permissions: []string{"accounts.create", "accounts.credentials"}, GroupIDs: []int64{1}, AccountTypes: []string{"oauth"}}}}}
 	ctx := adminaccess.WithPrincipal(context.Background(), principal)
-	for _, field := range []string{`"proxy_id":7`, `"proxy_mode":"random"`, `"random_proxy":true`, `"proxy_mode":"least_used"`, `"proxy_mode":"direct"`} {
+	for _, field := range []string{`"proxy_id":7`, `"proxy_mode":"random"`, `"random_proxy":true`, `"proxy_mode":"least_used"`, `"proxy_mode":"direct"`, `"proxy_mode":"ovh_ipv6"`} {
 		var body map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal([]byte(`{"name":"代理选择","platform":"openai","type":"oauth","group_ids":[1],"credentials":{"access_token":"fixture"},`+field+`}`), &body))
 		_, err = s.ScopedAdminWrite(ctx, 0, "", body, nil)
@@ -95,7 +95,7 @@ func TestScopedAccountProxySelectionPermissionsAndRollback(t *testing.T) {
 		proxy.calls = 0
 	}
 	principal.Policy.Rules[0].Permissions = append(principal.Policy.Rules[0].Permissions, "accounts.network", "accounts.schedule", "accounts.groups")
-	for _, mode := range []string{"random", "least_used"} {
+	for _, mode := range []string{"random", "least_used", "ovh_ipv6"} {
 		input := &CreateAccountInput{Name: "导入代理", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "fixture"}, GroupIDs: []int64{1}, ProxyMode: mode}
 		a, err := s.ScopedAdminCreateCodex(ctx, input)
 		require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestNormalizeAccountProxySelectionConflicts(t *testing.T) {
 		invalid bool
 	}{
 		{"", &id, false, "", false}, {"specified", &id, false, "specified", false}, {"direct", nil, false, "direct", false}, {"", nil, true, "random", false}, {"random", nil, false, "random", false}, {"least_used", nil, false, "least_used", false},
-		{"random", &id, false, "", true}, {"least_used", &id, false, "", true}, {"direct", &id, false, "", true}, {"specified", &zero, false, "", true}, {"unknown", nil, false, "", true}, {"least_used", nil, true, "", true},
+		{"random", &id, false, "", true}, {"least_used", &id, false, "", true}, {"direct", &id, false, "", true}, {"specified", &zero, false, "", true}, {"ovh_ipv6", nil, false, "ovh_ipv6", false}, {"ovh_ipv6", &zero, false, "ovh_ipv6", false}, {"ovh_ipv6", &id, false, "", true}, {"ovh_ipv6", nil, true, "", true}, {"unknown", nil, false, "", true}, {"least_used", nil, true, "", true},
 	} {
 		got, err := NormalizeAccountProxyMode(tc.mode, tc.id, tc.random)
 		if tc.invalid {

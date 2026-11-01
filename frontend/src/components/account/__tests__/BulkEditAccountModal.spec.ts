@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import BulkEditAccountModal from '../BulkEditAccountModal.vue'
+import ProxySelector from '@/components/common/ProxySelector.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
 
@@ -96,6 +97,19 @@ describe('BulkEditAccountModal', () => {
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockResolvedValue({
       has_risk: false
     } as any)
+  })
+
+  it('submits per-account IPv6 allocation for bulk edit and excludes reserved choices', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('#bulk-edit-proxy-enabled').setValue(true)
+    const selector = wrapper.getComponent(ProxySelector)
+    expect(selector.props('allowReserved')).toBe(false)
+    selector.vm.$emit('update:modelValue', null)
+    selector.vm.$emit('update:proxyMode', 'ovh_ipv6')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], expect.objectContaining({ proxy_mode: 'ovh_ipv6', proxy_id: null }))
+    wrapper.unmount()
   })
 
   it('批量修改倍率时提示自动同步账号需要先关闭同步', async () => {

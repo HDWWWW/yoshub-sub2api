@@ -59,9 +59,15 @@ Selection diagnostics use `schedule_layer=priority_first`; required previous-res
 guardian selections keep their original diagnostic layers. Advanced scheduler metrics count
 these selections as load-balanced selections.
 
-Set `GATEWAY_SCHEDULING_OPENAI_ASTRA_PRIORITY_ENABLED=false` and recreate only the application
-to restore the previous Astra selection policy. This switch does not rewrite account priorities
-or change auto-pause behavior. No schema migration is introduced.
+The account page now exposes a global "6a priority fill" switch at
+`GET/PUT /api/v1/admin/accounts/astra-priority`. An explicitly saved `enabled`
+value is persisted in settings and overrides the environment default. Switching
+off restores the previous Astra selection policy for new scheduling decisions;
+it does not rewrite account priorities or move active requests. The serving
+instance applies changes immediately; other instances observe them within a
+five-second cache interval. A temporary settings read failure preserves the last
+known choice. With no saved value, the existing environment configuration remains
+the default. No restart or schema migration is required for this switch.
 
 ## Account threshold override
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -122,6 +123,8 @@ func NewAccountHandler(
 
 // CreateAccountRequest represents create account request
 type CreateAccountRequest struct {
+	ProxyMode               string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
+	PrivacyEnabled          *bool          `json:"privacy_enabled"`
 	Name                    string         `json:"name" binding:"required"`
 	Notes                   *string        `json:"notes"`
 	Platform                string         `json:"platform" binding:"required"`
@@ -143,6 +146,8 @@ type CreateAccountRequest struct {
 // UpdateAccountRequest represents update account request
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateAccountRequest struct {
+	ProxyMode               string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
+	PrivacyEnabled          *bool          `json:"privacy_enabled"`
 	SchedulingPriorityMode  string         `json:"yoshub_priority_mode"`
 	Name                    string         `json:"name"`
 	Notes                   *string        `json:"notes"`
@@ -165,6 +170,7 @@ type UpdateAccountRequest struct {
 
 // BulkUpdateAccountsRequest represents the payload for bulk editing accounts
 type BulkUpdateAccountsRequest struct {
+	ProxyMode               string                    `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
 	SchedulingPriorityMode  string                    `json:"yoshub_priority_mode"`
 	AccountIDs              []int64                   `json:"account_ids"`
 	Filters                 *BulkUpdateAccountFilters `json:"filters"`
@@ -1051,12 +1057,14 @@ func (h *AccountHandler) Create(c *gin.Context) {
 
 	result, err := executeAdminIdempotent(c, "admin.accounts.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		account, execErr := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
+			PrivacyEnabled:        req.PrivacyEnabled,
 			Name:                  req.Name,
 			Notes:                 req.Notes,
 			Platform:              req.Platform,
 			Type:                  req.Type,
 			Credentials:           req.Credentials,
 			Extra:                 req.Extra,
+			ProxyMode:             req.ProxyMode,
 			ProxyID:               req.ProxyID,
 			Concurrency:           req.Concurrency,
 			Priority:              req.Priority,
@@ -1183,12 +1191,14 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
 	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
+		PrivacyEnabled:         req.PrivacyEnabled,
 		SchedulingPriorityMode: req.SchedulingPriorityMode,
 		Name:                   req.Name,
 		Notes:                  req.Notes,
 		Type:                   req.Type,
 		Credentials:            req.Credentials,
 		Extra:                  req.Extra,
+		ProxyMode:              req.ProxyMode,
 		ProxyID:                req.ProxyID,
 		Concurrency:            req.Concurrency, // 指针类型，nil 表示未提供
 		Priority:               req.Priority,    // 指针类型，nil 表示未提供
@@ -2143,12 +2153,14 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			skipCheck := item.ConfirmMixedChannelRisk != nil && *item.ConfirmMixedChannelRisk
 
 			account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
+				PrivacyEnabled:        item.PrivacyEnabled,
 				Name:                  item.Name,
 				Notes:                 item.Notes,
 				Platform:              item.Platform,
 				Type:                  item.Type,
 				Credentials:           item.Credentials,
 				Extra:                 item.Extra,
+				ProxyMode:             item.ProxyMode,
 				ProxyID:               item.ProxyID,
 				Concurrency:           item.Concurrency,
 				Priority:              item.Priority,
@@ -2343,6 +2355,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 
 	hasUpdates := req.Name != "" ||
 		req.SchedulingPriorityMode != "" ||
+		req.ProxyMode != "" ||
 		req.ProxyID != nil ||
 		req.Concurrency != nil ||
 		req.Priority != nil ||
@@ -2365,6 +2378,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		AccountIDs:             req.AccountIDs,
 		Filters:                toServiceBulkUpdateAccountFilters(req.Filters),
 		Name:                   req.Name,
+		ProxyMode:              req.ProxyMode,
 		ProxyID:                req.ProxyID,
 		Concurrency:            req.Concurrency,
 		Priority:               req.Priority,
@@ -3171,6 +3185,14 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 // SetPrivacy handles setting privacy for a single OpenAI/Antigravity OAuth account
 // POST /api/v1/admin/accounts/:id/set-privacy
 func (h *AccountHandler) SetPrivacy(c *gin.Context) {
+	var request struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "Invalid privacy setting")
+		return
+	}
+	enabled := request.Enabled == nil || *request.Enabled
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "Invalid account ID")
@@ -3188,8 +3210,24 @@ func (h *AccountHandler) SetPrivacy(c *gin.Context) {
 	var mode string
 	switch account.Platform {
 	case service.PlatformOpenAI:
+		if account.IsCredentialShadow() {
+			response.BadRequest(c, "Manage privacy on the parent account")
+			return
+		}
+		if err := h.adminService.UpdateAccountExtra(c.Request.Context(), accountID, map[string]any{service.OpenAIPrivacyEnabledExtraKey: enabled}); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		account.Extra[service.OpenAIPrivacyEnabledExtraKey] = enabled
 		mode = h.adminService.ForceOpenAIPrivacy(c.Request.Context(), account)
 	case service.PlatformAntigravity:
+		if !enabled {
+			response.BadRequest(c, "Disabling privacy is only supported for OpenAI OAuth accounts")
+			return
+		}
 		mode = h.adminService.ForceAntigravityPrivacy(c.Request.Context(), account)
 	default:
 		response.BadRequest(c, "Only OpenAI and Antigravity OAuth accounts support privacy setting")

@@ -18,6 +18,7 @@ type OpenAIOAuthService struct {
 	proxyRepo            ProxyRepository
 	oauthClient          OpenAIOAuthClient
 	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
+	privacyAccountRepo   AccountRepository
 }
 
 // NewOpenAIOAuthService creates a new OpenAI OAuth service
@@ -214,6 +215,10 @@ func (s *OpenAIOAuthService) RefreshToken(ctx context.Context, refreshToken stri
 
 // RefreshTokenWithClientID refreshes an OpenAI OAuth token with optional client_id.
 func (s *OpenAIOAuthService) RefreshTokenWithClientID(ctx context.Context, refreshToken string, proxyURL string, clientID string) (*OpenAITokenInfo, error) {
+	return s.refreshTokenWithPrivacy(ctx, refreshToken, proxyURL, clientID, nil)
+}
+
+func (s *OpenAIOAuthService) refreshTokenWithPrivacy(ctx context.Context, refreshToken, proxyURL, clientID string, privacyAccount *Account) (*OpenAITokenInfo, error) {
 	tokenResp, err := s.oauthClient.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
 	if err != nil {
 		return nil, err
@@ -249,7 +254,7 @@ func (s *OpenAIOAuthService) RefreshTokenWithClientID(ctx context.Context, refre
 		tokenInfo.PlanType = userInfo.PlanType
 	}
 
-	s.enrichTokenInfo(ctx, tokenInfo, proxyURL)
+	s.enrichTokenInfoWithPrivacy(ctx, tokenInfo, proxyURL, privacyAccount)
 
 	return tokenInfo, nil
 }
@@ -258,6 +263,10 @@ func (s *OpenAIOAuthService) RefreshTokenWithClientID(ctx context.Context, refre
 // 从 accounts/check 获取最新 plan_type、subscription_expires_at、email，
 // 然后尝试关闭训练数据共享。适用于所有获取/刷新 token 的路径。
 func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string) {
+	s.enrichTokenInfoWithPrivacy(ctx, tokenInfo, proxyURL, nil)
+}
+
+func (s *OpenAIOAuthService) enrichTokenInfoWithPrivacy(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string, privacyAccount *Account) {
 	if tokenInfo.AccessToken == "" || s.privacyClientFactory == nil {
 		return
 	}
@@ -303,8 +312,13 @@ func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *Ope
 		}
 	}
 
-	// 尝试设置隐私（关闭训练数据共享），best-effort
-	tokenInfo.PrivacyMode = disableOpenAITraining(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL)
+	// Fresh authorizations keep the native default; account refreshes carry
+	// the saved preference so an explicit opt-in is never silently reversed.
+	if privacyAccount != nil {
+		tokenInfo.PrivacyMode = applyAccountOpenAIPrivacy(ctx, s.privacyAccountRepo, s.proxyRepo, s.privacyClientFactory, privacyAccount, tokenInfo.AccessToken, true)
+	} else {
+		tokenInfo.PrivacyMode = disableOpenAITraining(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL)
+	}
 }
 
 func shouldApplyChatGPTAccountInfoPlanType(current, candidate string) bool {
@@ -383,14 +397,14 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 				tokenInfo.ExpiresAt = expiresAt.Unix()
 				tokenInfo.ExpiresIn = int64(time.Until(*expiresAt).Seconds())
 			}
-			s.enrichTokenInfo(ctx, tokenInfo, proxyURL)
+			s.enrichTokenInfoWithPrivacy(ctx, tokenInfo, proxyURL, account)
 			return tokenInfo, nil
 		}
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_NO_REFRESH_TOKEN", "no refresh token available")
 	}
 
 	clientID := account.GetCredential("client_id")
-	return s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
+	return s.refreshTokenWithPrivacy(ctx, refreshToken, proxyURL, clientID, account)
 }
 
 // BuildAccountCredentials builds credentials map from token info

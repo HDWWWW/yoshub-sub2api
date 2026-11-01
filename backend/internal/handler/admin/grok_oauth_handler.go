@@ -268,6 +268,7 @@ func (h *GrokOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		State       string  `json:"state"`
 		RedirectURI string  `json:"redirect_uri"`
 		ProxyID     *int64  `json:"proxy_id"`
+		ProxyMode   string  `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
 		Name        string  `json:"name"`
 		Concurrency int     `json:"concurrency"`
 		Priority    int     `json:"priority"`
@@ -299,6 +300,7 @@ func (h *GrokOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 	}
 
 	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{
+		ProxyMode:   req.ProxyMode,
 		Name:        name,
 		Platform:    service.PlatformGrok,
 		Type:        service.AccountTypeOAuth,
@@ -317,6 +319,7 @@ func (h *GrokOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 }
 
 type GrokSSOToOAuthRequest struct {
+	ProxyMode          string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
 	SSOTokens          []string       `json:"sso_tokens"`
 	SSOToken           string         `json:"sso_token"`
 	Name               string         `json:"name"`
@@ -430,6 +433,7 @@ func (h *GrokOAuthHandler) createAccountFromSSOToken(ctx context.Context, req Gr
 	name := grokSSOImportAccountName(req.Name, tokenInfo, index, total)
 	expiresAt, autoPauseOnExpired := grokSSOImportExpiry(req.ExpiresAt, req.AutoPauseOnExpired, tokenInfo)
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
+		ProxyMode:          req.ProxyMode,
 		Name:               name,
 		Notes:              req.Notes,
 		Platform:           service.PlatformGrok,

@@ -75,12 +75,13 @@
             <p class="input-hint">{{ t('accountRefill.windowHint') }}</p>
           </div>
           <div v-show="activeTab === 'delivery'" class="space-y-5">
+            <OpenAIPrivacyControl :model-value="form.delivery.privacy_enabled !== false" @update:model-value="form.delivery.privacy_enabled = $event" />
             <label class="flex items-center gap-2 text-sm"><input v-model="form.push_enabled" type="checkbox" />{{ t('accountRefill.push_enabled') }}</label><p class="input-hint">{{ t('accountRefill.pushHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.ws_mode') }}</span><select v-model="form.delivery.ws_mode" class="input"><option v-for="mode in ['off', 'ctx_pool', 'http_bridge', 'passthrough']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
               <label><span class="input-label">{{ t('accountRefill.fingerprint_mode') }}</span><select v-model="form.delivery.fingerprint_mode" class="input"><option v-for="mode in ['off', 'session', 'full']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
-              <label><span class="input-label">{{ t('accountRefill.proxy_mode') }}</span><select v-model="form.delivery.proxy_mode" class="input" @change="form.delivery.proxy_id = null"><option v-for="mode in ['direct', 'specified', 'random']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
-              <label v-if="form.delivery.proxy_mode === 'specified'"><span class="input-label">{{ t('accountRefill.proxy_id') }}</span><input v-model.number="form.delivery.proxy_id" type="number" min="1" step="1" class="input" /></label>
+              <label><span class="input-label">{{ t('accountRefill.proxy_mode') }}</span><select v-model="form.delivery.proxy_mode" class="input" @change="form.delivery.proxy_id = null"><option v-for="mode in ['direct', 'specified', 'random', 'ovh_ipv6']" :key="mode" :value="mode">{{ t(mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${mode}`) }}</option></select></label>
+              <div v-if="form.delivery.proxy_mode === 'specified'"><span class="input-label">{{ t('accountRefill.proxy_id') }}</span><ProxySelector :model-value="form.delivery.proxy_id" :proxies="manualProxies" :disabled="busy" @update:model-value="form.delivery.proxy_id = $event; if ($event === null) form.delivery.proxy_mode = 'direct'" /><p class="input-hint">{{ t('ovhIPv6.refillSpecifiedHint') }}</p></div>
               <label><span class="input-label">{{ t('accountRefill.import_concurrency') }}</span><input v-model.number="form.import_concurrency" type="number" min="1" max="10000" step="1" class="input" /></label>
               <label v-for="field in deliveryFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form.delivery[field.key]" type="number" min="0" :max="field.max" :step="field.step" class="input" /></label>
               <label><span class="input-label">{{ t('accountRefill.status') }}</span><select v-model="form.delivery.status" class="input"><option value="active">{{ t('accountRefill.active') }}</option><option value="inactive">{{ t('accountRefill.inactive') }}</option></select></label>
@@ -119,7 +120,8 @@
           <dl class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div><dt class="text-gray-500">{{ t('accountRefill.deliveryGroups') }}</dt><dd>{{ manualGroups }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.import_concurrency') }}</dt><dd>{{ view.config.import_concurrency }}</dd></div>
-            <div><dt class="text-gray-500">{{ t('accountRefill.proxy_mode') }}</dt><dd>{{ t(`accountRefill.${view.config.delivery.proxy_mode}`) }} {{ view.config.delivery.proxy_mode === 'specified' ? `#${view.config.delivery.proxy_id}` : '' }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('admin.accounts.privacyProtection') }}</dt><dd>{{ t(view.config.delivery.privacy_enabled !== false ? 'common.enabled' : 'common.disabled') }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.proxy_mode') }}</dt><dd>{{ t(view.config.delivery.proxy_mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${view.config.delivery.proxy_mode}`) }} {{ view.config.delivery.proxy_mode === 'specified' ? `#${view.config.delivery.proxy_id}` : '' }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.import_expiry_grace_minutes') }}</dt><dd>{{ view.config.import_expiry_grace_minutes }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.priority') }} / {{ t('accountRefill.load_factor') }}</dt><dd>{{ view.config.delivery.priority }} / {{ view.config.delivery.load_factor }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.rate_multiplier') }}</dt><dd>{{ view.config.delivery.rate_multiplier }}</dd></div>
@@ -220,12 +222,14 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import OpenAIPrivacyControl from '@/components/account/OpenAIPrivacyControl.vue'
+import ProxySelector from '@/components/common/ProxySelector.vue'
 import { accountRefillAPI, type RefillConfig, type RefillView, type RefillJob, type ManualRefillRequest } from '@/api/admin/accountRefill'
 import { getAllIncludingInactive } from '@/api/admin/groups'
-import type { AdminGroup } from '@/types'
+import type { AdminGroup, Proxy } from '@/types'
 import { useAppStore } from '@/stores/app'
 
-const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' }>()
+const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual'; proxies?: Proxy[] }>()
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
 const app = useAppStore()
@@ -236,6 +240,7 @@ const form = ref<RefillConfig | null>(null)
 const selectedGroup = ref(0)
 const switchingGroup = ref(false)
 const groups = ref<AdminGroup[]>([])
+const manualProxies = computed(() => (props.proxies || []).filter(proxy => !proxy.managed_ipv6))
 const confirmedJobs = ref<string[]>([])
 const jobsPageSize = 10
 const jobsPage = ref(1)
@@ -296,6 +301,7 @@ async function switchGroup(id: number) {
 }
 function accept(data: RefillView, reset: boolean) {
   if (!reset && data.config.group_id !== selectedGroup.value) return
+  data.config.delivery.privacy_enabled ??= true
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}

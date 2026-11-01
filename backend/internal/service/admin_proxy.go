@@ -79,7 +79,7 @@ func (s *adminServiceImpl) GetProxiesByIDs(ctx context.Context, ids []int64) ([]
 
 func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyInput) (*Proxy, error) {
 	if strings.HasPrefix(input.Username, "ovh6_") {
-		return nil, infraerrors.BadRequest("MANAGED_IPV6_PROXY", "OVH IPv6 由账号随机分配创建，不能手动复制或导入")
+		return nil, infraerrors.BadRequest("MANAGED_IPV6_PROXY", "OVH IPv6 须通过分配入口领取全新地址，不能复制或导入认证信息")
 	}
 	if !isJSONTimeInRange(input.ExpiresAt) {
 		return nil, infraerrors.BadRequest("PROXY_EXPIRY_INVALID", "proxy expiry year must be between 0 and 9999")

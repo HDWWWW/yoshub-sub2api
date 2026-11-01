@@ -1,5 +1,6 @@
 export default {
     accounts: {
+      astraPriority: { title: '6a 按优先级填满', hint: '开启后，6a 请求先填满数字较小的账号优先级，再使用下一档。关闭后恢复普通调度。设置对全站生效，最多 5 秒同步。', loadFailed: '读取 6a 优先级设置失败', saveFailed: '保存失败，已保留原设置' },
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',
@@ -233,8 +234,14 @@ export default {
       allPrivacyModes: '全部Privacy状态',
       privacyUnset: '未设置',
       privacyTrainingOff: '已关闭训练数据共享',
-      privacyCfBlocked: '被 Cloudflare 拦截，训练可能仍开启',
-      privacyFailed: '关闭训练数据共享失败',
+      privacyTrainingOn: '已允许训练数据共享',
+      privacyProtection: '隐私保护',
+      privacyProtectionOnHint: '开启：关闭 OpenAI 训练数据共享。',
+      privacyResultHint: 'Private / Shared 表示上游已确认的结果，Fail 表示执行失败，不代表已关闭隐私。',
+      privacySavedUnconfirmed: '账号设置已保存，但上游隐私设置未确认或执行失败，请重试。',
+      privacyProtectionOffHint: '关闭：允许 OpenAI 训练数据共享；要求隐私保护的分组不会使用此账号。',
+      privacyCfBlocked: '被 Cloudflare 拦截，未确认隐私设置已应用',
+      privacyFailed: '隐私设置失败，未确认上游状态',
       privacyAntigravitySet: '已关闭遥测和营销邮件',
       privacyAntigravityFailed: '隐私设置失败',
       setPrivacy: '设置隐私',

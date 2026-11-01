@@ -298,6 +298,18 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		// Proxy fallback is transient runtime state; duplicate the configured origin.
 		proxyID = source.ProxyFallbackOriginID
 	}
+	managedSource := source.Proxy != nil && (source.Proxy.ManagedIPv6 != "" || strings.HasPrefix(source.Proxy.Username, "ovh6_"))
+	if proxyID != nil {
+		if lookup, ok := s.proxyRepo.(interface {
+			ManagedIPv6Addresses(context.Context, []int64) (map[int64]string, error)
+		}); ok {
+			addresses, err := lookup.ManagedIPv6Addresses(ctx, []int64{*proxyID})
+			if err != nil {
+				return nil, err
+			}
+			managedSource = managedSource || addresses[*proxyID] != ""
+		}
+	}
 	input := &CreateAccountInput{
 		Name:                  duplicateAccountName(source.Name),
 		Notes:                 cloneAccountValuePointer(source.Notes),
@@ -335,7 +347,13 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if s.accountDuplicateRepo == nil {
 		return nil, errors.New("account duplicate repository is not configured")
 	}
-	if err := s.accountDuplicateRepo.CreateWithAccountGroups(ctx, duplicate, groups); err != nil {
+	var createErr error
+	if managedSource {
+		createErr = s.createDuplicateWithFreshIPv6(ctx, duplicate, groups)
+	} else {
+		createErr = s.accountDuplicateRepo.CreateWithAccountGroups(ctx, duplicate, groups)
+	}
+	if err := createErr; err != nil {
 		return nil, fmt.Errorf("create duplicate account: %w", err)
 	}
 	for i := range groups {
@@ -414,6 +432,16 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	if input.Platform == PlatformTypeSafe && input.Type != AccountTypeAPIKey {
 		return nil, errors.New("typesafe accounts only support apikey credentials")
 	}
+	if input.PrivacyEnabled != nil {
+		if input.Platform != PlatformOpenAI || input.Type != AccountTypeOAuth {
+			return nil, infraerrors.BadRequest("OPENAI_PRIVACY_UNSUPPORTED", "privacy_enabled is only supported for OpenAI OAuth accounts")
+		}
+		accountExtra = maps.Clone(accountExtra)
+		if accountExtra == nil {
+			accountExtra = make(map[string]any)
+		}
+		accountExtra[OpenAIPrivacyEnabledExtraKey] = *input.PrivacyEnabled
+	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, AccountManualPriorityExtraKey)
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
@@ -484,6 +512,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if input.ProxyMode != "" || s.needsProxyWriteTransaction(ctx, input.ProxyID) {
+		return s.createAccountProxyMode(ctx, input)
+	}
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err
@@ -582,6 +613,12 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	if input.PrivacyEnabled != nil {
+		ctx = context.WithValue(ctx, openAIPrivacyPreferenceWriteKey{}, *input.PrivacyEnabled)
+	}
+	if input.ProxyMode != "" || s.needsProxyWriteTransaction(ctx, input.ProxyID) {
+		return s.updateAccountProxyMode(ctx, id, input)
+	}
 	ctx = WithAccountExpiryWrite(ctx, input.ExpiresAt)
 	if err := validateSchedulingPriorityMode(ctx, input.SchedulingPriorityMode, input.Priority); err != nil {
 		return nil, err
@@ -715,6 +752,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, UpstreamModelMetadataExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
+			OpenAIPrivacyEnabledExtraKey,
 			"quota_used",
 			"quota_daily_used",
 			"quota_daily_start",
@@ -760,6 +798,16 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if input.Extra == nil {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
+	}
+	if input.PrivacyEnabled != nil {
+		if !account.IsOpenAIOAuth() || account.IsCredentialShadow() {
+			return nil, infraerrors.BadRequest("OPENAI_PRIVACY_UNSUPPORTED", "privacy_enabled must be managed on an OpenAI OAuth parent account")
+		}
+		account.Extra = maps.Clone(account.Extra)
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		account.Extra[OpenAIPrivacyEnabledExtraKey] = *input.PrivacyEnabled
 	}
 	if requestedRateSyncEnabledUpdate != nil && *requestedRateSyncEnabledUpdate {
 		if requestedProbeEnabledUpdate != nil && !*requestedProbeEnabledUpdate {
@@ -947,6 +995,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	if input.PrivacyEnabled != nil {
+		AfterAccountCommit(ctx, func(committed context.Context) {
+			s.ForceOpenAIPrivacy(committed, updated)
+		})
+	}
 	return updated, nil
 }
 
@@ -982,6 +1035,18 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
+	mode, modeErr := NormalizeAccountProxyMode(input.ProxyMode, input.ProxyID, false)
+	if modeErr != nil {
+		return nil, modeErr
+	}
+	if mode == "direct" {
+		zero := int64(0)
+		input.ProxyID = &zero
+		input.ProxyMode = ""
+	}
+	if mode == "specified" {
+		input.ProxyMode = ""
+	}
 	if err := validateSchedulingPriorityMode(ctx, input.SchedulingPriorityMode, input.Priority); err != nil {
 		return nil, err
 	}
@@ -1035,7 +1100,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || input.ProxyMode != "" || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -1080,7 +1145,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 影子账号 proxy 恒继承母账号(与单账号 UpdateAccount 守卫对齐——外审第4轮 P1):批量携带 proxy
 	// 时目标不得含影子,否则影子会获得独立 proxy、破坏继承不变量(网关按所选影子自身 proxy 出站,
 	// 要等母账号下次改 proxy 才覆盖→漂移)。含影子即整体拒绝,提示从选择中剔除影子。
-	if input.ProxyID != nil {
+	if input.ProxyID != nil || input.ProxyMode != "" {
 		for _, acc := range cachedTargets {
 			if acc != nil && acc.IsCredentialShadow() {
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
@@ -1162,7 +1227,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			repoUpdates.Extra[UpstreamBillingRateSyncEnabledExtraKey] = false
 		}
 	}
-	if updatesUpstreamBillingProbeIdentity(input.Credentials) || input.ProxyID != nil {
+	if updatesUpstreamBillingProbeIdentity(input.Credentials) || input.ProxyID != nil || input.ProxyMode != "" {
 		if repoUpdates.Extra == nil {
 			repoUpdates.Extra = make(map[string]any)
 		}
@@ -1203,6 +1268,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 
 	// Run bulk update for column/jsonb fields first.
+	if input.ProxyMode != "" {
+		return s.bulkUpdateWithAutomaticProxy(ctx, input, repoUpdates, result)
+	}
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
@@ -1701,89 +1769,28 @@ func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) erro
 }
 
 // EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
-// 未设置则调用 disableOpenAITraining 并持久化到 Extra，返回设置的 mode 值。
+// 未达到保存的隐私意图则重试，返回实际设置结果。
 func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Account) string {
-	// 影子账号不持凭据，隐私设置由母账号管理，直接跳过。
-	if account.IsCredentialShadow() {
-		return ""
-	}
-	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
-		return ""
-	}
-	if s.privacyClientFactory == nil {
-		return ""
-	}
-	if shouldSkipOpenAIPrivacyEnsure(account.Extra) {
-		return ""
-	}
-
-	token, _ := account.Credentials["access_token"].(string)
-	if token == "" {
-		return ""
-	}
-
-	var proxyURL string
-	if account.ProxyID != nil {
-		p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
-		if err != nil || p == nil {
-			// A binding may have retired after the account snapshot was read.
-			// Missing proxy metadata must never send this account directly.
-			return ""
-		}
-		proxyURL = p.URL()
-	}
-
-	mode := disableOpenAITraining(ctx, s.privacyClientFactory, token, proxyURL)
-	if mode == "" {
-		return ""
-	}
-
-	_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{"privacy_mode": mode})
-	return mode
+	return applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", false)
 }
 
-// ForceOpenAIPrivacy 强制重新设置 OpenAI OAuth 账号隐私，无论当前状态。
+// ForceOpenAIPrivacy 强制重新应用保存的隐私意图，无论当前结果。
 func (s *adminServiceImpl) ForceOpenAIPrivacy(ctx context.Context, account *Account) string {
-	// 影子账号不持凭据,隐私由母账号管理,直接跳过(与 EnsureOpenAIPrivacy 一致——外审第4轮)。
-	if account.IsCredentialShadow() {
-		return ""
-	}
-	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
-		return ""
-	}
-	if s.privacyClientFactory == nil {
-		return ""
-	}
-
-	token, _ := account.Credentials["access_token"].(string)
-	if token == "" {
-		return ""
-	}
-
-	var proxyURL string
-	if account.ProxyID != nil {
-		p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
-		if err != nil || p == nil {
-			// A binding may have retired after the account snapshot was read.
-			// Missing proxy metadata must never send this account directly.
-			return ""
-		}
-		proxyURL = p.URL()
-	}
-
-	mode := disableOpenAITraining(ctx, s.privacyClientFactory, token, proxyURL)
+	mode := applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", true)
 	if mode == "" {
 		return ""
 	}
-
-	if err := s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{"privacy_mode": mode}); err != nil {
-		logger.LegacyPrintf("service.admin", "force_update_openai_privacy_mode_failed: account_id=%d err=%v", account.ID, err)
-		return mode
+	if _, ok := s.accountRepo.(openAIPrivacyStateRepository); ok {
+		if latest, err := s.accountRepo.GetByID(ctx, account.ID); err == nil && latest != nil {
+			account.Extra = maps.Clone(latest.Extra)
+		}
+	} else {
+		account.Extra = maps.Clone(account.Extra)
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		account.Extra["privacy_mode"] = mode
 	}
-	if account.Extra == nil {
-		account.Extra = make(map[string]any)
-	}
-	account.Extra["privacy_mode"] = mode
 	return mode
 }
 

@@ -810,7 +810,7 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		}
 		autoPause := j.DeliveryConfig.AutoPauseOnExpired
 		var proxyID *int64
-		if j.DeliveryConfig.ProxyMode != "random" {
+		if j.DeliveryConfig.ProxyMode != "random" && j.DeliveryConfig.ProxyMode != "ovh_ipv6" {
 			proxyID, err = s.selectProxy(ctx, j.DeliveryConfig)
 			if err != nil {
 				return err
@@ -823,16 +823,17 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		}
 		// Start disabled until all delivery settings and bindings have committed.
 		input := &CreateAccountInput{Name: name, Notes: notes, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: credentials, Extra: extra,
-			GroupIDs: j.DeliveryGroupIDs, Concurrency: j.Concurrency, Priority: j.DeliveryConfig.Priority, RateMultiplier: &j.DeliveryConfig.RateMultiplier, LoadFactor: load,
+			PrivacyEnabled: j.DeliveryConfig.PrivacyEnabled,
+			GroupIDs:       j.DeliveryGroupIDs, Concurrency: j.Concurrency, Priority: j.DeliveryConfig.Priority, RateMultiplier: &j.DeliveryConfig.RateMultiplier, LoadFactor: load,
 			ExpiresAt: deadline, AutoPauseOnExpired: &autoPause, ProxyID: proxyID, InitiallyInactive: true, SkipDefaultGroupBind: true}
-		if j.DeliveryConfig.ProxyMode == "random" {
+		if j.DeliveryConfig.ProxyMode == "random" || j.DeliveryConfig.ProxyMode == "ovh_ipv6" {
 			creator, ok := s.admin.(interface {
 				CreateAccountWithProxySelection(context.Context, *CreateAccountInput) (*Account, error)
 			})
 			if !ok {
 				return errors.New("事务代理分配服务不可用，请稍后重试")
 			}
-			input.ProxyMode = "random"
+			input.ProxyMode = j.DeliveryConfig.ProxyMode
 			account, err = creator.CreateAccountWithProxySelection(ctx, input)
 		} else {
 			account, err = s.admin.CreateAccount(ctx, input)
@@ -855,6 +856,20 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 }
 
 func (s *AccountRefillService) selectProxy(ctx context.Context, d AccountRefillDeliveryConfig) (*int64, error) {
+	if d.ProxyMode == "ovh_ipv6" {
+		r, ok := s.proxies.(OVHIPv6Admin)
+		if !ok {
+			return nil, errors.New("OVH IPv6 出口服务不可用")
+		}
+		status, err := r.GetOVHIPv6(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !status.Configured || !status.Available {
+			return nil, errors.New("OVH IPv6 出口服务未就绪，暂停新增补号")
+		}
+		return nil, nil
+	}
 	if d.ProxyMode == "direct" {
 		return nil, nil
 	}
@@ -883,7 +898,7 @@ func (s *AccountRefillService) selectProxy(ctx context.Context, d AccountRefillD
 		if !p.IsExpired(now) {
 			if d.ProxyMode == "specified" && d.ProxyID != nil && p.ID == *d.ProxyID {
 				if p.ManagedIPv6 != "" || strings.HasPrefix(p.Username, "ovh6_") {
-					return nil, errors.New("OVH IPv6 已绑定独占账号，请选择随机代理以分配全新地址")
+					return nil, errors.New("OVH IPv6 为独占地址，补号请使用 ovh_ipv6 模式为每个账号分配全新地址")
 				}
 				id := p.ID
 				return &id, nil

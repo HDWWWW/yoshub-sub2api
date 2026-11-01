@@ -18,6 +18,7 @@
           >
             <template #after>
               <button class="btn btn-secondary" data-testid="open-account-scheduling" @click="showScheduling = true">{{ t('accountRefill.schedulingTitle') }}</button>
+              <AstraPriorityControl />
               <button class="btn btn-secondary" data-testid="open-account-refill" @click="refillInitialTab = 'connection'; showAccountRefill = true">{{ t('accountRefill.title') }}</button>
               <button class="btn btn-secondary" data-testid="open-manual-refill" @click="refillInitialTab = 'manual'; showAccountRefill = true">{{ t('accountRefill.manual') }}</button>
               <button
@@ -460,8 +461,8 @@
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
-    <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
-    <AccountRefillModal v-if="showAccountRefill" :show="showAccountRefill" :initial-tab="refillInitialTab" @close="showAccountRefill = false" />
+    <ImportDataModal :show="showImportData" :proxies="proxies" @close="showImportData = false" @imported="handleDataImported" />
+    <AccountRefillModal v-if="showAccountRefill" :show="showAccountRefill" :initial-tab="refillInitialTab" :proxies="proxies" @close="showAccountRefill = false" />
     <BulkConcurrencyModal
       :show="showBulkConcurrency"
       :filters="bulkConcurrencyFilters"
@@ -516,6 +517,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
+import AstraPriorityControl from '@/components/admin/account/AstraPriorityControl.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountRefillModal from '@/components/admin/account/AccountRefillModal.vue'
@@ -2481,6 +2483,8 @@ const privacyResultMessageKey = (account: Account): { type: 'success' | 'error';
     switch (mode) {
       case 'training_off':
         return { type: 'success', key: 'admin.accounts.privacyTrainingOff' }
+      case 'training_on':
+        return { type: 'success', key: 'admin.accounts.privacyTrainingOn' }
       case 'training_set_cf_blocked':
         return { type: 'error', key: 'admin.accounts.privacyCfBlocked' }
       default:
@@ -2498,7 +2502,7 @@ const privacyResultMessageKey = (account: Account): { type: 'success' | 'error';
 
 const handleSetPrivacy = async (a: Account) => {
   try {
-    const updated = await adminAPI.accounts.setPrivacy(a.id)
+    const updated = await adminAPI.accounts.setPrivacy(a.id, a.platform === 'openai' ? a.extra?.openai_privacy_enabled !== false : undefined)
     patchAccountInList(updated)
     enterAutoRefreshSilentWindow()
     const result = privacyResultMessageKey(updated)

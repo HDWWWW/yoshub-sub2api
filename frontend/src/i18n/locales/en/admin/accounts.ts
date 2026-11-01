@@ -1,5 +1,6 @@
 export default {
     accounts: {
+      astraPriority: { title: '6a priority fill', hint: 'Fill lower-numbered account priorities before using the next tier for 6a requests. Turn off to use normal scheduling. This applies globally within 5 seconds.', loadFailed: 'Failed to load 6a priority settings', saveFailed: 'Save failed; the previous setting is retained' },
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
@@ -387,8 +388,14 @@ export default {
       allPrivacyModes: 'All Privacy States',
       privacyUnset: 'Unset',
       privacyTrainingOff: 'Training data sharing disabled',
-      privacyCfBlocked: 'Blocked by Cloudflare, training may still be on',
-      privacyFailed: 'Failed to disable training',
+      privacyTrainingOn: 'Training data sharing enabled',
+      privacyProtection: 'Privacy protection',
+      privacyProtectionOnHint: 'On: disable OpenAI training data sharing.',
+      privacyResultHint: 'Private / Shared reflect the confirmed upstream result. Fail means the update failed, not that privacy is disabled.',
+      privacySavedUnconfirmed: 'Account settings saved, but the upstream privacy update is unconfirmed or failed. Please retry.',
+      privacyProtectionOffHint: 'Off: allow OpenAI training data sharing. Groups requiring privacy protection will not use this account.',
+      privacyCfBlocked: 'Blocked by Cloudflare; privacy setting was not confirmed',
+      privacyFailed: 'Privacy setting failed; upstream state was not confirmed',
       privacyAntigravitySet: 'Telemetry and marketing emails disabled',
       privacyAntigravityFailed: 'Privacy setting failed',
       setPrivacy: 'Set Privacy',

@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 )
@@ -10,6 +12,22 @@ import (
 type OVHIPv6Admin interface {
 	GetOVHIPv6(context.Context) (*ovhipv6.Status, error)
 	SetOVHIPv6(context.Context, bool) (*ovhipv6.Status, error)
+}
+
+type ManagedIPv6Binding struct{ Address, State string }
+
+func (s *adminServiceImpl) AllocateOVHIPv6(ctx context.Context, name string) (*Proxy, error) {
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > 100 {
+		return nil, fmt.Errorf("代理名称不能超过 100 个字符")
+	}
+	r, ok := s.proxyRepo.(interface {
+		AllocateOVHIPv6(context.Context, string) (*Proxy, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("OVH IPv6 自动分配服务不可用")
+	}
+	return r.AllocateOVHIPv6(ctx, name)
 }
 
 func (s *adminServiceImpl) GetOVHIPv6(ctx context.Context) (*ovhipv6.Status, error) {
@@ -40,6 +58,20 @@ func (s *adminServiceImpl) attachManagedIPv6(ctx context.Context, proxies ...*Pr
 		if p != nil {
 			ids = append(ids, p.ID)
 		}
+	}
+	if detailsRepo, ok := s.proxyRepo.(interface {
+		ManagedIPv6Details(context.Context, []int64) (map[int64]ManagedIPv6Binding, error)
+	}); ok {
+		details, err := detailsRepo.ManagedIPv6Details(ctx, ids)
+		if err != nil {
+			return err
+		}
+		for _, p := range proxies {
+			if p != nil {
+				p.ManagedIPv6, p.ManagedIPv6State = details[p.ID].Address, details[p.ID].State
+			}
+		}
+		return nil
 	}
 	addresses, err := r.ManagedIPv6Addresses(ctx, ids)
 	if err != nil {

@@ -65,6 +65,38 @@ func (r *proxyRepository) SetOVHIPv6(ctx context.Context, enabled bool) (*ovhipv
 // The host commits its monotonic counter before provisioning. A database
 // rollback can orphan a pending lease, but can never return that ID to the pool.
 func (r *proxyRepository) allocateOVHIPv6(ctx context.Context) (int64, error) {
+	return r.allocateOVHIPv6Lease(ctx, "", false)
+}
+
+func (r *proxyRepository) AllocateOVHIPv6(ctx context.Context, name string) (*service.Proxy, error) {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	txctx := dbent.NewTxContext(ctx, tx)
+	id, err := r.allocateOVHIPv6Lease(txctx, name, true)
+	if err != nil {
+		return nil, err
+	}
+	p, err := tx.Client().Proxy.Get(txctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := proxyEntityToService(p)
+	out.ManagedIPv6State = "reserved"
+	addresses, err := r.ManagedIPv6Addresses(txctx, []int64{id})
+	if err != nil {
+		return nil, err
+	}
+	out.ManagedIPv6 = addresses[id]
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *proxyRepository) allocateOVHIPv6Lease(ctx context.Context, name string, reserved bool) (int64, error) {
 	tx := dbent.TxFromContext(ctx)
 	if tx == nil {
 		return 0, fmt.Errorf("OVH IPv6 分配需要账号写事务")
@@ -77,14 +109,21 @@ func (r *proxyRepository) allocateOVHIPv6(ctx context.Context) (int64, error) {
 	if err != nil || !addr.Is6() || addr.Is4In6() || !strings.HasPrefix(lease.Username, "ovh6_") || lease.Password == "" || lease.ID == "" || lease.Host == "" || lease.Port < 1 || lease.Port > 65535 {
 		return 0, fmt.Errorf("OVH IPv6 出口服务返回无效的代理配置")
 	}
-	p, err := tx.Client().Proxy.Create().SetName("OVH IPv6 · " + lease.Address).
+	if name == "" {
+		name = "OVH IPv6 · " + lease.Address
+	}
+	p, err := tx.Client().Proxy.Create().SetName(name).
 		SetProtocol("http").SetHost(lease.Host).SetPort(lease.Port).
 		SetUsername(lease.Username).SetPassword(lease.Password).
 		SetStatus(service.StatusActive).SetFallbackMode(service.FallbackModeNone).SetExpiryWarnDays(0).Save(ctx)
 	if err != nil {
 		return 0, err
 	}
-	_, err = tx.Client().ExecContext(ctx, `INSERT INTO yoshub_ovh_ipv6_leases(proxy_id,lease_id,address) VALUES($1,$2,$3::inet)`, p.ID, lease.ID, lease.Address)
+	state := "bound"
+	if reserved {
+		state = "reserved"
+	}
+	_, err = tx.Client().ExecContext(ctx, `INSERT INTO yoshub_ovh_ipv6_leases(proxy_id,lease_id,address,state) VALUES($1,$2,$3::inet,$4)`, p.ID, lease.ID, lease.Address, state)
 	if err != nil {
 		return 0, err
 	}
@@ -95,7 +134,7 @@ func (r *proxyRepository) allocateOVHIPv6(ctx context.Context) (int64, error) {
 		defer cancel()
 		var activated ovhipv6.Lease
 		if r.ipv6.Call(claimCtx, http.MethodPost, "/v1/leases/"+lease.ID+"/activate", nil, &activated) == nil && activated.State == "active" {
-			_, _ = r.sql.ExecContext(claimCtx, `UPDATE yoshub_ovh_ipv6_leases SET confirmed=TRUE,last_error='' WHERE proxy_id=$1 AND state='bound'`, p.ID)
+			_, _ = r.sql.ExecContext(claimCtx, `UPDATE yoshub_ovh_ipv6_leases SET confirmed=TRUE,last_error='' WHERE proxy_id=$1 AND state IN ('reserved','bound')`, p.ID)
 		}
 	})
 	return p.ID, nil
@@ -103,22 +142,35 @@ func (r *proxyRepository) allocateOVHIPv6(ctx context.Context) (int64, error) {
 
 func (r *proxyRepository) ManagedIPv6Addresses(ctx context.Context, ids []int64) (map[int64]string, error) {
 	out := map[int64]string{}
+	details, err := r.ManagedIPv6Details(ctx, ids)
+	for id, detail := range details {
+		out[id] = detail.Address
+	}
+	return out, err
+}
+
+func (r *proxyRepository) ManagedIPv6Details(ctx context.Context, ids []int64) (map[int64]service.ManagedIPv6Binding, error) {
+	out := map[int64]service.ManagedIPv6Binding{}
 	if !r.ipv6Supported || len(ids) == 0 {
 		return out, nil
 	}
 	in, args := proxyLimitIDArgs(ids)
-	rows, err := r.sql.QueryContext(ctx, `SELECT proxy_id,host(address) FROM yoshub_ovh_ipv6_leases WHERE proxy_id IN (`+in+`)`, args...)
+	var query sqlQueryer = r.sql
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		query = tx.Client()
+	}
+	rows, err := query.QueryContext(ctx, `SELECT proxy_id,host(address),state FROM yoshub_ovh_ipv6_leases WHERE proxy_id IN (`+in+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var addr string
-		if err := rows.Scan(&id, &addr); err != nil {
+		var detail service.ManagedIPv6Binding
+		if err := rows.Scan(&id, &detail.Address, &detail.State); err != nil {
 			return nil, err
 		}
-		out[id] = addr
+		out[id] = detail
 	}
 	return out, rows.Err()
 }
@@ -130,7 +182,8 @@ func (r *proxyRepository) SyncOVHIPv6(ctx context.Context) error {
 		return nil
 	}
 	rows, err := r.sql.QueryContext(ctx, `SELECT proxy_id,lease_id,state FROM yoshub_ovh_ipv6_leases
-        WHERE (NOT confirmed OR state='retiring') AND next_attempt_at<=NOW() AND owner_account_id IS NOT NULL
+        WHERE (NOT confirmed OR state='retiring') AND next_attempt_at<=NOW()
+          AND (owner_account_id IS NOT NULL OR state IN ('reserved','retiring'))
         ORDER BY next_attempt_at LIMIT 100`)
 	if err != nil {
 		return err
@@ -167,8 +220,8 @@ func (r *proxyRepository) SyncOVHIPv6(ctx context.Context) error {
 		callErr := r.ipv6.Call(ctx, method, path, nil, &result)
 		if callErr != nil {
 			_, err = r.sql.ExecContext(ctx, `UPDATE yoshub_ovh_ipv6_leases SET last_error=$2,next_attempt_at=NOW()+INTERVAL '15 seconds' WHERE proxy_id=$1`, j.proxyID, callErr.Error())
-		} else if j.state == "bound" && result.State == "active" {
-			_, err = r.sql.ExecContext(ctx, `UPDATE yoshub_ovh_ipv6_leases SET confirmed=TRUE,last_error='' WHERE proxy_id=$1 AND state='bound'`, j.proxyID)
+		} else if (j.state == "bound" || j.state == "reserved") && result.State == "active" {
+			_, err = r.sql.ExecContext(ctx, `UPDATE yoshub_ovh_ipv6_leases SET confirmed=TRUE,last_error='' WHERE proxy_id=$1 AND state IN ('reserved','bound')`, j.proxyID)
 		} else if j.state == "retiring" && result.State == "retired" {
 			// Purge only our retired rows; remaining live shadow references must
 			// disappear before cleanup can complete. No manual proxy is affected.

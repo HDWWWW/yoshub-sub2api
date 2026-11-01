@@ -34,6 +34,7 @@ const privacyOpts = computed(() => [
   { value: '', label: t('admin.accounts.allPrivacyModes') },
   { value: '__unset__', label: t('admin.accounts.privacyUnset') },
   { value: 'training_off', label: 'Privacy' },
+  { value: 'training_on', label: 'Shared' },
   { value: 'training_set_cf_blocked', label: 'CF' },
   { value: 'training_set_failed', label: 'Fail' }
 ])

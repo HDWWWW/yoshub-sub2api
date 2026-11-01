@@ -1205,7 +1205,7 @@ func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *A
 		}
 	}
 	s.postRefreshStateSync(ctx, account)
-	// OpenAI OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则尝试关闭训练数据共享
+	// OpenAI OAuth: 刷新成功后，检查并重试账号保存的隐私意图。
 	s.ensureOpenAIPrivacy(ctx, account)
 	// Antigravity OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则调用 setUserSettings
 	s.ensureAntigravityPrivacy(ctx, account)
@@ -1448,51 +1448,9 @@ func isNonRetryableRefreshError(err error) bool {
 }
 
 // ensureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
-// 未设置则调用 disableOpenAITraining 并持久化结果到 Extra。
+// 未达到保存的隐私意图则重试，并持久化结果到 Extra。
 func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *Account) {
-	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
-		return
-	}
-	if s.privacyClientFactory == nil {
-		return
-	}
-	if shouldSkipOpenAIPrivacyEnsure(account.Extra) {
-		return
-	}
-
-	token, _ := account.Credentials["access_token"].(string)
-	if token == "" {
-		return
-	}
-
-	var proxyURL string
-	if account.ProxyID != nil {
-		if s.proxyRepo == nil {
-			return
-		}
-		p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
-		if err != nil || p == nil {
-			return
-		}
-		proxyURL = p.URL()
-	}
-
-	mode := disableOpenAITraining(ctx, s.privacyClientFactory, token, proxyURL)
-	if mode == "" {
-		return
-	}
-
-	if err := s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{"privacy_mode": mode}); err != nil {
-		slog.Warn("token_refresh.update_privacy_mode_failed",
-			"account_id", account.ID,
-			"error", err,
-		)
-	} else {
-		slog.Info("token_refresh.privacy_mode_set",
-			"account_id", account.ID,
-			"privacy_mode", mode,
-		)
-	}
+	applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", false)
 }
 
 // ensureAntigravityPrivacy 后台刷新中检查 Antigravity OAuth 账号隐私状态。

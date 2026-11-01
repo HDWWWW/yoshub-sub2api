@@ -306,6 +306,8 @@ const privacyBadge = computed(() => {
     // OpenAI states
     case 'training_off':
       return { label: 'Private', icon: shieldCheck, title: t('admin.accounts.privacyTrainingOff'), class: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' }
+    case 'training_on':
+      return { label: 'Shared', icon: shieldCheck, title: t('admin.accounts.privacyTrainingOn'), class: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' }
     case 'training_set_cf_blocked':
       return { label: 'CF', icon: shieldX, title: t('admin.accounts.privacyCfBlocked'), class: 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400' }
     case 'training_set_failed':

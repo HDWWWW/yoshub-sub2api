@@ -14,21 +14,22 @@ const (
 )
 
 type Proxy struct {
-	ManagedIPv6    string
-	ID             int64
-	Name           string
-	Protocol       string
-	Host           string
-	Port           int
-	Username       string
-	Password       string
-	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	ExpiresAt      *time.Time
-	FallbackMode   string
-	BackupProxyID  *int64
-	ExpiryWarnDays int
+	ManagedIPv6State string
+	ManagedIPv6      string
+	ID               int64
+	Name             string
+	Protocol         string
+	Host             string
+	Port             int
+	Username         string
+	Password         string
+	Status           string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ExpiresAt        *time.Time
+	FallbackMode     string
+	BackupProxyID    *int64
+	ExpiryWarnDays   int
 }
 
 func (p *Proxy) IsActive() bool {
