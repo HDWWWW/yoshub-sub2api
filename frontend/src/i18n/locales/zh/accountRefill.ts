@@ -186,6 +186,8 @@ export default {
   "remaining7d": "7d 剩余",
   "account": "账号",
   "task": "任务",
+  "reason": "补号原因 / 备注",
+  "reasonUnknown": "历史记录未保存补号原因",
   "elapsed": "耗时",
   "created": "创建时间",
   "retry": "重试原任务",

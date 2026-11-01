@@ -162,6 +162,7 @@ type AccountRefillJob struct {
 	Status                string                      `json:"status"`
 	SupplierStatus        string                      `json:"supplier_status,omitempty"`
 	Reason                string                      `json:"reason"`
+	ReasonDetail          string                      `json:"reason_detail,omitempty"`
 	Plan                  string                      `json:"plan"`
 	Price                 float64                     `json:"price"`
 	PriceVersion          int64                       `json:"price_version"`

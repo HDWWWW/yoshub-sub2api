@@ -55,6 +55,8 @@ func TestManualRefillUsesSavedSnapshotWithAutomationOffAndDeduplicates(t *testin
 	require.NoError(t, err)
 	require.Len(t, v.Jobs, 1)
 	j := v.Jobs[0]
+	require.Equal(t, "手动补号", j.Reason)
+	require.Contains(t, j.ReasonDetail, "管理员手动提交")
 	require.Equal(t, "pro20x", j.Plan)
 	require.Equal(t, "pro5x", v.Config.Plan, "manual choice must not rewrite the automatic plan")
 	require.Equal(t, 77, j.Concurrency)

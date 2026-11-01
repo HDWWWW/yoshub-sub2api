@@ -203,6 +203,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		grace := c.ImportExpiryGraceMinutes
 		job := AccountRefillJob{ID: jobID, ManualRequestID: request.RequestID, ConfigRevision: request.Revision,
 			Status: "submitting", Reason: "手动补号", Plan: request.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+			ReasonDetail:       "管理员手动提交 1 个账号，沿用提交时保存的推送设置。",
 			ExpiryGraceMinutes: &grace, GroupID: c.GroupID, Concurrency: c.ImportConcurrency,
 			DeliveryGroupIDs: slices.Clone(c.DeliveryGroupIDs), DeliveryConfig: c.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}

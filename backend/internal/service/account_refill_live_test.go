@@ -64,3 +64,30 @@ func TestAccountRefillRechecksDemandAfterSlowProviderCall(t *testing.T) {
 	require.NoError(t, s.run(context.Background(), false))
 	require.Empty(t, p.submitted, "no purchase after local shortage resolves while the supplier responds")
 }
+
+func TestAccountRefillRecordsExcludedReserveAtPurchase(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*Account)
+		note   string
+	}{
+		{"expired", func(a *Account) { expiry := time.Now().Add(-time.Minute); a.ExpiresAt = &expiry }, "1 个已到租期"},
+		{"quota", func(a *Account) {
+			a.Extra = map[string]any{"codex_5h_used_percent": 95.0, "codex_5h_reset_at": time.Now().Add(time.Hour).Format(time.RFC3339)}
+		}, "1 个额度低于下限（5h 15.00% / 7d 15.00%）"},
+		{"unavailable", func(a *Account) { a.Schedulable = false }, "1 个暂不可调度"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, p, accounts := refillHarness(t)
+			a := refillTestAccount(time.Now().Add(time.Hour))
+			tc.change(&a)
+			accounts.accounts = []Account{a}
+			require.NoError(t, s.run(context.Background(), false))
+			require.Len(t, p.submitted, 1)
+			v, err := s.View(context.Background())
+			require.NoError(t, err)
+			require.Contains(t, v.Jobs[0].ReasonDetail, "未来健康储备 0 个 + 在途 0 个，低于最低储备 1 个")
+			require.Contains(t, v.Jobs[0].ReasonDetail, tc.note)
+		})
+	}
+}

@@ -133,7 +133,50 @@
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4"><div v-for="item in usageItems" :key="item.key" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800"><div class="text-xs text-gray-500">{{ t(`accountRefill.${item.key}`) }}</div><div class="mt-1 font-semibold tabular-nums">{{ number(item.value) }}</div></div></div>
         <p class="text-xs leading-5 text-gray-500">{{ t('accountRefill.progressHint') }}</p>
         <div class="flex flex-wrap gap-5 text-sm"><span>{{ t('accountRefill.nextCheck') }}: {{ date(view.next_check_at) }}</span><span v-if="view.config.mode === 'interval'">{{ t('accountRefill.nextInterval') }}: {{ date(view.next_interval_at) }}</span></div>
-        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b border-gray-200 text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.task') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.points') }}</th><th class="p-2">{{ t('accountRefill.elapsed') }}</th><th class="p-2">{{ t('accountRefill.created') }}</th></tr></thead><tbody><tr v-for="job in view.jobs" :key="job.id" class="border-b border-gray-100 align-top dark:border-dark-800"><td class="p-2"><span class="font-medium">{{ job.plan }}</span><div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || job.id }}</div><div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div></td><td class="max-w-80 p-2"><span class="font-medium">{{ stateLabel(job.status) }}</span><div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div><button v-if="['blocked', 'import_failed'].includes(job.status)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button><details v-if="job.status === 'blocked' && !job.supplier_id" class="mt-2 text-xs"><summary class="cursor-pointer text-amber-700">{{ t('accountRefill.dismiss') }}</summary><label class="mt-2 flex gap-2"><input v-model="confirmedJobs" type="checkbox" :value="job.id" />{{ t('accountRefill.dismissHint') }}</label><button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t('accountRefill.dismiss') }}</button></details></td><td class="p-2 tabular-nums">{{ number(job.price) }}</td><td class="whitespace-nowrap p-2 tabular-nums">{{ elapsed(job) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(job.created_at) }}</td></tr></tbody></table><p v-if="!view.jobs.length" class="py-6 text-center text-sm text-gray-500">{{ t('accountRefill.noJobs') }}</p></div>
+        <div>
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[800px] text-left text-sm" data-testid="refill-jobs">
+              <thead class="border-b border-gray-200 text-xs text-gray-500 dark:border-dark-700">
+                <tr>
+                  <th class="p-2">{{ t('accountRefill.task') }}</th>
+                  <th class="p-2">{{ t('accountRefill.reason') }}</th>
+                  <th class="p-2">{{ t('accountRefill.status') }}</th>
+                  <th class="p-2">{{ t('accountRefill.points') }}</th>
+                  <th class="p-2">{{ t('accountRefill.elapsed') }}</th>
+                  <th class="p-2">{{ t('accountRefill.created') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="job in pagedJobs" :key="job.id" class="border-b border-gray-100 align-top dark:border-dark-800">
+                  <td class="p-2">
+                    <span class="font-medium">{{ job.plan }}</span>
+                    <div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || job.id }}</div>
+                    <div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div>
+                  </td>
+                  <td class="min-w-56 max-w-80 break-words p-2" data-testid="refill-job-reason">
+                    <p class="font-medium">{{ job.reason || t('accountRefill.reasonUnknown') }}</p>
+                    <p v-if="job.reason_detail" class="mt-1 text-xs leading-5 text-gray-500 dark:text-dark-300">{{ job.reason_detail }}</p>
+                  </td>
+                  <td class="max-w-80 p-2">
+                    <span class="font-medium">{{ stateLabel(job.status) }}</span>
+                    <div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div>
+                    <button v-if="['blocked', 'import_failed'].includes(job.status)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
+                    <details v-if="job.status === 'blocked' && !job.supplier_id" class="mt-2 text-xs">
+                      <summary class="cursor-pointer text-amber-700">{{ t('accountRefill.dismiss') }}</summary>
+                      <label class="mt-2 flex gap-2"><input v-model="confirmedJobs" type="checkbox" :value="job.id" />{{ t('accountRefill.dismissHint') }}</label>
+                      <button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t('accountRefill.dismiss') }}</button>
+                    </details>
+                  </td>
+                  <td class="p-2 tabular-nums">{{ number(job.price) }}</td>
+                  <td class="whitespace-nowrap p-2 tabular-nums">{{ elapsed(job) }}</td>
+                  <td class="whitespace-nowrap p-2 text-xs">{{ date(job.created_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-if="!view.jobs.length" class="py-6 text-center text-sm text-gray-500">{{ t('accountRefill.noJobs') }}</p>
+          </div>
+          <Pagination v-if="view.jobs.length" v-model:page="jobsPage" :total="view.jobs.length" :page-size="jobsPageSize" :show-page-size-selector="false" data-testid="refill-jobs-pagination" />
+        </div>
         <h4 class="text-sm font-medium">{{ t('accountRefill.evaluation') }}</h4>
         <p class="text-xs text-gray-500">{{ t('accountRefill.evaluationLocalHint') }} {{ t('accountRefill.evaluationUpdated') }}: {{ date(view.evaluation.checked_at) }}</p>
         <p v-if="view.evaluation.error" class="text-sm text-amber-700" role="alert">{{ view.evaluation.error }}</p>
@@ -155,6 +198,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import { accountRefillAPI, type RefillConfig, type RefillView, type RefillJob, type ManualRefillRequest } from '@/api/admin/accountRefill'
 import { getAllIncludingInactive } from '@/api/admin/groups'
 import type { AdminGroup } from '@/types'
@@ -172,6 +216,9 @@ const selectedGroup = ref(0)
 const switchingGroup = ref(false)
 const groups = ref<AdminGroup[]>([])
 const confirmedJobs = ref<string[]>([])
+const jobsPageSize = 10
+const jobsPage = ref(1)
+const pagedJobs = computed(() => view.value?.jobs.slice((jobsPage.value - 1) * jobsPageSize, jobsPage.value * jobsPageSize) || [])
 const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
 const webhook = ref('')
 const manualPlan = ref('pro5x'), manualPending = ref<ManualRefillRequest | null>(null)
@@ -234,9 +281,15 @@ function accept(data: RefillView, reset: boolean) {
     revision = data.revision
     conflict.value = false
   }
+  if (!view.value || view.value.config.group_id !== data.config.group_id) {
+    jobsPage.value = 1
+    confirmedJobs.value = []
+  } else {
+    jobsPage.value = Math.min(jobsPage.value, Math.max(1, Math.ceil(data.jobs.length / jobsPageSize)))
+  }
   view.value = data
   if (manualPending.value && data.jobs.some(j => j.manual_request_id === manualPending.value?.request_id)) {
-    clearManualRequest(); activeTab.value = 'progress'
+    clearManualRequest(); activeTab.value = 'progress'; jobsPage.value = 1
   }
   now.value = Date.now()
 }
@@ -289,7 +342,7 @@ async function submitManual() {
   manualPending.value = request; busy.value = true; error.value = ''; generation++
   try {
     const data = await accountRefillAPI.manual(request)
-    accept(data, false); clearManualRequest(); activeTab.value = 'progress'
+    accept(data, false); clearManualRequest(); activeTab.value = 'progress'; jobsPage.value = 1
     app.showSuccess(t('accountRefill.manualAccepted'))
   } catch (e) {
     const status = (e as { response?: { status?: number } }).response?.status

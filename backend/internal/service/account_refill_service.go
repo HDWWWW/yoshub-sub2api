@@ -571,6 +571,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return persist()
 		}
 		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+			ReasonDetail:       accountRefillReasonDetail(state.Config, state.Evaluation),
 			ExpiryGraceMinutes: &graceMinutes,
 			GroupID:            state.Config.GroupID, Concurrency: state.Config.ImportConcurrency, DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}

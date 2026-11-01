@@ -186,6 +186,8 @@ export default {
   "remaining7d": "7d left",
   "account": "Account",
   "task": "Task",
+  "reason": "Refill reason / notes",
+  "reasonUnknown": "No reason recorded for this past order",
   "elapsed": "Elapsed",
   "created": "Created",
   "retry": "Retry original task",

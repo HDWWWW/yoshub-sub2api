@@ -19,9 +19,75 @@ const config = {
 }
 function response(revision = 1) { return { config: structuredClone(config), revision, token_configured: true, key: { label: 'key label', scope: 'write', expires_at: '2027-01-29T12:59:37Z' }, wallet: { balance: 4825.5, held: 60, available: 4765.5 }, identity_at: '2026-10-31T12:00:00Z', catalog: { items: [{ service: 'refill', plan: 'pro5x', price: 60, enabled: true }] }, jobs: [], evaluation: { ready: 1, accounts: [] }, daily: {}, message: 'ready' } }
 async function open() { const wrapper = mount(AccountRefillModal, { props: { show: true }, global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' } } } }); await flushPromises(); return wrapper }
+function responseWithJobs(count: number) {
+ return { ...response(), jobs: Array.from({ length: count }, (_, i) => ({
+  id: `order-${i + 1}`, plan: 'pro5x', price: 60, status: 'imported', reason: '账号临期，提前补充储备',
+  reason_detail: '未来健康储备 0 个 + 在途 0 个，低于最低储备 1 个。未计入储备：1 个将在 30 分钟内到期。',
+  created_at: '2026-11-01T04:00:00Z', updated_at: '2026-11-01T04:01:00Z', finished_at: '2026-11-01T04:01:00Z',
+  attempts: 1, next_attempt_at: '2026-11-01T04:00:00Z'
+ })) }
+}
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('shows saved trigger notes and handles historical records without inventing a reason', async () => {
+  const data = responseWithJobs(3)
+  data.jobs[1]!.reason = '并发利用率超过目标'; data.jobs[1]!.reason_detail = ''
+  data.jobs[2]!.reason = ''; data.jobs[2]!.reason_detail = ''
+  get.mockResolvedValue(data)
+  const w = await open()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
+  const reasons = w.findAll('[data-testid="refill-job-reason"]')
+  expect(reasons[0]!.text()).toContain('1 个将在 30 分钟内到期')
+  expect(reasons[1]!.text()).toBe('并发利用率超过目标')
+  expect(reasons[2]!.text()).toBe('accountRefill.reasonUnknown')
+  expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('paginates ten orders, keeps the selected page on refresh, and clamps shrinking history', async () => {
+  get.mockResolvedValue(responseWithJobs(23))
+  const w = await open()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
+  const rows = () => w.findAll('[data-testid="refill-jobs"] tbody tr')
+  expect(rows()).toHaveLength(10)
+  expect(rows()[0]!.text()).toContain('order-1')
+  expect(w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.previous"]').attributes('disabled')).toBeDefined()
+  await w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').trigger('click')
+  expect(rows()).toHaveLength(10)
+  expect(rows()[0]!.text()).toContain('order-11')
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(rows()[0]!.text()).toContain('order-11')
+  await w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').trigger('click')
+  expect(rows()).toHaveLength(3)
+  expect(rows()[0]!.text()).toContain('order-21')
+  expect(w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').attributes('disabled')).toBeDefined()
+  get.mockResolvedValue(responseWithJobs(12))
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(rows()).toHaveLength(2)
+  expect(rows()[0]!.text()).toContain('order-11')
+  get.mockResolvedValue(responseWithJobs(0))
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(rows()).toHaveLength(0)
+  expect(w.find('[data-testid="refill-jobs-pagination"]').exists()).toBe(false)
+  expect(w.text()).toContain('accountRefill.noJobs')
+  expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('returns to the first page when switching groups or reopening', async () => {
+  get.mockResolvedValue(responseWithJobs(23))
+  const w = await open()
+  const progress = async () => { await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click') }
+  await progress()
+  await w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').trigger('click')
+  get.mockResolvedValue({ ...responseWithJobs(23), config: { ...structuredClone(config), group_id: 3, delivery_group_ids: [3] } })
+  await w.get('[data-testid="refill-rule-group"]').setValue(3); await flushPromises()
+  expect(w.get('[data-testid="refill-jobs-pagination"] [aria-current="page"]').text()).toBe('1')
+  await w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').trigger('click')
+  await w.setProps({ show: false }); await w.setProps({ show: true }); await flushPromises()
+  await progress()
+  expect(w.get('[data-testid="refill-jobs-pagination"] [aria-current="page"]').text()).toBe('1')
+  w.unmount()
+ })
  it('loads independent group rules and scopes subsequent polling and purchases', async () => {
   const w = await open()
   get.mockImplementation(async (id?: number) => ({ ...response(), config: { ...structuredClone(config), group_id: id || 2, delivery_group_ids: [id || 2], min_ready: id === 3 ? 4 : 1 } }))

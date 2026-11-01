@@ -323,14 +323,21 @@ func refillDue(t *testing.T, store *refillTestStore) {
 }
 
 func TestAccountRefillDurableReservationRetryAndRestart(t *testing.T) {
-	s, store, p, _ := refillHarness(t)
+	s, store, p, accounts := refillHarness(t)
 	ctx := context.Background()
+	accounts.accounts = []Account{refillTestAccount(time.Now().Add(20 * time.Minute))}
 	p.submitError = errors.New("uncertain timeout")
 	require.NoError(t, s.run(ctx, false))
 	require.Len(t, p.submitted, 1)
 	first := p.submitted[0]
+	require.Equal(t, "账号临期，提前补充储备", first.Reason)
+	require.Contains(t, first.ReasonDetail, "1 个将在 30 分钟内到期")
+	accounts.accounts = nil
+	store.mutate(t, func(v *accountRefillState) { v.Config.MinReady = 4 })
 	v, err := s.View(ctx)
 	require.NoError(t, err)
+	require.Equal(t, "在途任务已抵扣缺口，等待交付", v.Evaluation.Reason)
+	require.Equal(t, first.ReasonDetail, v.Jobs[0].ReasonDetail, "history must not use the current rules or evaluation")
 	require.Equal(t, 60.0, v.Daily.ReservedPoints)
 	refillDue(t, store)
 	p.submitError = nil
@@ -340,6 +347,7 @@ func TestAccountRefillDurableReservationRetryAndRestart(t *testing.T) {
 	require.Len(t, p.submitted, 2)
 	require.Equal(t, first.ID, p.submitted[1].ID)
 	require.Equal(t, first.PriceVersion, p.submitted[1].PriceVersion)
+	require.Equal(t, first.ReasonDetail, p.submitted[1].ReasonDetail, "retries preserve the durable trigger snapshot")
 	v, err = s.View(ctx)
 	require.NoError(t, err)
 	require.Len(t, v.Jobs, 1)
@@ -481,6 +489,8 @@ func TestAccountRefillIntervalAndCapacityPersistence(t *testing.T) {
 	refillDue(t, store)
 	require.NoError(t, s.run(ctx, false))
 	require.Len(t, p.submitted, 1)
+	require.Contains(t, p.submitted[0].ReasonDetail, "运行中并发 60 / 60（利用率 100.00%）")
+	require.Contains(t, p.submitted[0].ReasonDetail, "达到设定 85%，持续观察已满 30 秒")
 	s, store, p, _ = refillHarness(t)
 	store.mutate(t, func(v *accountRefillState) { v.Config.Mode = "interval"; v.NextIntervalAt = time.Now().Add(time.Hour) })
 	require.NoError(t, s.run(ctx, false))
@@ -489,6 +499,7 @@ func TestAccountRefillIntervalAndCapacityPersistence(t *testing.T) {
 	refillDue(t, store)
 	require.NoError(t, s.run(ctx, false))
 	require.Len(t, p.submitted, 1)
+	require.Contains(t, p.submitted[0].ReasonDetail, "定时周期已到：每 60 分钟补 1 个")
 }
 
 func TestRefillHTTPContractAndWalletUnits(t *testing.T) {

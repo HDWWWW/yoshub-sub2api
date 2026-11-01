@@ -57,6 +57,7 @@ export interface RefillJob {
   status: string
   supplier_status?: string
   reason: string
+  reason_detail?: string
   plan: string
   price: number
   created_at: string
