@@ -1,0 +1,28 @@
+[Unit]
+Description=Yoshub account IPv6 egress
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/yoshub/ipv6-egress --config /etc/yoshub-ipv6-egress/config.json
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+UMask=0077
+StateDirectory=yoshub-ipv6-egress
+StateDirectoryMode=0700
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/yoshub-ipv6-egress
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+LimitNOFILE=131072
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=multi-user.target

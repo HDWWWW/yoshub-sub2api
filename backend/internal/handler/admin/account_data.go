@@ -23,6 +23,11 @@ const (
 	legacyDataType = "sub2api-bundle"
 	dataVersion    = 1
 	dataPageCap    = 1000
+	// Keep this non-resolvable key even when proxy export is disabled. Older
+	// importers also reject it instead of silently restoring a managed account
+	// with direct egress or reusing its one-account lease.
+	managedIPv6DataProxyKey = "ovh-ipv6:requires-new-allocation"
+	managedIPv6ImportError  = "OVH IPv6 地址不能复制或复用，请为账号分配新代理后再导入"
 )
 
 type DataPayload struct {
@@ -38,6 +43,7 @@ type DataPayload struct {
 
 type DataProxy struct {
 	ProxyKey        string `json:"proxy_key"`
+	ManagedIPv6     string `json:"managed_ipv6,omitempty"`
 	Name            string `json:"name"`
 	Protocol        string `json:"protocol"`
 	Host            string `json:"host"`
@@ -98,6 +104,27 @@ func buildProxyKey(protocol, host string, port int, username, password string) s
 	return fmt.Sprintf("%s|%s|%d|%s|%s", strings.TrimSpace(protocol), strings.TrimSpace(host), port, strings.TrimSpace(username), strings.TrimSpace(password))
 }
 
+func isManagedDataProxyUsername(username string) bool {
+	return strings.HasPrefix(strings.TrimSpace(username), "ovh6_")
+}
+
+func isManagedDataProxyKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if strings.HasPrefix(key, "ovh-ipv6:") {
+		return true
+	}
+	parts := strings.SplitN(key, "|", 5)
+	return len(parts) >= 4 && isManagedDataProxyUsername(parts[3])
+}
+
+func isManagedProxyForData(proxy service.Proxy) bool {
+	return proxy.ManagedIPv6 != "" || isManagedDataProxyUsername(proxy.Username)
+}
+
+func isManagedDataProxy(proxy DataProxy) bool {
+	return proxy.ManagedIPv6 != "" || isManagedDataProxyUsername(proxy.Username) || isManagedDataProxyKey(proxy.ProxyKey)
+}
+
 func (h *AccountHandler) ExportData(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -137,27 +164,33 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 		return
 	}
 
-	var proxies []service.Proxy
-	if includeProxies {
-		proxies, err = h.resolveExportProxies(ctx, accounts)
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	} else {
-		proxies = []service.Proxy{}
+	// Resolve bindings even for account-only exports so managed egress remains
+	// explicitly non-transferable in the backup.
+	proxies, err := h.resolveExportProxies(ctx, accounts)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 
 	// 构建 id→name 映射，用于导出备用代理 name
 	proxyNameByID := make(map[int64]string, len(proxies))
 	for i := range proxies {
-		proxyNameByID[proxies[i].ID] = proxies[i].Name
+		if !isManagedProxyForData(proxies[i]) {
+			proxyNameByID[proxies[i].ID] = proxies[i].Name
+		}
 	}
 
 	proxyKeyByID := make(map[int64]string, len(proxies))
 	dataProxies := make([]DataProxy, 0, len(proxies))
 	for i := range proxies {
 		p := proxies[i]
+		if isManagedProxyForData(p) {
+			proxyKeyByID[p.ID] = managedIPv6DataProxyKey
+			continue
+		}
+		if !includeProxies {
+			continue
+		}
 		key := buildProxyKey(p.Protocol, p.Host, p.Port, p.Username, p.Password)
 		proxyKeyByID[p.ID] = key
 
@@ -194,6 +227,10 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 			if key, ok := proxyKeyByID[*acc.ProxyID]; ok {
 				proxyKey = &key
 			}
+		}
+		if acc.Proxy != nil && isManagedProxyForData(*acc.Proxy) {
+			key := managedIPv6DataProxyKey
+			proxyKey = &key
 		}
 		var expiresAt *int64
 		if acc.ExpiresAt != nil {
@@ -272,11 +309,16 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 	}
 
 	proxyKeyToID := make(map[string]int64, len(existingProxies))
+	managedProxyKeys := make(map[string]bool)
 	// proxyNameToID 用于 backup_proxy_name 反查：DB 已有 + 本批次新建均会写入
 	proxyNameToID := make(map[string]int64, len(existingProxies))
 	for i := range existingProxies {
 		p := existingProxies[i]
 		key := buildProxyKey(p.Protocol, p.Host, p.Port, p.Username, p.Password)
+		if isManagedProxyForData(p) {
+			managedProxyKeys[key] = true
+			continue
+		}
 		proxyKeyToID[key] = p.ID
 		if p.Name != "" {
 			proxyNameToID[p.Name] = p.ID
@@ -288,6 +330,15 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		key := item.ProxyKey
 		if key == "" {
 			key = buildProxyKey(item.Protocol, item.Host, item.Port, item.Username, item.Password)
+		}
+		canonicalKey := buildProxyKey(item.Protocol, item.Host, item.Port, item.Username, item.Password)
+		if isManagedDataProxy(item) || managedProxyKeys[key] || managedProxyKeys[canonicalKey] {
+			managedProxyKeys[key] = true
+			result.ProxyFailed++
+			result.Errors = append(result.Errors, DataImportError{
+				Kind: "proxy", Name: item.Name, ProxyKey: managedIPv6DataProxyKey, Message: managedIPv6ImportError,
+			})
+			continue
 		}
 		if err := validateDataProxy(item); err != nil {
 			result.ProxyFailed++
@@ -420,6 +471,13 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 
 	for i := range dataPayload.Accounts {
 		item := dataPayload.Accounts[i]
+		if item.ProxyKey != nil && managedProxyKeys[*item.ProxyKey] {
+			result.AccountFailed++
+			result.Errors = append(result.Errors, DataImportError{
+				Kind: "account", Name: item.Name, ProxyKey: managedIPv6DataProxyKey, Message: managedIPv6ImportError,
+			})
+			continue
+		}
 		if err := validateDataAccount(item); err != nil {
 			result.AccountFailed++
 			result.Errors = append(result.Errors, DataImportError{
@@ -671,6 +729,9 @@ func validateDataHeader(payload DataPayload) error {
 }
 
 func validateDataProxy(item DataProxy) error {
+	if isManagedDataProxy(item) {
+		return errors.New(managedIPv6ImportError)
+	}
 	if strings.TrimSpace(item.Protocol) == "" {
 		return errors.New("proxy protocol is required")
 	}
@@ -695,6 +756,9 @@ func validateDataProxy(item DataProxy) error {
 }
 
 func validateDataAccount(item DataAccount) error {
+	if item.ProxyKey != nil && isManagedDataProxyKey(*item.ProxyKey) {
+		return errors.New(managedIPv6ImportError)
+	}
 	if strings.TrimSpace(item.Name) == "" {
 		return errors.New("account name is required")
 	}

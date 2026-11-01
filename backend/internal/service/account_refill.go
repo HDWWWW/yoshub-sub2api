@@ -205,20 +205,25 @@ type AccountRefillAccount struct {
 	Remaining7d     *float64   `json:"remaining_7d"`
 	Concurrency     int        `json:"concurrency"`
 	InUse           int        `json:"in_use"`
+	ForecastLoss    bool       `json:"forecast_loss"`
 }
 
 type AccountRefillEvaluation struct {
-	Error     string                 `json:"error,omitempty"`
-	CheckedAt time.Time              `json:"checked_at"`
-	Ready     int                    `json:"ready"`
-	Healthy   int                    `json:"healthy"`
-	Expiring  int                    `json:"expiring"`
-	Pending   int                    `json:"pending"`
-	InUse     int                    `json:"in_use"`
-	Capacity  int                    `json:"capacity"`
-	Needed    int                    `json:"needed"`
-	Reason    string                 `json:"reason"`
-	Accounts  []AccountRefillAccount `json:"accounts"`
+	Error            string                 `json:"error,omitempty"`
+	CheckedAt        time.Time              `json:"checked_at"`
+	Ready            int                    `json:"ready"`
+	Healthy          int                    `json:"healthy"`
+	Expiring         int                    `json:"expiring"`
+	Pending          int                    `json:"pending"`
+	InUse            int                    `json:"in_use"`
+	Capacity         int                    `json:"capacity"`
+	PendingCapacity  int                    `json:"pending_capacity"`
+	ForecastAccounts int                    `json:"forecast_accounts"`
+	ForecastCapacity int                    `json:"forecast_capacity"`
+	ForecastReady    int                    `json:"forecast_ready"`
+	Needed           int                    `json:"needed"`
+	Reason           string                 `json:"reason"`
+	Accounts         []AccountRefillAccount `json:"accounts"`
 }
 
 type accountRefillState struct {
@@ -332,6 +337,11 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 	for _, job := range jobs {
 		if job.pending() {
 			e.Pending++
+			concurrency := job.Concurrency
+			if concurrency <= 0 {
+				concurrency = c.ImportConcurrency // Legacy reservations had no capacity snapshot.
+			}
+			e.PendingCapacity += refillMax(0, concurrency)
 		}
 	}
 	for i := range accounts {
@@ -346,9 +356,9 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		threshold := refillQuotaThreshold(c, row.Plan)
 		row.MinRemaining5h, row.MinRemaining7d = threshold.MinRemaining5h, threshold.MinRemaining7d
 		if load := loads[a.ID]; load != nil {
-			row.InUse = load.CurrentConcurrency
+			row.InUse = refillMax(0, load.CurrentConcurrency)
 		}
-		quotaLow := false
+		quotaLow, quotaAtFloor := false, false
 		for _, w := range []struct {
 			name        string
 			minimum     float64
@@ -364,12 +374,15 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 				if remaining < w.minimum {
 					quotaLow = true
 				}
+				if w.minimum > 0 && remaining <= w.minimum {
+					quotaAtFloor = true
+				}
 			}
 		}
 		switch {
 		case row.SourceExpiresAt != nil && !row.SourceExpiresAt.After(now):
 			row.State = "expired"
-		case !a.IsActive() || !a.Schedulable || (a.OverloadUntil != nil && now.Before(*a.OverloadUntil)) || (a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt)) || (a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil)):
+		case !a.IsActive() || !a.Schedulable || a.isSchedulingExpired(now) || (a.OverloadUntil != nil && now.Before(*a.OverloadUntil)) || (a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt)) || (a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil)):
 			row.State = "unavailable"
 		case quotaLow:
 			row.State = "quota_low"
@@ -381,25 +394,45 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 			e.Ready++
 			e.Healthy++
 		}
-		if row.State == "ready" || row.State == "expiring" {
+		// A refill floor does not remove an account from live scheduling. Keep
+		// its capacity here, and all in-flight demand even on unavailable rows.
+		e.InUse += row.InUse
+		if row.State == "ready" || row.State == "expiring" || row.State == "quota_low" {
 			e.Capacity += refillMax(0, a.Concurrency)
-			e.InUse += row.InUse
+			row.ForecastLoss = a.Concurrency > 0 && (quotaAtFloor || row.State == "expiring")
+			if row.ForecastLoss {
+				e.ForecastAccounts++
+			} else {
+				e.ForecastCapacity += refillMax(0, a.Concurrency)
+			}
+		}
+		if row.State == "ready" && !row.ForecastLoss {
+			e.ForecastReady++
 		}
 		e.Accounts = append(e.Accounts, row)
 	}
 	minimumGap := refillMax(0, c.MinReady-e.Ready-e.Pending)
-	capacityGap := 0
+	capacityGap, forecastGap := 0, 0
 	if c.Mode == "capacity" && refillCapacityHigh(c, e) {
-		capacityGap = refillMax(1, int(math.Ceil((float64(e.InUse)*100/float64(refillMax(1, c.TargetConcurrency))-float64(e.Capacity))/float64(refillMax(1, c.ImportConcurrency))))) - e.Pending
+		capacityGap = refillCapacityGap(c, e.InUse, e.Capacity+e.PendingCapacity)
 	}
-	e.Needed = refillMax(minimumGap, capacityGap, 0)
+	if c.Mode == "capacity" && refillForecastHigh(c, e) {
+		forecastGap = refillCapacityGap(c, e.InUse, e.ForecastCapacity+e.PendingCapacity)
+	}
+	// Each reason owns its gap and observation gate. A larger unobserved
+	// forecast must not borrow minimum-reserve or live-concurrency authorization.
 	if minimumGap > 0 {
+		e.Needed = minimumGap
 		e.Reason = "健康储备不足"
 		if e.Expiring > 0 {
 			e.Reason = "账号临期，提前补充储备"
 		}
 	} else if capacityGap > 0 {
+		e.Needed = capacityGap
 		e.Reason = "并发利用率超过目标"
+	} else if forecastGap > 0 {
+		e.Needed = forecastGap
+		e.Reason = refillForecastReason
 	} else {
 		e.Reason = "储备充足"
 	}
@@ -413,8 +446,14 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		e.Needed = 0
 		e.Reason = "在途任务已抵扣缺口，等待交付"
 	}
-	e.Needed = refillMin(e.Needed, refillMax(0, c.MaxInFlight-e.Pending), refillMax(0, c.MaxReady-e.Ready-e.Pending))
-	if e.Ready+e.Pending >= c.MaxReady {
+	limitReady := e.Ready
+	if c.Mode == "capacity" {
+		// Replacements may overlap with accounts at the quota floor, as with
+		// existing expiring-account replacements, without exceeding future stock.
+		limitReady = e.ForecastReady
+	}
+	e.Needed = refillMin(e.Needed, refillMax(0, c.MaxInFlight-e.Pending), refillMax(0, c.MaxReady-limitReady-e.Pending))
+	if limitReady+e.Pending >= c.MaxReady {
 		e.Needed = 0
 		e.Reason = "已达健康账号上限"
 	}

@@ -54,3 +54,37 @@ describe('proxy connection tests', () => {
     expect(testProxy).toHaveBeenCalledTimes(4)
   })
 })
+
+describe('managed IPv6 proxy selection', () => {
+  const proxies = [
+    { id: 1, name: 'manual', host: 'proxy.example', port: 8080, protocol: 'http' },
+    { id: 2, name: 'current-ipv6', host: 'egress.internal', port: 1080, protocol: 'socks5', managed_ipv6: '2001:db8::2' },
+    { id: 3, name: 'another-ipv6', host: 'egress.internal', port: 1080, protocol: 'socks5', managed_ipv6: '2001:db8::3' }
+  ] as Proxy[]
+
+  it('keeps the current IPv6 visible and hides other accounts IPv6 addresses', async () => {
+    const wrapper = mount(ProxySelector, { props: { modelValue: 2, proxies }, global: { stubs: { Icon: true } } })
+    expect(wrapper.get('.select-trigger').text()).toContain('2001:db8::2')
+    await wrapper.get('.select-trigger').trigger('click')
+    expect(wrapper.text()).toContain('manual')
+    expect(wrapper.text()).toContain('current-ipv6')
+    expect(wrapper.text()).not.toContain('another-ipv6')
+    expect(wrapper.text()).not.toContain('egress.internal')
+    await wrapper.get('.select-search-input').setValue('2001:db8::2')
+    expect(wrapper.findAll('.test-btn')).toHaveLength(1)
+    await wrapper.get('.select-search-input').setValue('2001:db8::3')
+    expect(wrapper.findAll('.test-btn')).toHaveLength(0)
+  })
+
+  it('offers and tests only manual proxies for an unbound account', async () => {
+    testProxy.mockResolvedValue({ success: true })
+    const wrapper = mount(ProxySelector, { props: { modelValue: null, proxies }, global: { stubs: { Icon: true } } })
+    await wrapper.get('.select-trigger').trigger('click')
+    expect(wrapper.text()).toContain('manual')
+    expect(wrapper.text()).not.toContain('current-ipv6')
+    expect(wrapper.text()).not.toContain('another-ipv6')
+    await wrapper.get('.batch-test-btn').trigger('click')
+    await flushPromises()
+    expect(testProxy.mock.calls.map(([id]) => id)).toEqual([1])
+  })
+})

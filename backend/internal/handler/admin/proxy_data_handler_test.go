@@ -280,3 +280,78 @@ func TestProxyImportDataReusesAndTriggersLatencyProbe(t *testing.T) {
 		return len(adminSvc.testedProxyIDs) == 1
 	}, time.Second, 10*time.Millisecond)
 }
+
+func TestProxyExportDataExcludesManagedIPv6(t *testing.T) {
+	for _, query := range []string{"", "?ids=1,2,3"} {
+		t.Run(query, func(t *testing.T) {
+			router, adminSvc := setupProxyDataRouter()
+			adminSvc.proxies = []service.Proxy{
+				{ID: 1, Name: "manual", Protocol: "http", Host: "proxy.example", Port: 8080, Username: "user", Password: "manual-secret", Status: service.StatusActive},
+				{ID: 2, Name: "managed", Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "lease-user", Password: "managed-secret", ManagedIPv6: "2001:db8::2", Status: service.StatusActive},
+				{ID: 3, Name: "reserved", Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "ovh6_legacy", Password: "reserved-secret", Status: service.StatusActive},
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/proxies/data"+query, nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var resp proxyDataResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Len(t, resp.Data.Proxies, 1)
+			require.Equal(t, "manual-secret", resp.Data.Proxies[0].Password)
+			for _, forbidden := range []string{"egress.internal", "lease-user", "managed-secret", "ovh6_legacy", "reserved-secret", "2001:db8::2"} {
+				require.NotContains(t, rec.Body.String(), forbidden)
+			}
+		})
+	}
+}
+
+func TestProxyImportDataRejectsManagedIPv6BeforeReuse(t *testing.T) {
+	for _, item := range []DataProxy{
+		{Name: "reserved-username", Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "ovh6_lease", Password: "reserved-secret"},
+		{Name: "forged-username", Protocol: "http", Host: "manual.example", Port: 8080, Username: "manual", ProxyKey: "socks5|egress.internal|1080|ovh6_lease|reserved-secret"},
+		{Name: "marked-proxy", Protocol: "http", Host: "manual.example", Port: 8080, ManagedIPv6: "2001:db8::2"},
+		{Name: "existing-managed-key", Protocol: "http", Host: "manual.example", Port: 8080, ProxyKey: "socks5|egress.internal|1080|lease-user|managed-secret"},
+		{Name: "export-marker", Protocol: "http", Host: "manual.example", Port: 8080, ProxyKey: managedIPv6DataProxyKey},
+		{Name: "managed-key-alias", Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "lease-user", Password: "managed-secret", ProxyKey: "custom-alias"},
+	} {
+		t.Run(item.Name, func(t *testing.T) {
+			router, adminSvc := setupProxyDataRouter()
+			adminSvc.proxies = []service.Proxy{
+				{ID: 1, Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "ovh6_lease", Password: "reserved-secret"},
+				{ID: 2, Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "lease-user", Password: "managed-secret", ManagedIPv6: "2001:db8::2"},
+			}
+			body, err := json.Marshal(DataImportRequest{Data: DataPayload{Proxies: []DataProxy{item}, Accounts: []DataAccount{}}})
+			require.NoError(t, err)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/proxies/data", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var resp proxyImportResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Equal(t, 1, resp.Data.ProxyFailed)
+			require.Zero(t, resp.Data.ProxyCreated)
+			require.Zero(t, resp.Data.ProxyReused)
+			require.Empty(t, adminSvc.createdProxies)
+			require.Empty(t, adminSvc.updatedProxyIDs)
+			require.Len(t, resp.Data.Errors, 1)
+			require.Equal(t, managedIPv6ImportError, resp.Data.Errors[0].Message)
+			require.Equal(t, managedIPv6DataProxyKey, resp.Data.Errors[0].ProxyKey)
+			require.NotContains(t, rec.Body.String(), "reserved-secret")
+			require.NotContains(t, rec.Body.String(), "managed-secret")
+		})
+	}
+}
+
+func TestValidateDataProxyRejectsManagedIPv6(t *testing.T) {
+	for _, change := range []func(*DataProxy){
+		func(p *DataProxy) { p.Username = "  ovh6_lease  " },
+		func(p *DataProxy) { p.ProxyKey = "socks5|egress.internal|1080|ovh6_lease|secret" },
+		func(p *DataProxy) { p.ProxyKey = managedIPv6DataProxyKey },
+		func(p *DataProxy) { p.ManagedIPv6 = "2001:db8::2" },
+	} {
+		item := DataProxy{Protocol: "http", Host: "proxy.example", Port: 8080}
+		change(&item)
+		require.EqualError(t, validateDataProxy(item), managedIPv6ImportError)
+	}
+	require.NoError(t, validateDataProxy(DataProxy{Protocol: "http", Host: "proxy.example", Port: 8080, Username: "manual"}))
+}

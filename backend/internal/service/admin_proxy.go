@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -21,6 +22,9 @@ func (s *adminServiceImpl) ListProxies(ctx context.Context, page, pageSize int, 
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := s.decorateManagedProxyList(ctx, proxies); err != nil {
+		return nil, 0, err
+	}
 	return proxies, result.Total, nil
 }
 
@@ -31,11 +35,18 @@ func (s *adminServiceImpl) ListProxiesWithAccountCount(ctx context.Context, page
 		return nil, 0, err
 	}
 	s.attachProxyLatency(ctx, proxies)
+	if err := s.decorateManagedProxyCounts(ctx, proxies); err != nil {
+		return nil, 0, err
+	}
 	return proxies, result.Total, nil
 }
 
 func (s *adminServiceImpl) GetAllProxies(ctx context.Context) ([]Proxy, error) {
-	return s.proxyRepo.ListActive(ctx)
+	proxies, err := s.proxyRepo.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return proxies, s.decorateManagedProxyList(ctx, proxies)
 }
 
 func (s *adminServiceImpl) GetAllProxiesWithAccountCount(ctx context.Context) ([]ProxyWithAccountCount, error) {
@@ -44,18 +55,32 @@ func (s *adminServiceImpl) GetAllProxiesWithAccountCount(ctx context.Context) ([
 		return nil, err
 	}
 	s.attachProxyLatency(ctx, proxies)
+	if err := s.decorateManagedProxyCounts(ctx, proxies); err != nil {
+		return nil, err
+	}
 	return proxies, nil
 }
 
 func (s *adminServiceImpl) GetProxy(ctx context.Context, id int64) (*Proxy, error) {
-	return s.proxyRepo.GetByID(ctx, id)
+	p, err := s.proxyRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return p, s.attachManagedIPv6(ctx, p)
 }
 
 func (s *adminServiceImpl) GetProxiesByIDs(ctx context.Context, ids []int64) ([]Proxy, error) {
-	return s.proxyRepo.ListByIDs(ctx, ids)
+	proxies, err := s.proxyRepo.ListByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return proxies, s.decorateManagedProxyList(ctx, proxies)
 }
 
 func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyInput) (*Proxy, error) {
+	if strings.HasPrefix(input.Username, "ovh6_") {
+		return nil, infraerrors.BadRequest("MANAGED_IPV6_PROXY", "OVH IPv6 由账号随机分配创建，不能手动复制或导入")
+	}
 	if !isJSONTimeInRange(input.ExpiresAt) {
 		return nil, infraerrors.BadRequest("PROXY_EXPIRY_INVALID", "proxy expiry year must be between 0 and 9999")
 	}
@@ -94,6 +119,9 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 }
 
 func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *UpdateProxyInput) (*Proxy, error) {
+	if input.Username != nil && strings.HasPrefix(*input.Username, "ovh6_") {
+		return nil, infraerrors.BadRequest("MANAGED_IPV6_PROXY", "OVH IPv6 由账号管理，不能复制或修改认证信息")
+	}
 	if !isJSONTimeInRange(input.ExpiresAt) {
 		return nil, infraerrors.BadRequest("PROXY_EXPIRY_INVALID", "proxy expiry year must be between 0 and 9999")
 	}
@@ -104,6 +132,9 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if strings.HasPrefix(proxy.Username, "ovh6_") {
+		return nil, infraerrors.BadRequest("MANAGED_IPV6_PROXY", "OVH IPv6 由账号管理，请在账号上更换代理")
 	}
 
 	// Merge only supplied fields, then validate the resulting fallback configuration.

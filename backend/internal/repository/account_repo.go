@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -327,6 +328,9 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 	accountIDs := make([]int64, 0, len(entAccounts))
 	entByID := make(map[int64]*dbent.Account, len(entAccounts))
 	for _, acc := range entAccounts {
+		if err := requireAccountProxy(acc, proxyEntityToService(acc.Edges.Proxy)); err != nil {
+			return nil, err
+		}
 		entByID[acc.ID] = acc
 		accountIDs = append(accountIDs, acc.ID)
 	}
@@ -3507,6 +3511,15 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 	if err != nil {
 		return nil, err
 	}
+	for _, account := range accounts {
+		var boundProxy *service.Proxy
+		if account.ProxyID != nil {
+			boundProxy = proxyMap[*account.ProxyID]
+		}
+		if err := requireAccountProxy(account, boundProxy); err != nil {
+			return nil, err
+		}
+	}
 	groupsByAccount, groupIDsByAccount, accountGroupsByAccount, err := r.loadAccountGroups(ctx, accountIDs)
 	if err != nil {
 		return nil, err
@@ -3543,6 +3556,17 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 	}
 
 	return outAccounts, nil
+}
+
+// Account rows and proxy relations are read separately. A concurrent proxy
+// rotation can retire the old relation between those reads. Never return that
+// incomplete network identity: callers historically interpret a nil Proxy as
+// direct egress. Retrying loads the new binding without leaking a direct request.
+func requireAccountProxy(account *dbent.Account, boundProxy *service.Proxy) error {
+	if account.ProxyID != nil && *account.ProxyID != 0 && (boundProxy == nil || boundProxy.ID != *account.ProxyID) {
+		return fmt.Errorf("account %d proxy %d unavailable; direct egress refused", account.ID, *account.ProxyID)
+	}
+	return nil
 }
 
 func tempUnschedulablePredicate() dbpredicate.Account {

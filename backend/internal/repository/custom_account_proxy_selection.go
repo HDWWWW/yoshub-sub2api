@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
+	"net/http"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 )
@@ -15,8 +17,17 @@ const freeAccountProxyPredicate = `p.deleted_at IS NULL AND p.status='active'
 // HasFreeAccountProxy is a read-only purchase preflight, not a reservation.
 // Delivery always rechecks under SelectAccountProxy's transaction lock.
 func (r *proxyRepository) HasFreeAccountProxy(ctx context.Context) (bool, error) {
+	enabled, err := r.ovhIPv6Enabled(ctx)
+	if err != nil {
+		return false, err
+	}
+	if enabled {
+		var status ovhipv6.Status
+		err := r.ipv6.Call(ctx, http.MethodGet, "/v1/status", nil, &status)
+		return err == nil && status.Available, err
+	}
 	var available bool
-	err := scanSingleRow(ctx, r.sql, `SELECT EXISTS (SELECT 1 FROM proxies p WHERE `+freeAccountProxyPredicate+`)`, nil, &available)
+	err = scanSingleRow(ctx, r.sql, `SELECT EXISTS (SELECT 1 FROM proxies p WHERE `+freeAccountProxyPredicate+`)`, nil, &available)
 	return available, err
 }
 
@@ -24,6 +35,15 @@ func (r *proxyRepository) HasFreeAccountProxy(ctx context.Context) (bool, error)
 // 二开自动分配只使用未达绑定上限的代理。随机与最空闲共用事务锁，持有到账号绑定提交，
 // 避免跨实例的推送和补号同时拿到同一个空闲代理；不改变原生显式绑定语义。
 func (r *proxyRepository) SelectAccountProxy(ctx context.Context, mode string) (int64, error) {
+	if mode == "random" {
+		enabled, err := r.ovhIPv6Enabled(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if enabled {
+			return r.allocateOVHIPv6(ctx)
+		}
+	}
 	tx := dbent.TxFromContext(ctx)
 	if tx == nil {
 		return 0, fmt.Errorf("代理选择需要写事务")

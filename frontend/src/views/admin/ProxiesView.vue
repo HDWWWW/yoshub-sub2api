@@ -39,7 +39,7 @@
           <!-- Right: All action buttons -->
           <div class="flex flex-1 flex-wrap items-center justify-end gap-2">
             <button
-              @click="loadProxies"
+              @click="refreshProxies"
               :disabled="loading"
               class="btn btn-secondary"
               :title="t('common.refresh')"
@@ -66,18 +66,18 @@
             </button>
             <button
               @click="openBatchDelete"
-              :disabled="selectedCount === 0"
+              :disabled="selectedManualProxyIds.length === 0"
               class="btn btn-danger"
               :title="t('admin.proxies.batchDeleteAction')"
             >
               <Icon name="trash" size="md" class="mr-2" />
               {{ t('admin.proxies.batchDeleteAction') }}
             </button>
-            <button class="btn btn-secondary" :disabled="selectedCount === 0 || selectedCount > 1000" @click="openBindingLimits([...selectedProxyIds])">{{ t('accountRefill.batchBindingLimits') }}</button>
+            <button class="btn btn-secondary" :disabled="selectedManualProxyIds.length === 0 || selectedManualProxyIds.length > 1000" :title="t('ovhIPv6.manualBindingOnly')" @click="openBindingLimits(selectedManualProxyIds)">{{ t('accountRefill.batchBindingLimits') }}</button>
             <button @click="showImportData = true" class="btn btn-secondary">
               {{ t('admin.proxies.dataImport') }}
             </button>
-            <button @click="showExportDataDialog = true" class="btn btn-secondary">
+            <button @click="showExportDataDialog = true" :disabled="selectedCount > 0 && selectedManualProxyIds.length === 0" class="btn btn-secondary">
               {{ selectedCount > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport') }}
             </button>
             <button @click="showCreateModal = true" class="btn btn-primary">
@@ -86,6 +86,7 @@
             </button>
           </div>
         </div>
+        <OvhIPv6Control ref="ovhIPv6Control" @changed="loadProxies" />
       </template>
 
       <template #table>
@@ -119,8 +120,11 @@
             />
           </template>
 
-          <template #cell-name="{ value }">
-            <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+          <template #cell-name="{ row, value }">
+            <div class="flex flex-col items-start gap-1">
+              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span v-if="row.managed_ipv6" class="badge badge-primary" :title="t('ovhIPv6.managedHint')">{{ t('ovhIPv6.source') }}</span>
+            </div>
           </template>
 
           <template #cell-protocol="{ value }">
@@ -135,8 +139,8 @@
 
           <template #cell-address="{ row }">
             <div class="flex items-center gap-1.5">
-              <code class="code text-xs">{{ row.host }}:{{ row.port }}</code>
-              <div class="relative">
+              <code class="code text-xs">{{ row.managed_ipv6 || `${row.host}:${row.port}` }}</code>
+              <div v-if="!row.managed_ipv6" class="relative">
                 <button
                   type="button"
                   class="rounded p-0.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400"
@@ -165,7 +169,8 @@
           </template>
 
           <template #cell-auth="{ row }">
-            <div v-if="row.username || row.password" class="flex items-center gap-1.5">
+            <span v-if="row.managed_ipv6" class="text-xs text-gray-500 dark:text-gray-400" :title="t('ovhIPv6.managedHint')">{{ t('ovhIPv6.exclusive') }}</span>
+            <div v-else-if="row.username || row.password" class="flex items-center gap-1.5">
               <div class="flex flex-col text-xs">
                 <span v-if="row.username" class="text-gray-700 dark:text-gray-200">{{ row.username }}</span>
                 <span v-if="row.password" class="font-mono text-gray-500 dark:text-gray-400">
@@ -214,7 +219,8 @@
             >
               {{ t('admin.groups.accountsCount', { count: 0 }) }}
             </span>
-            <button type="button" class="mt-1 block text-xs text-primary-600" @click="openBindingLimits([row.id])">{{ t('accountRefill.bindingLimit') }}: {{ bindingLimits[row.id]?.max_accounts ?? '—' }}</button>
+            <span v-if="row.managed_ipv6" class="mt-1 block text-xs text-gray-500 dark:text-gray-400" :title="t('ovhIPv6.managedHint')">{{ t('ovhIPv6.fixedBindingLimit') }}</span>
+            <button v-else type="button" class="mt-1 block text-xs text-primary-600" @click="openBindingLimits([row.id])">{{ t('accountRefill.bindingLimit') }}: {{ bindingLimits[row.id]?.max_accounts ?? '—' }}</button>
           </template>
 
           <template #cell-latency="{ row }">
@@ -328,6 +334,7 @@
                 <span class="text-xs">{{ t('admin.proxies.qualityCheck') }}</span>
               </button>
               <button
+                v-if="!row.managed_ipv6"
                 @click="handleEdit(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
@@ -335,6 +342,7 @@
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
               <button
+                v-if="!row.managed_ipv6"
                 @click="handleDelete(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
@@ -826,7 +834,7 @@
     <ConfirmDialog
       :show="showBatchDeleteDialog"
       :title="t('admin.proxies.batchDelete')"
-      :message="t('admin.proxies.batchDeleteConfirm', { count: selectedCount })"
+      :message="t('admin.proxies.batchDeleteConfirm', { count: selectedManualProxyIds.length })"
       :confirm-text="t('common.delete')"
       :cancel-text="t('common.cancel')"
       :danger="true"
@@ -989,6 +997,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
+import OvhIPv6Control from '@/components/admin/proxy/OvhIPv6Control.vue'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -1049,12 +1058,16 @@ const editStatusOptions = computed(() => [
 ])
 
 const proxies = ref<Proxy[]>([])
+const managedProxyIds = reactive(new Set<number>())
+const ovhIPv6Control = ref<InstanceType<typeof OvhIPv6Control> | null>(null)
 const bindingLimits = ref<Record<number, ProxyBindingLimit>>({})
 const showBindingLimits = ref(false), bindingLimitSaving = ref(false), bindingLimitError = ref('')
 const bindingLimitIDs = ref<number[]>([]), bindingLimitDraft = ref(1)
 const openBindingLimits = (ids: number[]) => {
-  bindingLimitIDs.value = [...ids]
-  bindingLimitDraft.value = ids.length === 1 ? (bindingLimits.value[ids[0]!]?.max_accounts ?? 1) : 1
+  const manualIds = ids.filter(id => !managedProxyIds.has(id))
+  if (manualIds.length === 0) return
+  bindingLimitIDs.value = manualIds
+  bindingLimitDraft.value = manualIds.length === 1 ? (bindingLimits.value[manualIds[0]!]?.max_accounts ?? 1) : 1
   bindingLimitError.value = ''; showBindingLimits.value = true
 }
 const saveBindingLimits = async () => {
@@ -1118,6 +1131,7 @@ const {
   rows: proxies,
   getId: (proxy) => proxy.id
 })
+const selectedManualProxyIds = computed(() => [...selectedProxyIds.value].filter(id => !managedProxyIds.has(id)))
 useSwipeSelect(proxyTableRef, {
   isSelected,
   select,
@@ -1183,7 +1197,7 @@ const loadBackupProxyOptions = async () => {
 }
 const backupProxyOptions = (excludeId?: number) =>
   allProxiesForBackup.value
-    .filter(p => p.id !== excludeId)
+    .filter(p => p.id !== excludeId && !p.managed_ipv6)
     .map(p => ({ label: `${p.name} (${p.host}:${p.port})`, value: p.id }))
 
 let abortController: AbortController | null = null
@@ -1234,12 +1248,17 @@ const loadProxies = async () => {
       return
     }
     proxies.value = response.items
+    for (const proxy of response.items) {
+      if (proxy.managed_ipv6) managedProxyIds.add(proxy.id)
+      else managedProxyIds.delete(proxy.id)
+    }
     pagination.total = response.total
     pagination.pages = response.pages
     bindingLimits.value = {}
-    if (response.items.length) {
+    const manualIds = response.items.filter(p => !p.managed_ipv6).map(p => p.id)
+    if (manualIds.length) {
       try {
-        const limits = await proxyBindingLimitsAPI.get(response.items.map(p => p.id), currentAbortController.signal)
+        const limits = await proxyBindingLimitsAPI.get(manualIds, currentAbortController.signal)
         if (abortController === currentAbortController && !currentAbortController.signal.aborted) bindingLimits.value = Object.fromEntries(limits.map(item => [item.proxy_id, item]))
       } catch (e) { if (!isAbortError(e)) appStore.showError(t('accountRefill.bindingLimitError')) }
     }
@@ -1255,6 +1274,11 @@ const loadProxies = async () => {
       abortController = null
     }
   }
+}
+
+const refreshProxies = () => {
+  loadProxies()
+  ovhIPv6Control.value?.refresh?.()
 }
 
 const handleFilterChange = () => {
@@ -1451,6 +1475,7 @@ const handleCreateProxy = async () => {
 }
 
 const handleEdit = (proxy: Proxy) => {
+  if (proxy.managed_ipv6) return
   editingProxy.value = proxy
   editForm.name = proxy.name
   editForm.protocol = proxy.protocol
@@ -1476,7 +1501,7 @@ const closeEditModal = () => {
 }
 
 const handleUpdateProxy = async () => {
-  if (!editingProxy.value) return
+  if (!editingProxy.value || editingProxy.value.managed_ipv6) return
   if (!editForm.name.trim()) {
     appStore.showError(t('admin.proxies.nameRequired'))
     return
@@ -1957,11 +1982,12 @@ const formatExportTimestamp = () => {
 
 const handleExportData = async () => {
   if (exportingData.value) return
+  if (selectedCount.value > 0 && selectedManualProxyIds.value.length === 0) return
   exportingData.value = true
   try {
     const dataPayload = await adminAPI.proxies.exportData(
       selectedCount.value > 0
-        ? { ids: Array.from(selectedProxyIds.value) }
+        ? { ids: selectedManualProxyIds.value }
         : {
             filters: buildProxyQueryFilters()
           }
@@ -1985,6 +2011,7 @@ const handleExportData = async () => {
 }
 
 const handleDelete = (proxy: Proxy) => {
+  if (proxy.managed_ipv6) return
   if ((proxy.account_count || 0) > 0) {
     appStore.showError(t('admin.proxies.deleteBlockedInUse'))
     return
@@ -1994,14 +2021,14 @@ const handleDelete = (proxy: Proxy) => {
 }
 
 const openBatchDelete = () => {
-  if (selectedCount.value === 0) {
+  if (selectedManualProxyIds.value.length === 0) {
     return
   }
   showBatchDeleteDialog.value = true
 }
 
 const confirmDelete = async () => {
-  if (!deletingProxy.value) return
+  if (!deletingProxy.value || deletingProxy.value.managed_ipv6) return
 
   try {
     await adminAPI.proxies.delete(deletingProxy.value.id)
@@ -2017,7 +2044,7 @@ const confirmDelete = async () => {
 }
 
 const confirmBatchDelete = async () => {
-  const ids = Array.from(selectedProxyIds.value)
+  const ids = selectedManualProxyIds.value
   if (ids.length === 0) {
     showBatchDeleteDialog.value = false
     return

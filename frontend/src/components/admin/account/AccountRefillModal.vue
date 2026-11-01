@@ -136,10 +136,20 @@
           <p>{{ view.lease_sync_message || t('accountRefill.leaseSyncHint') }}</p>
           <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.leaseSyncAt') }}: {{ date(view.lease_sync_at) }}</p>
         </div>
-        <div v-if="view.capacity_observation && view.config.mode === 'capacity'" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" aria-live="polite">
+        <div v-if="view.capacity_observation && view.config.mode === 'capacity'" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" aria-live="polite" data-testid="refill-current-observation">
           <p>{{ t('accountRefill.capacityObservation') }}: {{ t(`accountRefill.observation_${view.capacity_observation.status}`) }}</p>
-          <p class="mt-1 tabular-nums">{{ t('accountRefill.observationProgress', { elapsed: view.capacity_observation.sustained_seconds, required: view.capacity_observation.required_seconds, utilization: number(view.capacity_observation.utilization_percent) }) }}</p>
+          <p class="mt-1 tabular-nums">{{ t(view.capacity_observation.no_capacity ? 'accountRefill.observationNoCapacity' : 'accountRefill.observationProgress', { elapsed: view.capacity_observation.sustained_seconds, required: view.capacity_observation.required_seconds, utilization: number(view.capacity_observation.utilization_percent) }) }}</p>
           <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.lastSample') }}: {{ date(view.capacity_observation.last_sample_at) }}</p>
+        </div>
+        <div v-if="view.forecast_observation && view.config.mode === 'capacity'" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" aria-live="polite" data-testid="refill-forecast-observation">
+          <p>{{ t('accountRefill.forecastObservation') }}: {{ t(`accountRefill.observation_${view.forecast_observation.status}`) }}</p>
+          <template v-if="!view.evaluation.error">
+            <p class="mt-1 tabular-nums">{{ t('accountRefill.forecastCapacity', { count: number(view.evaluation.forecast_accounts), current: number(view.evaluation.capacity), projected: number(view.evaluation.forecast_capacity), pending: number(view.evaluation.pending_capacity), inUse: number(view.evaluation.in_use) }) }}</p>
+            <p v-if="forecastAccounts.length" class="mt-1 break-words text-xs text-gray-500">{{ t('accountRefill.forecastAccounts') }}: {{ forecastAccounts.map(account => `#${account.id} ${account.name}`).join('、') }}</p>
+            <p class="mt-1 tabular-nums">{{ t(view.forecast_observation.no_capacity ? 'accountRefill.observationNoCapacity' : 'accountRefill.forecastProgress', { elapsed: view.forecast_observation.sustained_seconds, required: view.forecast_observation.required_seconds, utilization: number(view.forecast_observation.utilization_percent) }) }}</p>
+          </template>
+          <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.forecastHint') }}</p>
+          <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.lastSample') }}: {{ date(view.forecast_observation.last_sample_at) }}</p>
         </div>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4"><div v-for="item in usageItems" :key="item.key" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800"><div class="text-xs text-gray-500">{{ t(`accountRefill.${item.key}`) }}</div><div class="mt-1 font-semibold tabular-nums">{{ number(item.value) }}</div></div></div>
         <p class="text-xs leading-5 text-gray-500">{{ t('accountRefill.progressHint') }}</p>
@@ -264,6 +274,7 @@ const ruleFields = computed<{ key: NumericKey; min: number; max: number; step?: 
 ])
 const deliveryFields = [{ key: 'priority', max: 2147483647, step: 1 }, { key: 'load_factor', max: 10000, step: 1 }, { key: 'rate_multiplier', max: 1000, step: 0.01 }] as const
 const number = (v: number | null | undefined) => v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: 8 })
+const forecastAccounts = computed(() => view.value?.evaluation.accounts.filter(account => account.forecast_loss) || [])
 const date = (v: string | null | undefined) => !v || v.startsWith('0001') ? '—' : new Date(v).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`accountRefill.states.${state}`) : state
 const elapsed = (job: RefillJob) => { const seconds = Math.max(0, Math.floor(((job.finished_at ? Date.parse(job.finished_at) : now.value) - Date.parse(job.created_at)) / 1000)); return `${Math.floor(seconds / 60)}m ${seconds % 60}s` }

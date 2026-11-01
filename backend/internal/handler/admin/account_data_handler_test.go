@@ -317,3 +317,121 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
 }
+
+func TestExportDataManagedIPv6RequiresNewAllocation(t *testing.T) {
+	for _, query := range []string{"", "?include_proxies=false"} {
+		t.Run(query, func(t *testing.T) {
+			router, adminSvc := setupAccountDataRouter()
+			manualID, managedID, reservedID := int64(1), int64(2), int64(3)
+			adminSvc.proxies = []service.Proxy{
+				{ID: manualID, Name: "manual", Protocol: "http", Host: "proxy.example", Port: 8080, Username: "manual-user", Password: "manual-secret", Status: service.StatusActive},
+				{ID: managedID, Name: "managed", Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "lease-user", Password: "managed-secret", ManagedIPv6: "2001:db8::2", Status: service.StatusActive},
+				{ID: reservedID, Name: "reserved", Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "ovh6_lease", Password: "reserved-secret", Status: service.StatusActive},
+			}
+			adminSvc.accounts = nil
+			for _, proxyID := range []*int64{&manualID, &managedID, &reservedID} {
+				adminSvc.accounts = append(adminSvc.accounts, service.Account{
+					ID: *proxyID, Name: "account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+					Credentials: map[string]any{"token": "account-secret"}, ProxyID: proxyID, Status: service.StatusActive,
+				})
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/data"+query, nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var resp proxyDataResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Len(t, resp.Data.Accounts, 3)
+			if query == "" {
+				require.Len(t, resp.Data.Proxies, 1)
+				require.Equal(t, "manual-secret", resp.Data.Proxies[0].Password)
+				require.NotNil(t, resp.Data.Accounts[0].ProxyKey)
+			} else {
+				require.Empty(t, resp.Data.Proxies)
+				require.Nil(t, resp.Data.Accounts[0].ProxyKey)
+			}
+			for _, account := range resp.Data.Accounts {
+				require.Equal(t, "account-secret", account.Credentials["token"])
+			}
+			for _, account := range resp.Data.Accounts[1:] {
+				require.NotNil(t, account.ProxyKey)
+				require.Equal(t, managedIPv6DataProxyKey, *account.ProxyKey)
+			}
+			for _, forbidden := range []string{"lease-user", "managed-secret", "ovh6_lease", "reserved-secret", "egress.internal", "2001:db8::2"} {
+				require.NotContains(t, rec.Body.String(), forbidden)
+			}
+
+			// A full backup round-trip must preserve manual accounts while refusing
+			// managed accounts, including when the user omitted proxy credentials.
+			body, err := json.Marshal(DataImportRequest{Data: resp.Data})
+			require.NoError(t, err)
+			importRec := httptest.NewRecorder()
+			importReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+			importReq.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(importRec, importReq)
+			require.Equal(t, http.StatusOK, importRec.Code)
+			var imported proxyImportResponse
+			require.NoError(t, json.Unmarshal(importRec.Body.Bytes(), &imported))
+			require.Equal(t, 1, imported.Data.AccountCreated)
+			require.Equal(t, 2, imported.Data.AccountFailed)
+			require.Len(t, adminSvc.createdAccounts, 1)
+			for _, problem := range imported.Data.Errors {
+				require.Equal(t, managedIPv6ImportError, problem.Message)
+			}
+		})
+	}
+}
+
+func TestImportDataRejectsManagedIPv6References(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		key     string
+		proxies []DataProxy
+	}{
+		{name: "export marker", key: managedIPv6DataProxyKey},
+		{name: "existing lease without proxy import", key: "socks5|egress.internal|1080|ovh6_lease|reserved-secret"},
+		{name: "existing managed metadata", key: "socks5|egress.internal|1080|lease-user|managed-secret"},
+		{name: "forged proxy fields with lease key", key: "socks5|egress.internal|1080|ovh6_lease|reserved-secret", proxies: []DataProxy{
+			{Name: "forged", Protocol: "http", Host: "manual.example", Port: 8080, Username: "manual", ProxyKey: "socks5|egress.internal|1080|ovh6_lease|reserved-secret"},
+		}},
+		{name: "retired lease absent from database", key: "socks5|egress.internal|1080|ovh6_retired|retired-secret"},
+		{name: "alias for managed proxy", key: "custom-proxy-alias", proxies: []DataProxy{
+			{Name: "alias", Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "lease-user", Password: "managed-secret", ProxyKey: "custom-proxy-alias"},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router, adminSvc := setupAccountDataRouter()
+			adminSvc.proxies = []service.Proxy{
+				{ID: 1, Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "ovh6_lease", Password: "reserved-secret"},
+				{ID: 2, Protocol: "socks5", Host: "egress.internal", Port: 1080, Username: "lease-user", Password: "managed-secret", ManagedIPv6: "2001:db8::2"},
+			}
+			proxies := append([]DataProxy{}, test.proxies...)
+			body, err := json.Marshal(DataImportRequest{Data: DataPayload{
+				Proxies: proxies,
+				Accounts: []DataAccount{{Name: "account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+					Credentials: map[string]any{"token": "secret"}, ProxyKey: &test.key}},
+			}})
+			require.NoError(t, err)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var resp proxyImportResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Zero(t, resp.Data.AccountCreated)
+			require.Equal(t, 1, resp.Data.AccountFailed)
+			require.Zero(t, resp.Data.ProxyCreated)
+			require.Zero(t, resp.Data.ProxyReused)
+			require.Equal(t, len(test.proxies), resp.Data.ProxyFailed)
+			require.Empty(t, adminSvc.createdAccounts)
+			require.Empty(t, adminSvc.createdProxies)
+			require.Empty(t, adminSvc.updatedProxyIDs)
+			for _, problem := range resp.Data.Errors {
+				require.Equal(t, managedIPv6ImportError, problem.Message)
+			}
+			require.NotContains(t, rec.Body.String(), "reserved-secret")
+			require.NotContains(t, rec.Body.String(), "managed-secret")
+			require.NotContains(t, rec.Body.String(), "retired-secret")
+		})
+	}
+}

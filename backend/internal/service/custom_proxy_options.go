@@ -20,6 +20,9 @@ func (s *adminServiceImpl) ListProxyOptions(ctx context.Context, page, pageSize 
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := s.decorateManagedProxyList(ctx, proxies); err != nil {
+		return nil, 0, err
+	}
 	return proxies, result.Total, nil
 }
 
@@ -31,5 +34,12 @@ func (s *adminServiceImpl) SampleProxyOptions(ctx context.Context, search string
 	if !ok {
 		return nil, 0, fmt.Errorf("随机代理候选查询不可用")
 	}
-	return repo.SampleOptions(ctx, strings.TrimSpace(search))
+	proxies, total, err := repo.SampleOptions(ctx, strings.TrimSpace(search))
+	if err != nil {
+		return nil, 0, err
+	}
+	if err = s.decorateManagedProxyList(ctx, proxies); err != nil {
+		return nil, 0, err
+	}
+	return proxies, total, nil
 }

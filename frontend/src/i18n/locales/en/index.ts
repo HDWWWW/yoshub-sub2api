@@ -1,4 +1,5 @@
 import accountRefill from './accountRefill'
+import ovhIPv6 from './ovhIPv6'
 import adminAccessKeys from './adminAccessKeys'
 import happyFirstToken from './happyFirstToken'
 import landing from './landing'
@@ -11,6 +12,7 @@ import misc from './misc'
 
 export default {
   accountRefill,
+  ovhIPv6,
   happyFirstToken,
   adminAccessKeys,
   ...landing,

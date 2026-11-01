@@ -29,16 +29,32 @@ func (s *ProxyExpiryService) Start() {
 		defer s.wg.Done()
 		ticker := time.NewTicker(s.interval)
 		defer ticker.Stop()
+		ipv6Ticker := time.NewTicker(5 * time.Second)
+		defer ipv6Ticker.Stop()
 		s.runOnce()
 		for {
 			select {
 			case <-ticker.C:
 				s.runOnce()
+			case <-ipv6Ticker.C:
+				s.syncIPv6()
 			case <-s.stopCh:
 				return
 			}
 		}
 	}()
+}
+
+func (s *ProxyExpiryService) syncIPv6() {
+	r, ok := s.proxyRepo.(interface{ SyncOVHIPv6(context.Context) error })
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := r.SyncOVHIPv6(ctx); err != nil {
+		log.Printf("[OVHIPv6] reconciliation failed: %v", err)
+	}
 }
 
 func (s *ProxyExpiryService) Stop() {

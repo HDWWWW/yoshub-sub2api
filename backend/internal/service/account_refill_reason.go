@@ -15,6 +15,13 @@ func accountRefillReasonDetail(c AccountRefillConfig, e AccountRefillEvaluation)
 	case "并发利用率超过目标":
 		utilization := float64(e.InUse) * 100 / float64(refillMax(1, e.Capacity))
 		return fmt.Sprintf("运行中并发 %d / %d（利用率 %.2f%%），达到设定 %d%%，持续观察已满 %d 秒。", e.InUse, e.Capacity, utilization, c.TargetConcurrency, c.ConcurrencySustainSeconds)
+	case refillForecastReason:
+		capacity := e.ForecastCapacity + e.PendingCapacity
+		utilization := "无剩余可用容量"
+		if capacity > 0 {
+			utilization = fmt.Sprintf("预计利用率 %.2f%%", float64(e.InUse)*100/float64(capacity))
+		}
+		return fmt.Sprintf("%d 个账号已达剩余额度下限或将在 %d 分钟内到租期；保留全部运行中并发 %d，容量由 %d 预判为 %d，另抵扣在途容量 %d（%s），达到设定 %d%%，持续观察已满 %d 秒。原账号调度不变。", e.ForecastAccounts, c.LeadMinutes, e.InUse, e.Capacity, e.ForecastCapacity, e.PendingCapacity, utilization, c.TargetConcurrency, c.ConcurrencySustainSeconds)
 	case "健康储备不足", "账号临期，提前补充储备":
 		counts := map[string]int{}
 		for _, account := range e.Accounts {

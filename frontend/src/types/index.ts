@@ -966,6 +966,7 @@ export interface ClaudeModel {
 
 export interface Proxy {
   id: number
+  managed_ipv6?: string
   name: string
   protocol: ProxyProtocol
   host: string

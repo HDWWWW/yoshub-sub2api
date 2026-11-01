@@ -1,0 +1,22 @@
+export default {
+  title: 'OVH IPv6 auto allocation',
+  enabled: 'Enabled',
+  disabled: 'Disabled',
+  loading: 'Loading',
+  saving: 'Saving',
+  enabledHint: 'Random proxy selection assigns a new IPv6 address to the account. Only assigned addresses appear in this list.',
+  disabledHint: 'Random proxy selection uses the manually imported proxy pool. Existing account bindings stay unchanged.',
+  lifecycleHint: 'Each IPv6 serves one account. Deleting the account or changing its proxy permanently retires the old address.',
+  notConfigured: 'OVH IPv6 is not configured',
+  unavailable: 'OVH IPv6 is currently unavailable',
+  loadFailed: 'Failed to load OVH IPv6 status',
+  saveFailed: 'Failed to save OVH IPv6 auto allocation settings',
+  refresh: 'Refresh IPv6 status',
+  prefix: 'Prefix',
+  bound: '{count} assigned',
+  source: 'OVH IPv6',
+  exclusive: 'Dedicated to one account',
+  managedHint: 'This IPv6 is managed with its account and permanently retired when the account is deleted or its proxy is changed.',
+  fixedBindingLimit: 'Account limit: 1 (fixed)',
+  manualBindingOnly: 'Only change binding limits for manually imported proxies'
+}

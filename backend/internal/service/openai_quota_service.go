@@ -504,9 +504,13 @@ func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID 
 		case account.Proxy != nil:
 			proxyURL = account.Proxy.URL()
 		case s.proxyRepo != nil:
-			if proxy, perr := s.proxyRepo.GetByID(ctx, *account.ProxyID); perr == nil && proxy != nil {
-				proxyURL = proxy.URL()
+			proxy, perr := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+			if perr != nil || proxy == nil {
+				return "", "", "", false, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_ACCOUNT_PROXY_UNAVAILABLE", "account proxy unavailable")
 			}
+			proxyURL = proxy.URL()
+		default:
+			return "", "", "", false, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_ACCOUNT_PROXY_UNAVAILABLE", "account proxy unavailable")
 		}
 	}
 

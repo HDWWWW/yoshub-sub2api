@@ -1,0 +1,10 @@
+{
+  "prefix": "2604:2dc0:205:b900::/56",
+  "interface": "enp2s0f0np0",
+  "proxy_listen": "172.22.0.1:11880",
+  "control_listen": "172.22.0.1:11881",
+  "advertise_host": "172.22.0.1",
+  "control_token": "REPLACE_WITH_A_RANDOM_SECRET_OF_AT_LEAST_32_CHARACTERS",
+  "state_dir": "/var/lib/yoshub-ipv6-egress",
+  "probe_url": "https://auth.openai.com/.well-known/openid-configuration"
+}

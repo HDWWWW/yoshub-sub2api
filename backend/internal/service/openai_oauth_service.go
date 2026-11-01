@@ -345,11 +345,15 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 	}
 
 	var proxyURL string
-	if account.ProxyID != nil && s.proxyRepo != nil {
-		proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
-		if err == nil && proxy != nil {
-			proxyURL = proxy.URL()
+	if account.ProxyID != nil {
+		if s.proxyRepo == nil {
+			return nil, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_ACCOUNT_PROXY_UNAVAILABLE", "account proxy unavailable")
 		}
+		proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+		if err != nil || proxy == nil {
+			return nil, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_ACCOUNT_PROXY_UNAVAILABLE", "account proxy unavailable")
+		}
+		proxyURL = proxy.URL()
 	}
 
 	accessToken := account.GetCredential("access_token")

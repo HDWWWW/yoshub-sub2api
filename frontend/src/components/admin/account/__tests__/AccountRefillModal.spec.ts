@@ -30,6 +30,33 @@ function responseWithJobs(count: number) {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('separates live utilization from departure observation without submitting an order', async () => {
+  const observation = { since: null, last_sample_at: '2026-11-01T04:00:00Z', sustained_seconds: 30, required_seconds: 30, samples: 31, no_capacity: false }
+  const data = {
+   ...response(),
+   capacity_observation: { ...observation, status: 'below', ready: false, utilization_percent: 45 },
+   forecast_observation: { ...observation, status: 'ready', ready: true, utilization_percent: 90 },
+   evaluation: { ...response().evaluation, in_use: 90, capacity: 200, forecast_capacity: 100, pending_capacity: 0, forecast_accounts: 1,
+    accounts: [{ id: 7, name: 'reaching floor', state: 'ready', forecast_loss: true }, { id: 8, name: 'healthy reserve', state: 'ready', forecast_loss: false }] }
+  }
+  get.mockResolvedValue(data)
+  const w = await open()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
+  const live = w.get('[data-testid="refill-current-observation"]')
+  const forecast = w.get('[data-testid="refill-forecast-observation"]')
+  expect(live.text()).toContain('accountRefill.observation_below')
+  expect(forecast.text()).toContain('accountRefill.observation_ready')
+  expect(forecast.text()).toContain('accountRefill.forecastProgress')
+  expect(forecast.text()).toContain('#7 reaching floor')
+  expect(forecast.text()).not.toContain('#8 healthy reserve')
+  get.mockResolvedValue({ ...data, forecast_observation: { ...data.forecast_observation, no_capacity: true } })
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(forecast.text()).toContain('accountRefill.observationNoCapacity')
+  expect(manual).not.toHaveBeenCalled()
+  expect(check).not.toHaveBeenCalled()
+  expect(save).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it('shows saved trigger notes and handles historical records without inventing a reason', async () => {
   const data = responseWithJobs(3)
   data.jobs[1]!.reason = '并发利用率超过目标'; data.jobs[1]!.reason_detail = ''

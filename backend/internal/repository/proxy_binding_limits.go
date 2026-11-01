@@ -51,6 +51,15 @@ func (r *proxyRepository) SetProxyBindingLimits(ctx context.Context, ids []int64
 	if maxAccounts < 1 || maxAccounts > 100000 {
 		return fmt.Errorf("invalid proxy binding limit")
 	}
+	if maxAccounts != 1 {
+		managed, err := r.ManagedIPv6Addresses(ctx, ids)
+		if err != nil {
+			return err
+		}
+		if len(managed) > 0 {
+			return fmt.Errorf("OVH IPv6 固定一号一 IP，绑定上限只能为 1")
+		}
+	}
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
 		return err

@@ -118,6 +118,7 @@ type AccountRefillView struct {
 	LeaseSyncAt               *time.Time                       `json:"lease_sync_at"`
 	LeaseSyncMessage          string                           `json:"lease_sync_message"`
 	CapacityObservation       AccountRefillCapacityObservation `json:"capacity_observation"`
+	ForecastObservation       AccountRefillCapacityObservation `json:"forecast_observation"`
 	Config                    AccountRefillConfig              `json:"config"`
 	Revision                  int64                            `json:"revision"`
 	TokenConfigured           bool                             `json:"token_configured"`
@@ -170,7 +171,8 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: state.Jobs, Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: refillNextPlan(state.Config, state.RotationCursor),
-		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now())}, nil
+		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),
+		ForecastObservation: s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
 }
 
 func saveRefillState(state *accountRefillState, save func(string) error) error {
@@ -533,31 +535,15 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 			return persist()
 		}
-		if state.Evaluation.Reason == "并发利用率超过目标" {
-			// Re-read immediately before reserving a paid order. Slow provider calls
-			// must not turn an already-ended burst into a purchase.
-			if err := s.evaluate(ctx, &state, time.Now()); err != nil {
-				s.resetCapacityObservation()
-				state.Message = err.Error()
-				return persist()
-			}
-			if !refillCapacityHigh(state.Config, state.Evaluation) {
-				s.resetCapacityObservation()
-				state.Message = "并发已回落，重新观察"
-				return persist()
-			}
-			if state.Evaluation.Needed <= 0 || !s.capacityObservation(state.Config, state.Revision, time.Now()).Ready {
-				state.Message = "并发观察尚未连续达标，等待下次检查"
-				return persist()
-			}
-		}
 		graceMinutes := state.Config.ImportExpiryGraceMinutes
 		// Provider calls may be slow. Every trigger rechecks local demand just
 		// before reserving money, so a stale quota snapshot cannot cause a refill.
 		if err := s.evaluate(ctx, &state, time.Now()); err != nil {
+			s.resetCapacityObservation()
 			state.Message = err.Error()
 			return persist()
 		}
+		s.invalidateCapacityObservations(state.Config, state.Evaluation)
 		if state.Config.Mode == "interval" {
 			state.Evaluation.Needed = refillMin(state.IntervalRemaining, refillMax(0, state.Config.MaxReady-state.Evaluation.Ready-state.Evaluation.Pending), refillMax(0, state.Config.MaxInFlight-state.Evaluation.Pending))
 			state.Evaluation.Reason = "定时补号"
@@ -566,8 +552,11 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = state.Evaluation.Reason
 			return persist()
 		}
-		if state.Evaluation.Reason == "并发利用率超过目标" && !s.capacityObservation(state.Config, state.Revision, time.Now()).Ready {
+		if refillNeedsCapacityObservation(state.Evaluation.Reason) && !s.refillObservationReady(state.Config, state.Revision, state.Evaluation, time.Now()) {
 			state.Message = "并发观察尚未连续达标，等待下次检查"
+			if state.Evaluation.Reason == refillForecastReason {
+				state.Message = "退出预判尚未连续达标，等待下次检查"
+			}
 			return persist()
 		}
 		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
@@ -893,6 +882,9 @@ func (s *AccountRefillService) selectProxy(ctx context.Context, d AccountRefillD
 	for _, p := range proxies {
 		if !p.IsExpired(now) {
 			if d.ProxyMode == "specified" && d.ProxyID != nil && p.ID == *d.ProxyID {
+				if p.ManagedIPv6 != "" || strings.HasPrefix(p.Username, "ovh6_") {
+					return nil, errors.New("OVH IPv6 已绑定独占账号，请选择随机代理以分配全新地址")
+				}
 				id := p.ID
 				return &id, nil
 			}

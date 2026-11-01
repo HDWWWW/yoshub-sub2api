@@ -38,7 +38,7 @@
             />
           </div>
           <button
-            v-if="proxies.length > 0"
+            v-if="selectableProxies.length > 0"
             type="button"
             @click.stop="handleBatchTest"
             :disabled="batchTesting"
@@ -85,6 +85,7 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="truncate font-medium">{{ proxy.name }}</span>
+                <span v-if="proxy.managed_ipv6" class="badge badge-primary">{{ t('ovhIPv6.source') }}</span>
                 <!-- Account count badge -->
                 <span
                   v-if="proxy.account_count !== undefined"
@@ -114,7 +115,7 @@
                 </template>
               </div>
               <div class="truncate text-xs text-gray-500 dark:text-gray-400">
-                {{ proxy.protocol }}://{{ proxy.host }}:{{ proxy.port }}
+                {{ proxy.managed_ipv6 || `${proxy.protocol}://${proxy.host}:${proxy.port}` }}
               </div>
             </div>
 
@@ -220,18 +221,20 @@ const selectedLabel = computed(() => {
     return t('admin.accounts.noProxy')
   }
   const proxy = selectedProxy.value
-  return `${proxy.name} (${proxy.protocol}://${proxy.host}:${proxy.port})`
+  return `${proxy.name} (${proxy.managed_ipv6 || `${proxy.protocol}://${proxy.host}:${proxy.port}`})`
 })
+
+const selectableProxies = computed(() => props.proxies.filter(proxy => !proxy.managed_ipv6 || proxy.id === props.modelValue))
 
 const filteredProxies = computed(() => {
   if (!searchQuery.value) {
-    return props.proxies
+    return selectableProxies.value
   }
   const query = searchQuery.value.toLowerCase()
-  return props.proxies.filter((proxy) => {
+  return selectableProxies.value.filter((proxy) => {
     const name = proxy.name.toLowerCase()
     const host = proxy.host.toLowerCase()
-    return name.includes(query) || host.includes(query)
+    return name.includes(query) || host.includes(query) || proxy.managed_ipv6?.toLowerCase().includes(query)
   })
 })
 
@@ -253,6 +256,7 @@ watch(() => props.disabled, (disabled) => {
 })
 
 const selectOption = (value: number | null) => {
+  if (value !== null && !selectableProxies.value.some(proxy => proxy.id === value)) return
   emit('update:modelValue', value)
   isOpen.value = false
   searchQuery.value = ''
@@ -276,12 +280,12 @@ const handleTestProxy = async (proxy: Proxy) => {
 }
 
 const handleBatchTest = async () => {
-  if (batchTesting.value || props.proxies.length === 0) return
+  if (batchTesting.value || selectableProxies.value.length === 0) return
 
   batchTesting.value = true
 
   // Test all proxies in parallel
-  const testPromises = props.proxies.map(handleTestProxy)
+  const testPromises = selectableProxies.value.map(handleTestProxy)
 
   await Promise.all(testPromises)
   batchTesting.value = false

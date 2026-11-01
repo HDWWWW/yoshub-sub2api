@@ -76,6 +76,11 @@ export interface ManualRefillRequest {
   plan: string
   revision: number
 }
+export interface RefillCapacityObservation {
+  status: string; since: string | null; last_sample_at: string | null
+  sustained_seconds: number; required_seconds: number; utilization_percent: number; samples: number; ready: boolean
+  no_capacity?: boolean
+}
 export interface RefillView {
 	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_plan: string }[]
 	rotation_cursor: number
@@ -84,10 +89,8 @@ export interface RefillView {
   notification_status: { at: string | null; message: string }
   lease_sync_at: string | null
   lease_sync_message: string
-  capacity_observation: {
-    status: string; since: string | null; last_sample_at: string | null
-    sustained_seconds: number; required_seconds: number; utilization_percent: number; samples: number; ready: boolean
-  }
+  capacity_observation: RefillCapacityObservation
+  forecast_observation?: RefillCapacityObservation
   config: RefillConfig
   revision: number
   token_configured: boolean
@@ -101,7 +104,8 @@ export interface RefillView {
     error?: string
     checked_at: string; ready: number; healthy: number; expiring: number; pending: number
     in_use: number; capacity: number; needed: number; reason: string
-    accounts: { id: number; name: string; state: string; plan?: string; min_remaining_5h?: number; min_remaining_7d?: number; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number }[]
+    pending_capacity?: number; forecast_accounts?: number; forecast_capacity?: number; forecast_ready?: number
+    accounts: { id: number; name: string; state: string; plan?: string; min_remaining_5h?: number; min_remaining_7d?: number; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number; forecast_loss?: boolean }[]
   }
   daily: { count: number; points: number; reserved_points: number; spent_points: number }
   next_check_at: string

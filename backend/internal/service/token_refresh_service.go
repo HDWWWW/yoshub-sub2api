@@ -1466,10 +1466,15 @@ func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *
 	}
 
 	var proxyURL string
-	if account.ProxyID != nil && s.proxyRepo != nil {
-		if p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && p != nil {
-			proxyURL = p.URL()
+	if account.ProxyID != nil {
+		if s.proxyRepo == nil {
+			return
 		}
+		p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+		if err != nil || p == nil {
+			return
+		}
+		proxyURL = p.URL()
 	}
 
 	mode := disableOpenAITraining(ctx, s.privacyClientFactory, token, proxyURL)
@@ -1511,10 +1516,15 @@ func (s *TokenRefreshService) ensureAntigravityPrivacy(ctx context.Context, acco
 	projectID, _ := account.Credentials["project_id"].(string)
 
 	var proxyURL string
-	if account.ProxyID != nil && s.proxyRepo != nil {
-		if p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && p != nil {
-			proxyURL = p.URL()
+	if account.ProxyID != nil {
+		if s.proxyRepo == nil {
+			return
 		}
+		p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+		if err != nil || p == nil {
+			return
+		}
+		proxyURL = p.URL()
 	}
 
 	mode := setAntigravityPrivacy(ctx, token, projectID, proxyURL)

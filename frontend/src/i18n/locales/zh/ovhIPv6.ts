@@ -1,0 +1,22 @@
+export default {
+  title: 'OVH IPv6 自动分配',
+  enabled: '已开启',
+  disabled: '已关闭',
+  loading: '正在读取',
+  saving: '正在保存',
+  enabledHint: '选择随机代理时，为账号分配一个全新 IPv6；只有绑定后的地址才显示在列表中。',
+  disabledHint: '选择随机代理时，使用手动导入的代理池。开关不影响账号已有的绑定。',
+  lifecycleHint: '每个 IPv6 仅供一个账号使用；删除账号或更换代理后，旧地址永久停用。',
+  notConfigured: 'OVH IPv6 尚未配置',
+  unavailable: 'OVH IPv6 暂不可用',
+  loadFailed: '读取 OVH IPv6 状态失败',
+  saveFailed: '保存 OVH IPv6 自动分配设置失败',
+  refresh: '刷新 IPv6 状态',
+  prefix: '地址段',
+  bound: '已绑定 {count} 个',
+  source: 'OVH IPv6',
+  exclusive: '账号独占',
+  managedHint: '此 IPv6 随账号自动管理，删除账号或更换代理后永久停用。',
+  fixedBindingLimit: '绑定上限：1（固定）',
+  manualBindingOnly: '仅调整手动导入代理的绑定上限'
+}

@@ -532,6 +532,8 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 	proxies := admin.Group("/proxies")
 	{
 		proxies.GET("", h.Admin.Proxy.List)
+		proxies.GET("/ovh-ipv6", h.Admin.Proxy.GetOVHIPv6)
+		proxies.PUT("/ovh-ipv6", h.Admin.Proxy.SetOVHIPv6)
 		proxies.POST("/binding-limits/query", h.Admin.Proxy.GetProxyBindingLimits)
 		proxies.PUT("/binding-limits", h.Admin.Proxy.SetProxyBindingLimits)
 		proxies.GET("/all", h.Admin.Proxy.GetAll)
