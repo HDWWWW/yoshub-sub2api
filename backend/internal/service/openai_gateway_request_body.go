@@ -1915,7 +1915,6 @@ func (e *OpenAIFastBlockedError) Error() string { return e.Message }
 //     维度天然互斥；同一 (scope, tier) 下若多条规则的 model whitelist
 //     发生重叠，admin 可通过规则顺序明确意图。因此采用 first-match 而
 //     非 BetaPolicy 那样的"block 覆盖 filter 覆盖 pass"语义。
-//
 // Group filtering removes tier selection, but never bypasses a global block.
 func (s *OpenAIGatewayService) evaluateOpenAIFastPolicy(ctx context.Context, account *Account, model, serviceTier string) (action, errMsg string) {
 	action, errMsg = s.evaluateGlobalOpenAIFastPolicy(ctx, account, model, serviceTier)
@@ -2094,11 +2093,10 @@ func openAIGroupForcedServiceTier(ctx context.Context, account *Account) string 
 // 入口没有这一前置步骤，pass 路径下若不在此处归一化，"fast" 就会被原样
 // 透传到 OpenAI 上游导致 400/拒绝。把归一化收敛到本函数，所有入口行为一致。
 func (s *OpenAIGatewayService) applyOpenAIFastPolicyToBody(ctx context.Context, account *Account, model string, body []byte) ([]byte, error) {
-	ctx = s.withRefillAutoFast(ctx, account)
 	if len(body) == 0 {
 		return body, nil
 	}
-	if tier := s.forcedOpenAIServiceTier(ctx, account); tier != "" {
+	if tier := openAIGroupForcedServiceTier(ctx, account); tier != "" {
 		updated, err := sjson.SetBytes(body, "service_tier", tier)
 		if err != nil {
 			return body, fmt.Errorf("force group service_tier on body: %w", err)
@@ -2212,7 +2210,6 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToWSResponseCreate(
 	model string,
 	frame []byte,
 ) ([]byte, *OpenAIFastBlockedError, error) {
-	ctx = s.withRefillAutoFast(ctx, account)
 	if len(frame) == 0 {
 		return frame, nil, nil
 	}
@@ -2229,7 +2226,7 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToWSResponseCreate(
 	if frameType != "response.create" {
 		return frame, nil, nil
 	}
-	if tier := s.forcedOpenAIServiceTier(ctx, account); tier != "" {
+	if tier := openAIGroupForcedServiceTier(ctx, account); tier != "" {
 		updated, err := sjson.SetBytes(frame, "service_tier", tier)
 		if err != nil {
 			return frame, nil, fmt.Errorf("force group service_tier in ws frame: %w", err)

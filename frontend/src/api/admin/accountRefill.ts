@@ -18,16 +18,7 @@ export interface RefillDeliveryConfig {
   fixed_expires_at: number | null
   model_mapping: Record<string, string>
 }
-export interface RefillAutoFastConfig {
-  enabled: boolean
-  lead_minutes?: number | null
-  start_remaining_percent: number
-  stop_mode: 'follow' | 'custom'
-  stop_used_5h_percent: number
-  stop_used_7d_percent: number
-}
 export interface RefillConfig {
-  auto_fast?: RefillAutoFastConfig | null
 	rotation_enabled: boolean
 	rotation: { plan: string; count: number }[]
   notifications: { refill_started: boolean; low_balance: boolean; low_balance_threshold: number }
@@ -116,7 +107,7 @@ export interface RefillView {
     checked_at: string; ready: number; healthy: number; expiring: number; pending: number
     in_use: number; capacity: number; needed: number; reason: string
     pending_capacity?: number; forecast_accounts?: number; forecast_capacity?: number; forecast_ready?: number
-    accounts: { id: number; name: string; state: string; plan?: string; min_remaining_5h?: number; min_remaining_7d?: number; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number; forecast_loss?: boolean; auto_fast?: boolean }[]
+    accounts: { id: number; name: string; state: string; plan?: string; min_remaining_5h?: number; min_remaining_7d?: number; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number; forecast_loss?: boolean }[]
   }
   daily: { count: number; points: number; reserved_points: number; spent_points: number }
   next_check_at: string

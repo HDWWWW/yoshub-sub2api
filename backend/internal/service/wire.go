@@ -862,9 +862,8 @@ func ProvideAPIKeyService(
 }
 
 // ProviderSet is the Wire provider set for all services
-func ProvideAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor, accounts AccountRepository, admin AdminService, groups GroupRepository, loads *ConcurrencyService, proxies ProxyRepository, gateway *OpenAIGatewayService) *AccountRefillService {
+func ProvideAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor, accounts AccountRepository, admin AdminService, groups GroupRepository, loads *ConcurrencyService, proxies ProxyRepository) *AccountRefillService {
 	svc := NewAccountRefillService(store, encryptor, accounts, admin, groups, loads, proxies)
-	gateway.accountRefill = svc
 	svc.Start()
 	return svc
 }
