@@ -50,7 +50,7 @@ func validateManualRefillRequest(r ManualAccountRefillRequest, now time.Time) er
 func trimAccountRefillJobs(jobs []AccountRefillJob, now time.Time) []AccountRefillJob {
 	kept := jobs[:0]
 	for i, j := range jobs {
-		if i < 200 || j.pending() || (j.ManualRequestID != "" && j.CreatedAt.After(now.Add(-manualRefillRequestLifetime-time.Hour))) {
+		if i < 200 || j.pending() || j.ReplacementPending || (j.ManualRequestID != "" && j.CreatedAt.After(now.Add(-manualRefillRequestLifetime-time.Hour))) {
 			kept = append(kept, j)
 		}
 	}

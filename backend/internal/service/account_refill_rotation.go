@@ -40,8 +40,8 @@ func refillNextPlan(c AccountRefillConfig, cursor int) string {
 	return c.Plan
 }
 
-// Advance only with the durable paid-job reservation. Retries reuse that job's
-// plan and never consume another slot; manual orders do not change the cursor.
+// Advance only with a new automatic demand reservation. Both uncertain retries
+// and confirmed-failure replacements retain the original rotation slot.
 func advanceRefillRotation(state *accountRefillState) {
 	if total := refillRotationLength(state.Config); state.Config.RotationEnabled && total > 0 {
 		state.RotationCursor = (max(0, state.RotationCursor) + 1) % total

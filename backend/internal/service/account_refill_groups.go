@@ -158,7 +158,7 @@ func (s *AccountRefillService) ListRules(ctx context.Context) ([]AccountRefillRu
 		}
 		c := state.Config
 		if c.GroupID > 0 {
-			out = append(out, AccountRefillRuleSummary{GroupID: c.GroupID, Enabled: c.Enabled, MonitorEnabled: c.MonitorEnabled, RotationEnabled: c.RotationEnabled, NextPlan: refillNextPlan(c, state.RotationCursor)})
+			out = append(out, AccountRefillRuleSummary{GroupID: c.GroupID, Enabled: c.Enabled, MonitorEnabled: c.MonitorEnabled, RotationEnabled: c.RotationEnabled, NextPlan: nextRefillPurchasePlan(&state)})
 		}
 	}
 	slices.SortFunc(out, func(a, b AccountRefillRuleSummary) int {

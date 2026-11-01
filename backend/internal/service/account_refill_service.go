@@ -153,6 +153,8 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		cancel()
 		if err != nil {
 			state.Evaluation = AccountRefillEvaluation{CheckedAt: time.Now(), Accounts: []AccountRefillAccount{}, Error: err.Error(), Reason: err.Error()}
+		} else {
+			reconcileRefillFailureReplacements(&state)
 		}
 	}
 	day := time.Now().In(refillTimezone).Format("2006-01-02")
@@ -170,7 +172,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	return &AccountRefillView{WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: state.Jobs, Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
-		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: refillNextPlan(state.Config, state.RotationCursor),
+		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state),
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),
 		ForecastObservation: s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
 }
@@ -415,6 +417,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = err.Error()
 			return persist()
 		}
+		reconcileRefillFailureReplacements(&state)
 		if time.Now().Before(state.ProviderRetryAt) {
 			state.Message = "号商限流，等待重试后继续同步"
 			return persist()
@@ -502,7 +505,8 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = "补号冷却中，等待下次检查"
 			return persist()
 		}
-		plan := refillNextPlan(state.Config, state.RotationCursor)
+		plan := nextRefillPurchasePlan(&state)
+		replacement := nextRefillFailureReplacement(&state)
 		var quote *RefillQuote
 		for i := range catalog.Items {
 			q := &catalog.Items[i]
@@ -555,6 +559,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Evaluation.Reason = "定时补号"
 		}
 		if state.Evaluation.Needed <= 0 {
+			reconcileRefillFailureReplacements(&state)
 			state.Message = state.Evaluation.Reason
 			return persist()
 		}
@@ -566,10 +571,14 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return persist()
 		}
 		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+			Mode:               state.Config.Mode,
 			ReasonDetail:       accountRefillReasonDetail(state.Config, state.Evaluation),
 			ExpiryGraceMinutes: &graceMinutes,
 			GroupID:            state.Config.GroupID, Concurrency: state.Config.ImportConcurrency, DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
+		if replacement >= 0 {
+			linkRefillFailureReplacement(&state, replacement, &job)
+		}
 		state.Jobs = append([]AccountRefillJob{job}, state.Jobs...)
 		state.Jobs = trimAccountRefillJobs(state.Jobs, now)
 		usage.Count++
@@ -581,7 +590,9 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}
 		state.LastSubmitAt = now
-		advanceRefillRotation(&state)
+		if replacement < 0 {
+			advanceRefillRotation(&state)
+		}
 		if state.Config.Mode == "interval" {
 			state.IntervalRemaining = refillMax(0, state.IntervalRemaining-1)
 		}
@@ -687,6 +698,7 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 			u.Points = refillMax(0, u.Points-j.Price)
 			state.Usage[day] = u
 			j.BudgetReleased = true
+			markRefillFailureReplacement(state, j)
 		}
 	}
 	if remote.Status == "succeeded" {
