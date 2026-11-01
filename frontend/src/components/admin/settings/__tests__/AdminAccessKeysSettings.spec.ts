@@ -12,15 +12,61 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({
   }
 }) }))
 import { getAllIncludingInactive } from '@/api/admin/groups'
-const mocks = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), update: vi.fn(), rotate: vi.fn(), revoke: vi.fn(), deleteRecord: vi.fn(), stepUp: vi.fn((fn: () => unknown) => fn()) }))
+const mocks = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), update: vi.fn(), rotate: vi.fn(), reveal: vi.fn(), copy: vi.fn(), revoke: vi.fn(), deleteRecord: vi.fn(), stepUp: vi.fn((fn: () => unknown) => fn()) }))
 vi.mock('@/api/admin/adminAccessKeys', () => mocks)
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 7, name: '测试分组' }]) }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/composables/useStepUp', () => ({ useStepUp: () => ({ run: mocks.stepUp }), isStepUpCancelled: () => false }))
+vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: mocks.copy }) }))
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getAllIncludingInactive).mockResolvedValue([{ id: 7, name: '测试分组' }] as Awaited<ReturnType<typeof getAllIncludingInactive>>)
   mocks.list.mockResolvedValue({ items: [], permissions: [{ id: 'accounts.read', label: '读取账户', scope: 'account', category: '账户' }, { id: 'settings.write', label: '修改设置', scope: 'global', category: '设置' }] })
+})
+
+describe('copy saved admin keys', () => {
+  const item = { id: 'copy-key-1', name: 'copy', enabled: true, key_prefix: 'adm_sc_test', policy: { rules: [], global_permissions: [] }, revoked_at: null }
+  it('loads the full key only on click and copies it without rotating or displaying it', async () => {
+    mocks.list.mockResolvedValue({ items: [item], permissions: [] })
+    mocks.reveal.mockResolvedValue({ key: 'complete-secret' })
+    mocks.copy.mockResolvedValue(true)
+    const wrapper = mountSettings()
+    await flushPromises()
+    expect(mocks.reveal).not.toHaveBeenCalled()
+    for (let i = 0; i < 2; i++) {
+      await wrapper.get('[data-test="copy-key"]').trigger('click')
+      await flushPromises()
+    }
+    expect(mocks.reveal).toHaveBeenCalledWith(item.id)
+    expect(mocks.stepUp).toHaveBeenCalledTimes(2)
+    expect(mocks.copy).toHaveBeenCalledWith('complete-secret', '密钥已复制')
+    expect(mocks.rotate).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('complete-secret')
+    expect(wrapper.text()).toContain('密钥已复制')
+  })
+  it('surfaces reveal failure and offers manual copy if clipboard access fails', async () => {
+    mocks.list.mockResolvedValue({ items: [item], permissions: [] })
+    mocks.reveal.mockRejectedValueOnce(new Error('此密钥未保存完整值'))
+    const wrapper = mountSettings()
+    await flushPromises()
+    await wrapper.get('[data-test="copy-key"]').trigger('click')
+    await flushPromises()
+    expect(mocks.copy).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('此密钥未保存完整值')
+    mocks.reveal.mockResolvedValueOnce({ key: 'manual-copy-secret' })
+    mocks.copy.mockResolvedValueOnce(false)
+    await wrapper.get('[data-test="copy-key"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('manual-copy-secret')
+    expect(wrapper.get('[role="alert"]').text()).toContain('复制失败')
+    expect(mocks.rotate).not.toHaveBeenCalled()
+  })
+  it('does not offer copying revoked keys', async () => {
+    mocks.list.mockResolvedValue({ items: [{ ...item, revoked_at: '2026-11-01T01:00:00Z' }], permissions: [] })
+    const wrapper = mountSettings()
+    await flushPromises()
+    expect(wrapper.find('[data-test="copy-key"]').exists()).toBe(false)
+  })
 })
 describe('管理员受限密钥配置', () => {
   it('中英文文案键保持一致，模型限制提示采用上游白名单语义', () => {

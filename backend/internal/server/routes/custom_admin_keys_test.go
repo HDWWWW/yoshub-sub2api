@@ -20,6 +20,8 @@ func TestScopedAdminKeyManagementRoutesRequireStepUp(t *testing.T) {
 	RegisterAdminRoutes(r.Group("/api/v1"), &handler.Handlers{Admin: &handler.AdminHandlers{Setting: adminhandler.NewSettingHandler(nil, nil, nil, nil, nil, nil, nil)}}, middleware.AdminAuthMiddleware(func(c *gin.Context) { c.Set("auth_method", "jwt"); c.Next() }), middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }), stepUp, nil, nil)
 	for _, test := range []struct{ method, path string }{
 		{"POST", "/api/v1/admin/settings/admin-api-key/regenerate"},
+		{"POST", "/api/v1/admin/settings/admin-api-key/reveal"},
+		{"POST", "/api/v1/admin/settings/admin-api-keys/key-1/reveal"},
 		{"DELETE", "/api/v1/admin/settings/admin-api-key"},
 		{"POST", "/api/v1/admin/settings/admin-api-keys"},
 		{"PUT", "/api/v1/admin/settings/admin-api-keys/key-1"},

@@ -144,7 +144,11 @@ func (s *SettingService) CreateScopedAdminKey(ctx context.Context, in ScopedAdmi
 	}
 	now := time.Now().UTC()
 	item := &ScopedAdminKey{ScopedAdminKeyInput: in, ID: id, Hash: hash, KeyPrefix: "adm_sc_" + id, CreatedBy: creator, CreatedAt: now, UpdatedAt: now}
+	if e = s.storeScopedAdminKeySecret(ctx, key, hash); e != nil {
+		return "", nil, e
+	}
 	if e = r.InsertScopedAdminKey(ctx, item); e != nil {
+		s.discardScopedAdminKeySecret(ctx, hash)
 		return "", nil, e
 	}
 	return key, item, nil
@@ -199,11 +203,16 @@ func (s *SettingService) RotateScopedAdminKey(ctx context.Context, id string) (s
 		return "", nil, e
 	}
 	previousHash := item.Hash
+	if e = s.storeScopedAdminKeySecret(ctx, key, hash); e != nil {
+		return "", nil, e
+	}
 	item.Hash = hash
 	item.UpdatedAt = time.Now().UTC()
 	if e = r.RotateScopedAdminKeyHash(ctx, item.ID, previousHash, hash, item.UpdatedAt); e != nil {
+		s.discardScopedAdminKeySecret(ctx, hash)
 		return "", nil, e
 	}
+	s.discardScopedAdminKeySecret(ctx, previousHash)
 	return key, item, nil
 }
 func (s *SettingService) RevokeScopedAdminKey(ctx context.Context, id string) error {
@@ -211,7 +220,15 @@ func (s *SettingService) RevokeScopedAdminKey(ctx context.Context, id string) er
 	if e != nil {
 		return e
 	}
-	return r.RevokeScopedAdminKey(ctx, id, time.Now().UTC())
+	if e = r.RevokeScopedAdminKey(ctx, id, time.Now().UTC()); e != nil {
+		return e
+	}
+	if s.scopedAdminKeyEncryptor != nil {
+		if item, err := r.GetScopedAdminKey(ctx, id); err == nil {
+			s.discardScopedAdminKeySecret(ctx, item.Hash)
+		}
+	}
+	return nil
 }
 
 func (s *SettingService) DeleteScopedAdminKeyRecord(ctx context.Context, id string) error {

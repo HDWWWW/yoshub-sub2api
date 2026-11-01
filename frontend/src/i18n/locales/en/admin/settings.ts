@@ -1052,7 +1052,7 @@ export default {
         keyDeleted: 'Admin API key deleted',
         copyKey: 'Copy Key',
         keyCopied: 'Key copied to clipboard',
-        keyWarning: 'This key will only be shown once. Please copy it now.',
+        keyWarning: 'Keep this key safe. You can use Copy key to copy it again later.',
         securityWarning: 'Warning: This key provides full admin access. Keep it secure.',
         usage: 'Usage: Add to request header - x-api-key: <your-admin-api-key>'
       },

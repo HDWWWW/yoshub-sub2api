@@ -25,6 +25,7 @@
         <p v-for="(rule, index) in item.policy.rules" :key="index">{{ t('adminAccessKeys.ruleLine', { index: index + 1, summary: ruleSummary(rule) }) }}</p>
       </div>
       <div v-if="!item.revoked_at" class="flex flex-wrap gap-2">
+        <button type="button" data-test="copy-key" class="btn btn-secondary btn-sm" :disabled="busy" @click="copyKey(item)">{{ t('adminAccessKeys.copySecret') }}</button>
         <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="edit(item)">{{ t('adminAccessKeys.editPermissions') }}</button>
         <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="toggle(item)">{{ item.enabled ? t('adminAccessKeys.disable') : t('adminAccessKeys.enable') }}</button>
         <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="rotateKey(item)">{{ t('adminAccessKeys.rotate') }}</button>
@@ -79,9 +80,11 @@ import { getAllIncludingInactive } from '@/api/admin/groups'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
+import { useClipboard } from '@/composables/useClipboard'
 
 const { t } = useI18n()
 const stepUp = useStepUp()
+const { copyToClipboard } = useClipboard()
 const items = ref<AdminKey[]>([])
 const permissions = ref<Permission[]>([])
 const groups = ref<{ id: number; name: string }[]>([])
@@ -187,7 +190,18 @@ async function deleteRecord(item: AdminKey) {
     notice.value = t('adminAccessKeys.removed')
   })
 }
-async function copySecret() { try { await navigator.clipboard.writeText(secret.value); notice.value = t('adminAccessKeys.copied') } catch { error.value = t('adminAccessKeys.copyFailed') } }
+async function copySecret() {
+  if (await copyToClipboard(secret.value, t('adminAccessKeys.copied'))) notice.value = t('adminAccessKeys.copied')
+  else error.value = t('adminAccessKeys.copyFailed')
+}
+async function copyKey(item: AdminKey) {
+  if (busy.value) return
+  await mutate(async () => {
+    const result = await api.reveal(item.id)
+    if (await copyToClipboard(result.key, t('adminAccessKeys.copied'))) notice.value = t('adminAccessKeys.copied')
+    else { secret.value = result.key; error.value = t('adminAccessKeys.copyFailed') }
+  })
+}
 function status(item: AdminKey) { return item.revoked_at ? t('adminAccessKeys.statusRevoked') : !item.enabled ? t('adminAccessKeys.statusDisabled') : item.expires_at && new Date(item.expires_at).getTime() <= Date.now() ? t('adminAccessKeys.statusExpired') : t('adminAccessKeys.statusEnabled') }
 onMounted(load)
 </script>

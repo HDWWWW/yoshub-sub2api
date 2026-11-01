@@ -31,7 +31,38 @@ func (h *SettingHandler) ListScopedAdminKeys(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"items": items, "permissions": adminaccess.PermissionCatalog()})
 }
+
+func (h *SettingHandler) RevealScopedAdminKey(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !requireAdminKeyJWT(c) {
+		return
+	}
+	key, err := h.settingService.RevealScopedAdminKey(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"key": key})
+}
+
+func (h *SettingHandler) RevealLegacyAdminKey(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !requireAdminKeyJWT(c) {
+		return
+	}
+	key, err := h.settingService.GetAdminAPIKey(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if key == "" {
+		response.ErrorFrom(c, service.ErrScopedAdminKeyNotFound)
+		return
+	}
+	response.Success(c, gin.H{"key": key})
+}
 func (h *SettingHandler) CreateScopedAdminKey(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	if !requireAdminKeyJWT(c) {
 		return
 	}
@@ -69,6 +100,7 @@ func (h *SettingHandler) UpdateScopedAdminKey(c *gin.Context) {
 	response.Success(c, item)
 }
 func (h *SettingHandler) RotateScopedAdminKey(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	if !requireAdminKeyJWT(c) {
 		return
 	}

@@ -1295,6 +1295,13 @@ export async function getAdminApiKey(): Promise<AdminApiKeyStatus> {
   return data;
 }
 
+export async function revealAdminApiKey(): Promise<{ key: string }> {
+  const { data } = await apiClient.post<{ key: string }>(
+    "/admin/settings/admin-api-key/reveal",
+  );
+  return data;
+}
+
 /**
  * Regenerate admin API key
  * @returns The new full API key (only shown once)
@@ -1621,6 +1628,7 @@ export const settingsAPI = {
   restoreOfficialEmailTemplate,
   previewEmailTemplate,
   getAdminApiKey,
+  revealAdminApiKey,
   regenerateAdminApiKey,
   deleteAdminApiKey,
   getOverloadCooldownSettings,

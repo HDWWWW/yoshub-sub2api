@@ -1046,7 +1046,7 @@ export default {
         keyDeleted: '管理员 API Key 已删除',
         copyKey: '复制密钥',
         keyCopied: '密钥已复制到剪贴板',
-        keyWarning: '此密钥仅显示一次，请立即复制保存。',
+        keyWarning: '请妥善保管此密钥，之后可通过“复制密钥”再次复制。',
         securityWarning: '警告：此密钥拥有完整的管理员权限，请妥善保管。',
         usage: '使用方法：在请求头中添加 x-api-key: <your-admin-api-key>'
       },

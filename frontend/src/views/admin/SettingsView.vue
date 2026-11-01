@@ -90,7 +90,7 @@
 
               <!-- Key Exists -->
               <div v-else class="space-y-4">
-                <div class="flex items-center justify-between">
+                <div class="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <label
                       class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -103,7 +103,16 @@
                       {{ adminApiKeyMasked }}
                     </code>
                   </div>
-                  <div class="flex gap-2">
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      data-test="copy-legacy-admin-key"
+                      @click="copyAdminApiKey"
+                      :disabled="adminApiKeyOperating"
+                      class="btn btn-secondary btn-sm"
+                    >
+                      {{ t("admin.settings.adminApiKey.copyKey") }}
+                    </button>
                     <button
                       type="button"
                       @click="regenerateAdminApiKey"
@@ -12010,6 +12019,21 @@ async function createAdminApiKey() {
 async function regenerateAdminApiKey() {
   if (!confirm(t("admin.settings.adminApiKey.regenerateConfirm"))) return;
   await createAdminApiKey();
+}
+
+async function copyAdminApiKey() {
+  if (adminApiKeyOperating.value || !adminApiKeyExists.value) return;
+  adminApiKeyOperating.value = true;
+  try {
+    const result = await settingsStepUp.run(() => adminAPI.settings.revealAdminApiKey());
+    const copied = await copyToClipboard(result.key, t("admin.settings.adminApiKey.keyCopied"));
+    if (!copied) newAdminApiKey.value = result.key;
+  } catch (error: unknown) {
+    if (isStepUpCancelled(error)) return;
+    appStore.showError(extractApiErrorMessage(error, t("common.error")));
+  } finally {
+    adminApiKeyOperating.value = false;
+  }
 }
 
 async function deleteAdminApiKey() {

@@ -2,7 +2,7 @@ export default {
   "title": "管理员访问密钥",
   "authorizationHint": "按操作和资源范围授权；未勾选操作不生效。",
   "sharedAccountWarning": "共享账户操作会影响所有关联分组；全站权限不受分组限制。",
-  "secretWarning": "完整密钥仅展示本次，请立即复制保存。关闭后无法再次查看。",
+  "secretWarning": "请妥善保管完整密钥。关闭后可在列表中再次复制。",
   "copySecret": "复制密钥",
   "dismissSecret": "已保存，关闭展示",
   "create": "创建受限密钥",

@@ -12,6 +12,7 @@ func registerScopedAdminKeyRoutes(settings *gin.RouterGroup, h *handler.Handlers
 	keys.GET("", h.Admin.Setting.ListScopedAdminKeys)
 	keys.POST("", gin.HandlerFunc(stepUp), h.Admin.Setting.CreateScopedAdminKey)
 	keys.PUT("/:id", gin.HandlerFunc(stepUp), h.Admin.Setting.UpdateScopedAdminKey)
+	keys.POST("/:id/reveal", gin.HandlerFunc(stepUp), h.Admin.Setting.RevealScopedAdminKey)
 	keys.POST("/:id/rotate", gin.HandlerFunc(stepUp), h.Admin.Setting.RotateScopedAdminKey)
 	keys.DELETE("/:id", gin.HandlerFunc(stepUp), h.Admin.Setting.RevokeScopedAdminKey)
 	keys.DELETE("/:id/record", gin.HandlerFunc(stepUp), h.Admin.Setting.DeleteScopedAdminKeyRecord)

@@ -33,5 +33,6 @@ export async function list() { return (await apiClient.get<{ items: AdminKey[]; 
 export async function create(input: AdminKeyInput) { return (await apiClient.post<{ key: string; item: AdminKey }>(base, input)).data }
 export async function update(id: string, input: AdminKeyInput) { return (await apiClient.put<AdminKey>(`${base}/${encodeURIComponent(id)}`, input)).data }
 export async function rotate(id: string) { return (await apiClient.post<{ key: string; item: AdminKey }>(`${base}/${encodeURIComponent(id)}/rotate`)).data }
+export async function reveal(id: string) { return (await apiClient.post<{ key: string }>(`${base}/${encodeURIComponent(id)}/reveal`)).data }
 export async function revoke(id: string) { return (await apiClient.delete<{ message: string }>(`${base}/${encodeURIComponent(id)}`)).data }
 export async function deleteRecord(id: string) { return (await apiClient.delete<{ message: string }>(`${base}/${encodeURIComponent(id)}/record`)).data }

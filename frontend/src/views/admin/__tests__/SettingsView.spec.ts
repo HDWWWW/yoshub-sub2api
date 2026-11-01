@@ -14,6 +14,8 @@ const {
   getWebSearchEmulationConfig,
   updateWebSearchEmulationConfig,
   getAdminApiKey,
+  revealAdminApiKey,
+  copyToClipboard,
   getOverloadCooldownSettings,
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
@@ -42,6 +44,8 @@ const {
   getWebSearchEmulationConfig: vi.fn(),
   updateWebSearchEmulationConfig: vi.fn(),
   getAdminApiKey: vi.fn(),
+  revealAdminApiKey: vi.fn(),
+  copyToClipboard: vi.fn(),
   getOverloadCooldownSettings: vi.fn(),
   getRateLimit429CooldownSettings: vi.fn(),
   updateRateLimit429CooldownSettings: vi.fn(),
@@ -89,6 +93,7 @@ vi.mock("@/api", () => ({
       getWebSearchEmulationConfig,
       updateWebSearchEmulationConfig,
       getAdminApiKey,
+      revealAdminApiKey,
       getOverloadCooldownSettings,
       getRateLimit429CooldownSettings,
       updateRateLimit429CooldownSettings,
@@ -137,7 +142,7 @@ vi.mock("@/stores/adminSettings", () => ({
 
 vi.mock("@/composables/useClipboard", () => ({
   useClipboard: () => ({
-    copyToClipboard: vi.fn(),
+    copyToClipboard,
   }),
 }));
 
@@ -631,12 +636,28 @@ describe("admin SettingsView email domain quota copy", () => {
 });
 
 describe("admin SettingsView payment visible method controls", () => {
+  it("copies the existing legacy key after reload without regenerating it", async () => {
+    getAdminApiKey.mockResolvedValue({ exists: true, masked_key: "admin-test...old" });
+    revealAdminApiKey.mockResolvedValue({ key: "admin-existing-full-secret" });
+    copyToClipboard.mockResolvedValue(true);
+    const wrapper = mountView();
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    expect(revealAdminApiKey).not.toHaveBeenCalled();
+    await wrapper.get('[data-test="copy-legacy-admin-key"]').trigger("click");
+    await flushPromises();
+    expect(revealAdminApiKey).toHaveBeenCalledOnce();
+    expect(copyToClipboard).toHaveBeenCalledWith("admin-existing-full-secret", expect.any(String));
+    expect(wrapper.text()).not.toContain("admin-existing-full-secret");
+  });
   beforeEach(() => {
     getSettings.mockReset();
     updateSettings.mockReset();
     getWebSearchEmulationConfig.mockReset();
     updateWebSearchEmulationConfig.mockReset();
     getAdminApiKey.mockReset();
+    revealAdminApiKey.mockReset();
+    copyToClipboard.mockReset();
     getOverloadCooldownSettings.mockReset();
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();

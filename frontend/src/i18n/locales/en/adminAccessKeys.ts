@@ -2,7 +2,7 @@ export default {
   "title": "Admin access keys",
   "authorizationHint": "Grant operations within resource scopes. Unselected operations are denied.",
   "sharedAccountWarning": "Shared account changes affect every associated group. Global permissions apply independently of group scopes.",
-  "secretWarning": "The full key is shown only once. Copy and save it before closing.",
+  "secretWarning": "Keep the full key safe. You can copy it again from the list after closing.",
   "copySecret": "Copy key",
   "dismissSecret": "Saved, close",
   "create": "Create scoped key",

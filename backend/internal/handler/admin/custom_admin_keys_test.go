@@ -15,7 +15,7 @@ import (
 
 func TestScopedAdminKeyHandlersRejectNonJWT(t *testing.T) {
 	h := &SettingHandler{}
-	for _, fn := range []gin.HandlerFunc{h.ListScopedAdminKeys, h.CreateScopedAdminKey, h.UpdateScopedAdminKey, h.RotateScopedAdminKey, h.RevokeScopedAdminKey, h.DeleteScopedAdminKeyRecord, h.GetAdminAPIKey, h.RegenerateAdminAPIKey, h.DeleteAdminAPIKey} {
+	for _, fn := range []gin.HandlerFunc{h.ListScopedAdminKeys, h.CreateScopedAdminKey, h.UpdateScopedAdminKey, h.RotateScopedAdminKey, h.RevealScopedAdminKey, h.RevealLegacyAdminKey, h.RevokeScopedAdminKey, h.DeleteScopedAdminKeyRecord, h.GetAdminAPIKey, h.RegenerateAdminAPIKey, h.DeleteAdminAPIKey} {
 		for _, method := range []string{"", "admin_api_key"} {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
@@ -25,6 +25,29 @@ func TestScopedAdminKeyHandlersRejectNonJWT(t *testing.T) {
 				t.Fatalf("%s 应拒绝，返回 %d", method, w.Code)
 			}
 		}
+	}
+}
+
+func TestLegacyAdminKeyRevealAndRoleBoundary(t *testing.T) {
+	repo := newTestSettingRepo()
+	repo.values[service.SettingKeyAdminAPIKey] = "admin-existing-test-secret"
+	h := &SettingHandler{settingService: service.NewSettingService(repo, nil)}
+	for _, role := range []string{"user", "admin"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("POST", "/api/v1/admin/settings/admin-api-key/reveal", nil)
+		c.Set("auth_method", service.AuditAuthMethodJWT)
+		c.Set("user_role", role)
+		h.RevealLegacyAdminKey(c)
+		require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		if role == "admin" {
+			require.Equal(t, 200, w.Code)
+			require.Contains(t, w.Body.String(), "admin-existing-test-secret")
+		} else {
+			require.Equal(t, 403, w.Code)
+			require.NotContains(t, w.Body.String(), "admin-existing-test-secret")
+		}
+		require.Equal(t, "admin-existing-test-secret", repo.values[service.SettingKeyAdminAPIKey])
 	}
 }
 
