@@ -700,6 +700,9 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 			j.BudgetReleased = true
 			markRefillFailureReplacement(state, j)
 		}
+		if err := s.notifyRefillFailed(ctx, state, j, persist); err != nil {
+			return err
+		}
 	}
 	if remote.Status == "succeeded" {
 		j.Status = "awaiting_delivery"

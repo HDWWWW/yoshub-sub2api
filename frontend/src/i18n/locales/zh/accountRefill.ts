@@ -36,7 +36,7 @@ export default {
   "wecomWebhook": "群机器人 Webhook",
   "webhookPlaceholder": "粘贴企业微信群机器人的 Webhook 地址",
   "webhookHint": "留空保留已保存地址。地址加密保存且不回显；更换地址后通知会发送到新机器人所在群。",
-  "notifyStarted": "开始补号时通知（自动 / 手动）",
+  "notifyStarted": "补号开始 / 号商确认失败时通知（自动 / 手动）",
   "notifyLowBalance": "积分不足 / 低余额通知",
   "lowBalanceThreshold": "可用积分不高于此值时提醒",
   "lowBalanceHint": "每分钟检查可用积分；达到阈值或不足以支付本次补号时通知。余额持续不足期间不重复提醒，恢复后再次不足会重新提醒。关闭自动补号也能接收余额提醒；通知失败不会中断补号，可在此查看发送状态。",

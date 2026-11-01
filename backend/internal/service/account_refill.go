@@ -164,6 +164,7 @@ type AccountRefillJob struct {
 	ReplacesJobID         string                      `json:"replaces_job_id,omitempty"`
 	ReplacementJobID      string                      `json:"replacement_job_id,omitempty"`
 	StartedNotificationAt *time.Time                  `json:"started_notification_at,omitempty"`
+	FailedNotificationAt  *time.Time                  `json:"failed_notification_at,omitempty"`
 	ManualRequestID       string                      `json:"manual_request_id,omitempty"`
 	ConfigRevision        int64                       `json:"config_revision,omitempty"`
 	ExpiryGraceMinutes    *int                        `json:"expiry_grace_minutes,omitempty"`

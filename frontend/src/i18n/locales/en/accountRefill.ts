@@ -36,7 +36,7 @@ export default {
   "wecomWebhook": "Group robot webhook",
   "webhookPlaceholder": "Paste the WeCom group robot webhook URL",
   "webhookHint": "Leave blank to keep the saved address. It is encrypted and never displayed. Replacing it changes the destination group.",
-  "notifyStarted": "Notify when refill starts (automatic / manual)",
+  "notifyStarted": "Notify when refill starts or the supplier confirms failure (automatic / manual)",
   "notifyLowBalance": "Insufficient credit / low balance alerts",
   "lowBalanceThreshold": "Notify when available credits are at or below",
   "lowBalanceHint": "Checks available credits every minute. Alerts at the threshold or when a purchase cannot be funded. Suppresses repeated alerts until the balance recovers. Works with automation off. Notification failures do not stop refills; delivery status appears here.",

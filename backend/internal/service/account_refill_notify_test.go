@@ -130,3 +130,84 @@ func TestRefillInsufficientBalanceAlertDoesNotRearmBeforeEnoughForPurchase(t *te
 	}
 	require.Len(t, n.messages, 2)
 }
+
+func TestRefillFailedNotificationIsDurableAndDoesNotBlockReplacement(t *testing.T) {
+	s, store, p, accounts := failureRefillHarness(t)
+	ctx := context.Background()
+	n := &refillNoticeStub{err: errors.New("robot unavailable")}
+	s.notifier = n
+	store.mutate(t, func(v *accountRefillState) {
+		v.Config.Notifications.RefillStarted = true
+		v.EncryptedWebhook = "encrypted-fixture"
+	})
+	require.NoError(t, s.run(ctx, false))
+	first := p.orders[0]
+	p.states[first.ID] = "failed"
+	refillDue(t, store)
+	p.beforeSubmit = func(j AccountRefillJob) {
+		v, err := decodeAccountRefillState(store.raw)
+		require.NoError(t, err)
+		require.NotNil(t, v.Jobs[1].FailedNotificationAt)
+	}
+	require.NoError(t, s.run(ctx, false))
+	require.Len(t, p.orders, 2, "notification errors must not block same-plan replacement")
+	require.Len(t, n.messages, 3, "start, confirmed failure, then replacement start")
+	require.Contains(t, n.messages[1], "Sub2API 补号失败")
+	require.Contains(t, n.messages[1], "套餐：pro20x")
+	require.Contains(t, n.messages[1], first.ID)
+	require.Contains(t, n.messages[1], "不推进轮转、不叠加补号")
+	require.NotContains(t, n.messages[1], "encrypted-fixture")
+	s = &AccountRefillService{store: store, provider: p, notifier: n, encryptor: s.encryptor, accounts: accounts, admin: accounts, groups: s.groups, loads: s.loads}
+	for i := 0; i < 3; i++ {
+		refillDue(t, store)
+		require.NoError(t, s.run(ctx, false))
+	}
+	require.Len(t, n.messages, 3, "no repeat after restart or polling")
+	p.states[p.orders[1].ID] = "failed"
+	refillDue(t, store)
+	require.NoError(t, s.run(ctx, false))
+	require.Len(t, n.messages, 5, "the replacement failure gets its own notification")
+}
+
+func TestRefillFailedNotificationRequiresConfirmedResultAndEnabledSwitch(t *testing.T) {
+	for _, scenario := range []string{"manual", "disabled", "no_webhook", "review", "timeout", "persist_failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, store, p, _ := failureRefillHarness(t)
+			ctx := context.Background()
+			n := &refillNoticeStub{}
+			s.notifier = n
+			require.NoError(t, s.run(ctx, false))
+			p.states[p.orders[0].ID] = "failed"
+			refillDue(t, store)
+			store.mutate(t, func(v *accountRefillState) {
+				v.Config.Enabled = false
+				v.Config.Notifications.RefillStarted = scenario != "disabled"
+				v.EncryptedWebhook = "encrypted-fixture"
+				switch scenario {
+				case "manual":
+					v.Jobs[0].ManualRequestID, v.Jobs[0].Reason = "manual-request", "手动补号"
+				case "no_webhook":
+					v.EncryptedWebhook = ""
+				case "review":
+					p.states[p.orders[0].ID] = "review"
+				case "timeout":
+					p.statusErr = errors.New("uncertain network timeout")
+				}
+			})
+			store.failSave = scenario == "persist_failure"
+			err := s.run(ctx, false)
+			if scenario == "persist_failure" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			if scenario == "manual" {
+				require.Len(t, n.messages, 1)
+				require.Contains(t, n.messages[0], "手动订单不自动重下")
+			} else {
+				require.Empty(t, n.messages)
+			}
+			require.Len(t, p.orders, 1)
+		})
+	}
+}

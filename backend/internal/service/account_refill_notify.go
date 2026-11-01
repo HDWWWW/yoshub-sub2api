@@ -133,6 +133,33 @@ func (s *AccountRefillService) notifyRefillBalance(ctx context.Context, state *a
 	return persist()
 }
 
+// The existing refill lifecycle switch covers both starts and confirmed
+// failures. Persist the attempt with the terminal result before contacting
+// WeCom, whose API has no idempotency key.
+func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
+	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
+		j.FailedNotificationAt != nil || j.Status != "failed" || j.SupplierStatus != "failed" || j.SupplierID == "" {
+		return nil
+	}
+	now := time.Now()
+	j.FailedNotificationAt = &now
+	if err := persist(); err != nil {
+		return err
+	}
+	mode, next := "自动补号", "未安排自动重补，请核对当前规则与任务。"
+	if j.ManualRequestID != "" || j.Reason == "手动补号" {
+		mode, next = "手动补号", "手动订单不自动重下，请核对后按需手动补号。"
+	} else if j.ReplacementPending {
+		next = fmt.Sprintf("仍有缺口时按原套餐 %s 自动重补，不推进轮转、不叠加补号；继续受开关、冷却、在途、上限及预算约束。", j.Plan)
+		if !state.Config.Enabled || !state.Config.MonitorEnabled || !state.Config.PushEnabled {
+			next = "当前自动购买、监测或推送已暂停；恢复后重新检查缺口再决定是否重补原套餐。"
+		}
+	}
+	content := fmt.Sprintf("Sub2API 补号失败\n方式：%s\n套餐：%s\n结果：号商已确认失败，本地预算预占已释放\n积分：%g\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n后续：%s\n时间：%s", mode, j.Plan, j.Price, j.DeliveryGroupIDs, j.ID, j.SupplierID, next, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	s.sendRefillNotification(ctx, state, content)
+	return persist()
+}
+
 // Notification monitoring works independently of automatic purchases.
 func (s *AccountRefillService) checkRefillNotificationBalance(ctx context.Context, token string, state *accountRefillState, now time.Time, persist func() error) error {
 	if !state.Config.Notifications.LowBalance || state.EncryptedWebhook == "" || token == "" || now.Before(state.NextBalanceCheckAt) {
