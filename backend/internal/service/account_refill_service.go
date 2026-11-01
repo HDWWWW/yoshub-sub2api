@@ -221,7 +221,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 	if token != "" && (!strings.HasPrefix(token, "rst_") || len(token) > 256 || strings.ContainsAny(token, "\r\n\t ")) {
 		return errors.New("号商 API Key 格式无效")
 	}
-	return s.store.WithLock(ctx, func(raw string, save func(string) error) error {
+	return withAccountRefillConfigLock(ctx, s.store, 30*time.Second, func(raw string, save func(string) error) error {
 		state, err := decodeAccountRefillState(raw)
 		if err != nil {
 			return err
