@@ -131,6 +131,43 @@ func TestScopedCodexRequestRejectsUnopenedFields(t *testing.T) {
 	}
 }
 
+func TestScopedCodexImportRejectsExplicitPrivacySettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, privacyEnabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "false", true: "true"}[privacyEnabled], func(t *testing.T) {
+			memory := &scopedCodexMemoryService{codexImportMemoryAdminService: newCodexImportMemoryAdminService(nil)}
+			h := &AccountHandler{adminService: memory}
+			ctx := adminaccess.WithPrincipal(context.Background(), &adminaccess.Principal{
+				KeyID: "fixture",
+				Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{
+					Permissions:  []string{"accounts.create", "accounts.credentials", "accounts.schedule", "accounts.network"},
+					AllGroups:    true,
+					AccountTypes: []string{"oauth"},
+				}}},
+			})
+			r := gin.New()
+			r.Use(func(c *gin.Context) { c.Request = c.Request.WithContext(ctx) })
+			r.Use(h.ScopedAdminKeyAccounts)
+			r.POST("/api/v1/admin/accounts/import/codex-session", func(c *gin.Context) { t.Fatal("不能回退到完整管理员导入") })
+			raw, err := json.Marshal(map[string]any{
+				"content":         `{"access_token":"fixture-access","refresh_token":"fixture-refresh"}`,
+				"group_ids":       []int64{1},
+				"privacy_enabled": privacyEnabled,
+			})
+			require.NoError(t, err)
+			request := httptest.NewRequest("POST", "/api/v1/admin/accounts/import/codex-session", strings.NewReader(string(raw)))
+			request.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, request)
+			require.Equal(t, 403, w.Code, w.Body.String())
+			require.Contains(t, w.Body.String(), "隐私设置请由完整管理员修改")
+			require.Empty(t, memory.lookups)
+			require.Empty(t, memory.createdAccounts)
+			require.Empty(t, memory.updatedAccounts)
+		})
+	}
+}
+
 func TestScopedCodexImportIdempotencySeparatesKeysAndPolicy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previous := service.DefaultIdempotencyCoordinator()

@@ -233,6 +233,8 @@ export default {
   "capacityObservationHint": "Sample current concurrency every second and forecast utilization after accounts reach their quota floor or enter the replacement lead time. Keep all running requests and subtract only departing capacity. Current or forecast utilization must sustain the target for its full observation window. Lower readings, failed samples or interruptions reset the window. Pending deliveries, cooldown, limits and budgets still apply; minimum reserve replenishment remains independent.",
   "capacityObservation": "Current concurrency observation",
   "forecastObservation": "Account departure forecast",
+  "forecastEnabled": "Replenish ahead using forecast concurrency",
+  "forecastEnabledHint": "Use the configured plan quota floors, replacement lead time, target utilization and observation window to forecast utilization after accounts depart and replenish early when sustained. Scheduling is unchanged. Disabling this keeps live concurrency, minimum reserve and other replenishment rules active.",
   "forecastAccounts": "Accounts in the forecast",
   "forecastCapacity": "{count} departing · Current capacity {current} → Remaining {projected} · Pending capacity credit {pending} · Running concurrency retained {inUse}",
   "forecastProgress": "Sustained {elapsed} / {required} seconds · Forecast utilization after pending credit {utilization}%",

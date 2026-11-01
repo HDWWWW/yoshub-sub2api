@@ -18,7 +18,9 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/schema"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/migrate"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 	"github.com/stretchr/testify/require"
 )
@@ -31,11 +33,21 @@ type ovhTestHost struct {
 }
 
 func ovhRepoFixture(t *testing.T) (*sql.DB, *proxyRepository, *ovhTestHost) {
+	return ovhRepoFixtureWithAccountSchema(t, false)
+}
+
+func ovhRepoFixtureWithAccountSchema(t *testing.T, full bool) (*sql.DB, *proxyRepository, *ovhTestHost) {
 	t.Helper()
 	db := scopedAdminKeyTestDB(t)
-	_, err := db.Exec(`CREATE TABLE proxies(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,protocol TEXT NOT NULL,host TEXT NOT NULL,port INT NOT NULL,username TEXT,password TEXT,status TEXT DEFAULT 'active',expires_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ,created_at TIMESTAMPTZ DEFAULT NOW(),updated_at TIMESTAMPTZ DEFAULT NOW(),fallback_mode TEXT DEFAULT 'none',backup_proxy_id BIGINT REFERENCES proxies(id) ON DELETE SET NULL,expiry_warn_days INT DEFAULT 7);
-CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxies(id) ON DELETE SET NULL,parent_account_id BIGINT,deleted_at TIMESTAMPTZ,status TEXT DEFAULT 'active',schedulable BOOLEAN DEFAULT TRUE,expires_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT NOW());
-INSERT INTO proxies(name,protocol,host,port) VALUES('manual','http','192.0.2.1',8080);`)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	if full {
+		require.NoError(t, migrate.Create(context.Background(), client.Schema, []*schema.Table{migrate.ProxiesTable, migrate.AccountsTable, migrate.AccountGroupsTable, migrate.GroupsTable}, migrate.WithForeignKeys(false)))
+	} else {
+		_, err := db.Exec(`CREATE TABLE proxies(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,protocol TEXT NOT NULL,host TEXT NOT NULL,port INT NOT NULL,username TEXT,password TEXT,status TEXT DEFAULT 'active',expires_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ,created_at TIMESTAMPTZ DEFAULT NOW(),updated_at TIMESTAMPTZ DEFAULT NOW(),fallback_mode TEXT DEFAULT 'none',backup_proxy_id BIGINT REFERENCES proxies(id) ON DELETE SET NULL,expiry_warn_days INT DEFAULT 7);
+CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxies(id) ON DELETE SET NULL,parent_account_id BIGINT,deleted_at TIMESTAMPTZ,status TEXT DEFAULT 'active',schedulable BOOLEAN DEFAULT TRUE,expires_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT NOW());`)
+		require.NoError(t, err)
+	}
+	_, err := client.Proxy.Create().SetName("manual").SetProtocol("http").SetHost("192.0.2.1").SetPort(8080).Save(context.Background())
 	require.NoError(t, err)
 	for _, file := range []string{"250_yoshub_proxy_binding_limits.sql", "251_ovh_ipv6_egress.sql", "252_ovh_ipv6_reserved.sql"} {
 		source, err := os.ReadFile(filepath.Join("..", "..", "migrations", file))
@@ -88,7 +100,6 @@ INSERT INTO proxies(name,protocol,host,port) VALUES('manual','http','192.0.2.1',
 		_ = json.NewEncoder(w).Encode(out)
 	}))
 	t.Cleanup(server.Close)
-	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	repo := newProxyRepositoryWithSQL(client, db)
 	repo.ipv6Supported = true
 	repo.ipv6 = &ovhipv6.Client{BaseURL: server.URL, Token: "test-control", HTTP: server.Client()}

@@ -21,6 +21,9 @@ type scopedCodexSessionImportRequest struct {
 }
 
 func validateScopedCodexRequest(req scopedCodexSessionImportRequest) error {
+	if req.PrivacyEnabled != nil {
+		return infraerrors.Forbidden("SCOPED_CODEX_PRIVACY", "隐私设置请由完整管理员修改")
+	}
 	if _, err := service.NormalizeAccountProxyMode(req.ProxyMode, req.ProxyID, req.RandomProxy); err != nil {
 		return err
 	}

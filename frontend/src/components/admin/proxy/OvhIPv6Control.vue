@@ -23,16 +23,21 @@
         <span v-if="status.prefix" class="break-all">{{ t('ovhIPv6.prefix') }}: <code>{{ status.prefix }}</code></span>
         <span>{{ t('ovhIPv6.bound', { count: status.bound }) }}</span>
       </div>
-      <button
+      <div class="ml-auto flex items-center gap-3">
+        <button type="button" class="btn btn-secondary px-3 py-1.5 text-xs" data-testid="open-ipv6-storage" @click="showStorage = true">
+          {{ t('ovhIPv6.storage.title') }}
+        </button>
+        <button
         type="button"
-        class="ml-auto rounded p-1 text-gray-500 hover:text-primary-600 disabled:opacity-50 dark:text-gray-400 dark:hover:text-primary-400"
+        class="rounded p-1 text-gray-500 hover:text-primary-600 disabled:opacity-50 dark:text-gray-400 dark:hover:text-primary-400"
         :title="t('ovhIPv6.refresh')"
         :aria-label="t('ovhIPv6.refresh')"
         :disabled="loading || saving"
         @click="loadStatus"
       >
         <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
-      </button>
+        </button>
+      </div>
     </div>
     <p v-if="status" class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
       {{ t(status.enabled ? 'ovhIPv6.enabledHint' : 'ovhIPv6.disabledHint') }}
@@ -40,6 +45,7 @@
     </p>
     <p v-if="error" class="mt-2 text-xs text-red-600 dark:text-red-400" role="alert">{{ error }}</p>
     <p v-else-if="availabilityMessage" class="mt-2 text-xs text-amber-600 dark:text-amber-400" role="status">{{ availabilityMessage }}</p>
+    <OvhIPv6StorageDialog :show="showStorage" @close="showStorage = false" />
   </div>
 </template>
 
@@ -48,6 +54,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ovhIPv6API, type OvhIPv6Status } from '@/api/admin/ovhIPv6'
 import Icon from '@/components/icons/Icon.vue'
+import OvhIPv6StorageDialog from './OvhIPv6StorageDialog.vue'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const { t } = useI18n()
@@ -56,6 +63,7 @@ const status = ref<OvhIPv6Status | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+const showStorage = ref(false)
 let disposed = false
 let controller: AbortController | null = null
 

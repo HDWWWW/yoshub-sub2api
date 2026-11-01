@@ -233,6 +233,8 @@ export default {
   "capacityObservationHint": "每秒采样当前并发，并预判额度达到下限或进入提前补号时间的账号退出后的利用率；保留全部运行中请求，只扣减预计退出的容量。当前或预判利用率连续达到目标并满观察时长，才按对应条件补号。低于阈值、采样失败或中断会重新计时。在途交付、冷却、上限和预算仍生效；最低储备补号独立判断。",
   "capacityObservation": "当前并发持续观察",
   "forecastObservation": "账号退出预判",
+  "forecastEnabled": "预估并发提前补号",
+  "forecastEnabledHint": "沿用当前套餐额度下限、提前补号分钟数、目标并发百分比和持续观察时间，计算账号退出后的利用率，满足条件时提前补号。只做预判，不提前切走账号并发。关闭后仍保留实时并发、最低储备和其他补号规则。",
   "forecastAccounts": "纳入预判账号",
   "forecastCapacity": "预计退出 {count} 个 · 当前容量 {current} → 退出后容量 {projected} · 在途抵扣容量 {pending} · 保留运行中并发 {inUse}",
   "forecastProgress": "已持续 {elapsed} / {required} 秒 · 抵扣在途后预计利用率 {utilization}%",

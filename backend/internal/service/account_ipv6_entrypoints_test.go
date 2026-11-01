@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -15,6 +16,7 @@ import (
 
 type nativeIPv6Allocator struct {
 	ProxyRepository
+	mu    sync.Mutex
 	calls int
 }
 
@@ -22,6 +24,8 @@ func (r *nativeIPv6Allocator) SelectAccountProxy(ctx context.Context, mode strin
 	if dbent.TxFromContext(ctx) == nil || mode != "ovh_ipv6" {
 		return 0, fmt.Errorf("wrong allocation scope")
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.calls++
 	return int64(700 + r.calls), nil
 }
@@ -123,7 +127,9 @@ func TestNativeIPv6CreateEditAndBulkUseAtomicAccountTransactions(t *testing.T) {
 	require.Equal(t, 1, result.Failed)
 	stored, err = r.GetByID(ctx, 1001)
 	require.NoError(t, err)
-	require.EqualValues(t, 704, *stored.ProxyID)
+	require.Contains(t, []int64{704, 705}, *stored.ProxyID)
+	require.Equal(t, *stored.ProxyID, result.Results[0].ProxyID)
+	require.Zero(t, result.Results[1].ProxyID)
 	require.Equal(t, "bulk", stored.Name)
 	stored, err = r.GetByID(ctx, 1002)
 	require.NoError(t, err)

@@ -93,6 +93,36 @@ describe('AccountRefillModal', () => {
   expect(save).not.toHaveBeenCalled()
   w.unmount()
  })
+ it('defaults legacy forecast rules on and saves explicit disable and re-enable independently', async () => {
+  const w = await open()
+  const toggle = w.get('[data-testid="refill-forecast-enabled"]')
+  expect((toggle.element as HTMLInputElement).checked).toBe(true)
+  expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined()
+  await toggle.setValue(false)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ forecast_enabled: false, monitor_enabled: true, concurrency_sustain_seconds: 30, min_ready: 1 }), '', 1, '')
+  await toggle.setValue(true)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ forecast_enabled: true }), '', 2, '')
+  expect(check).not.toHaveBeenCalled(); expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('shows disabled forecast status without stale statistics while keeping live observation visible', async () => {
+  const observation = { since: null, last_sample_at: '2026-11-01T04:00:00Z', sustained_seconds: 30, required_seconds: 30, samples: 31, no_capacity: false, status: 'ready', ready: true, utilization_percent: 90 }
+  get.mockResolvedValue({ ...response(), config: { ...structuredClone(config), forecast_enabled: false }, capacity_observation: observation, forecast_observation: observation,
+    evaluation: { ...response().evaluation, forecast_accounts: 1, forecast_capacity: 100, accounts: [{ id: 7, name: 'stale forecast account', forecast_loss: true }] } })
+  const w = await open()
+  expect((w.get('[data-testid="refill-forecast-enabled"]').element as HTMLInputElement).checked).toBe(false)
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
+  const forecast = w.get('[data-testid="refill-forecast-observation"]')
+  expect(forecast.text()).toContain('accountRefill.observation_disabled')
+  expect(forecast.text()).not.toContain('accountRefill.forecastProgress')
+  expect(forecast.text()).not.toContain('accountRefill.forecastCapacity')
+  expect(forecast.text()).not.toContain('stale forecast account')
+  expect(forecast.text()).not.toContain('accountRefill.lastSample')
+  expect(w.get('[data-testid="refill-current-observation"]').text()).toContain('accountRefill.observation_ready')
+  w.unmount()
+ })
  it('shows saved trigger notes and handles historical records without inventing a reason', async () => {
   const data = responseWithJobs(3)
   data.jobs[1]!.reason = '并发利用率超过目标'; data.jobs[1]!.reason_detail = ''

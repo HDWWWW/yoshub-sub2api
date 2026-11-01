@@ -316,6 +316,12 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		if c.RotationEnabled != state.Config.RotationEnabled || !slices.Equal(c.Rotation, state.Config.Rotation) {
 			state.RotationCursor = 0
 		}
+		// An older client omitting this optional switch must not re-enable a
+		// forecast that an administrator explicitly disabled.
+		if c.ForecastEnabled == nil && state.Config.ForecastEnabled != nil {
+			enabled := *state.Config.ForecastEnabled
+			c.ForecastEnabled = &enabled
+		}
 		state.Config = c
 		state.Revision++
 		state.NextCheckAt = time.Time{}

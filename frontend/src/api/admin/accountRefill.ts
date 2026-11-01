@@ -40,6 +40,7 @@ export interface RefillConfig {
   plan_quota_thresholds?: Record<string, { min_remaining_5h: number; min_remaining_7d: number }>
   target_concurrency_percent: number
   concurrency_sustain_seconds: number
+  forecast_enabled?: boolean | null
   import_expiry_grace_minutes: number
   check_seconds: number
   cooldown_seconds: number

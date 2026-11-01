@@ -3,9 +3,33 @@
     :show="show"
     :title="t('admin.accounts.bulkEdit.title')"
     width="wide"
+    :close-on-escape="!submitting"
+    :show-close-button="!submitting"
     @close="handleClose"
   >
-    <form id="bulk-edit-account-form" class="space-y-5" @submit.prevent="() => handleSubmit()">
+    <div v-if="proxyResult || proxyResultUnconfirmed" class="space-y-4" data-testid="bulk-proxy-result">
+      <div v-if="proxyResultUnconfirmed" role="alert" class="rounded-lg bg-amber-50 p-4 text-sm leading-relaxed text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">{{ t('admin.accounts.bulkEdit.proxyResultUnconfirmed') }}</div>
+      <template v-if="proxyResult">
+        <div class="rounded-lg bg-blue-50 p-4 text-sm text-blue-800 dark:bg-blue-900/20 dark:text-blue-200">
+          <p class="font-semibold">{{ t('admin.accounts.bulkEdit.proxyResultsTitle') }}</p>
+          <p class="mt-1">{{ t('admin.accounts.bulkEdit.proxyResultsSummary', { success: proxyResult.success, failed: proxyResult.failed }) }}</p>
+        </div>
+        <div class="max-h-96 overflow-auto rounded-lg border border-gray-200 dark:border-dark-700">
+          <table class="w-full text-left text-sm">
+            <thead class="sticky top-0 bg-gray-50 text-xs text-gray-500 dark:bg-dark-800 dark:text-gray-400"><tr><th class="whitespace-nowrap px-3 py-2">{{ t('admin.accounts.bulkEdit.resultAccount') }}</th><th class="px-3 py-2">{{ t('admin.accounts.bulkEdit.resultAddress') }}</th><th class="px-3 py-2">{{ t('admin.accounts.bulkEdit.resultStatus') }}</th></tr></thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+              <tr v-for="item in proxyResult.results" :key="item.account_id">
+                <td class="px-3 py-3 font-medium">#{{ item.account_id }}</td>
+                <td class="break-all px-3 py-3 font-mono text-xs">{{ item.managed_ipv6 || (item.proxy_id ? `Proxy #${item.proxy_id}` : '—') }}</td>
+                <td class="px-3 py-3 text-xs" :class="item.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'">{{ item.success ? t('admin.accounts.bulkEdit.resultApplied') : item.error || t('admin.accounts.bulkEdit.failed') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('admin.accounts.bulkEdit.proxyResultsHint') }}</p>
+      </template>
+    </div>
+    <form v-else id="bulk-edit-account-form" class="space-y-5" @submit.prevent="() => handleSubmit()">
       <!-- Info -->
       <div class="rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
         <p class="text-sm text-blue-700 dark:text-blue-400">
@@ -1429,10 +1453,11 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
-          {{ t('common.cancel') }}
+        <button type="button" class="btn btn-secondary" :disabled="submitting" @click="handleClose">
+          {{ t(proxyResult || proxyResultUnconfirmed ? 'admin.accounts.bulkEdit.closeAndRefresh' : 'common.cancel') }}
         </button>
         <button
+          v-if="!proxyResult && !proxyResultUnconfirmed"
           type="submit"
           form="bulk-edit-account-form"
           :disabled="submitting"
@@ -1483,6 +1508,7 @@ import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
+import type { BulkAccountUpdateResult } from '@/api/admin/accounts'
 import type {
   Proxy as ProxyConfig,
   AdminGroup,
@@ -1681,6 +1707,8 @@ const enableRpmLimit = ref(false)
 
 // State - field values
 const submitting = ref(false)
+const proxyResult = ref<BulkAccountUpdateResult | null>(null)
+const proxyResultUnconfirmed = ref(false)
 const showMixedChannelWarning = ref(false)
 const mixedChannelWarningMessage = ref('')
 const pendingUpdatesForConfirm = ref<Record<string, unknown> | null>(null)
@@ -2174,6 +2202,8 @@ const canPreCheck = () =>
   (targetSelectedPlatforms.value[0] === 'antigravity' || targetSelectedPlatforms.value[0] === 'anthropic')
 
 const handleClose = () => {
+  if (submitting.value) return
+  if (proxyResult.value || proxyResultUnconfirmed.value) emit('updated')
   showMixedChannelWarning.value = false
   mixedChannelWarningMessage.value = ''
   pendingUpdatesForConfirm.value = null
@@ -2204,6 +2234,7 @@ const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise
 }
 
 const handleSubmit = async () => {
+  if (submitting.value || proxyResult.value || proxyResultUnconfirmed.value) return
   if (targetMode.value === 'selected' && props.accountIds.length === 0) {
     appStore.showError(t('admin.accounts.bulkEdit.noSelection'))
     return
@@ -2286,6 +2317,7 @@ const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
     : baseUpdates
 
   submitting.value = true
+  const automaticProxy = ['ovh_ipv6', 'random', 'least_used'].includes(String(baseUpdates.proxy_mode || ''))
 
   try {
     const res = targetMode.value === 'filtered' && props.target?.filters
@@ -2297,6 +2329,8 @@ const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
     const success = res.success || 0
     const failed = res.failed || 0
     const inherited = res.long_context_inherited_count || 0
+    const reviewProxyResult = automaticProxy || res.results?.some(item => item.managed_ipv6)
+    if (reviewProxyResult) proxyResult.value = res
 
     if (success > 0 && failed === 0) {
       if (inherited > 0) {
@@ -2318,12 +2352,19 @@ const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
 
     if (success > 0) {
       pendingUpdatesForConfirm.value = null
-      emit('updated')
-      handleClose()
+      if (!reviewProxyResult) {
+        emit('updated')
+        // The request is complete; close explicitly after releasing the busy guard.
+        submitting.value = false
+        handleClose()
+      }
     }
   } catch (error: any) {
     // 兜底：多平台混合场景下，预检查跳过，由后端 409 触发确认框
-    if (error.status === 409 && error.error === 'mixed_channel_warning') {
+    if (automaticProxy && (error.status === 0 || [502, 504].includes(error.status) || ['ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK'].includes(error.code))) {
+      proxyResultUnconfirmed.value = true
+      appStore.showError(t('admin.accounts.bulkEdit.proxyResultUnconfirmed'))
+    } else if (error.status === 409 && error.error === 'mixed_channel_warning') {
       pendingUpdatesForConfirm.value = baseUpdates
       mixedChannelWarningMessage.value = error.message
       showMixedChannelWarning.value = true
@@ -2333,6 +2374,8 @@ const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
       }))
     } else if (error.reason === 'OPENAI_LONG_CONTEXT_PARENT_REQUIRED') {
       appStore.showError(t('admin.accounts.bulkEdit.longContextParentRequired'))
+    } else if (error.reason === 'SPARK_SHADOW_PROXY_INHERITED') {
+      appStore.showError(t('admin.accounts.bulkEdit.proxyParentRequired'))
     } else {
       appStore.showError(error.message || t('admin.accounts.bulkEdit.failed'))
       console.error('Error bulk updating accounts:', error)
@@ -2360,6 +2403,8 @@ watch(
   () => props.show,
   (newShow) => {
     if (!newShow) {
+      proxyResult.value = null
+      proxyResultUnconfirmed.value = false
       // Reset all enable flags
       enableBaseUrl.value = false
       enableModelRestriction.value = false

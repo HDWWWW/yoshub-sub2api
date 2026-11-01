@@ -59,6 +59,10 @@
             <p class="text-sm leading-6 text-gray-500">{{ t(form.mode === 'interval' ? 'accountRefill.intervalHint' : form.mode === 'fixed' ? 'accountRefill.fixedHint' : 'accountRefill.ruleHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label v-for="field in ruleFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step || 1" class="input" :data-testid="`refill-${field.key}`" /></label></div>
             <p v-if="form.mode === 'capacity'" class="input-hint">{{ t('accountRefill.capacityObservationHint') }}</p>
+            <div v-if="form.mode === 'capacity'" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.forecast_enabled" type="checkbox" data-testid="refill-forecast-enabled" />{{ t('accountRefill.forecastEnabled') }}</label>
+              <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.forecastEnabledHint') }}</p>
+            </div>
             <div v-if="form.mode !== 'interval'" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
               <p class="text-sm font-medium">{{ t('accountRefill.planQuotaTitle') }}</p>
               <p class="input-hint">{{ t('accountRefill.planQuotaHint') }}</p>
@@ -143,15 +147,15 @@
           <p class="mt-1 tabular-nums">{{ t(view.capacity_observation.no_capacity ? 'accountRefill.observationNoCapacity' : 'accountRefill.observationProgress', { elapsed: view.capacity_observation.sustained_seconds, required: view.capacity_observation.required_seconds, utilization: number(view.capacity_observation.utilization_percent) }) }}</p>
           <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.lastSample') }}: {{ date(view.capacity_observation.last_sample_at) }}</p>
         </div>
-        <div v-if="view.forecast_observation && view.config.mode === 'capacity'" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" aria-live="polite" data-testid="refill-forecast-observation">
-          <p>{{ t('accountRefill.forecastObservation') }}: {{ t(`accountRefill.observation_${view.forecast_observation.status}`) }}</p>
-          <template v-if="!view.evaluation.error">
+        <div v-if="view.config.mode === 'capacity'" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" aria-live="polite" data-testid="refill-forecast-observation">
+          <p>{{ t('accountRefill.forecastObservation') }}: {{ t(`accountRefill.observation_${view.config.forecast_enabled === false ? 'disabled' : view.forecast_observation?.status || 'waiting'}`) }}</p>
+          <template v-if="view.config.forecast_enabled !== false && view.forecast_observation && !view.evaluation.error">
             <p class="mt-1 tabular-nums">{{ t('accountRefill.forecastCapacity', { count: number(view.evaluation.forecast_accounts), current: number(view.evaluation.capacity), projected: number(view.evaluation.forecast_capacity), pending: number(view.evaluation.pending_capacity), inUse: number(view.evaluation.in_use) }) }}</p>
             <p v-if="forecastAccounts.length" class="mt-1 break-words text-xs text-gray-500">{{ t('accountRefill.forecastAccounts') }}: {{ forecastAccounts.map(account => `#${account.id} ${account.name}`).join('、') }}</p>
             <p class="mt-1 tabular-nums">{{ t(view.forecast_observation.no_capacity ? 'accountRefill.observationNoCapacity' : 'accountRefill.forecastProgress', { elapsed: view.forecast_observation.sustained_seconds, required: view.forecast_observation.required_seconds, utilization: number(view.forecast_observation.utilization_percent) }) }}</p>
           </template>
           <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.forecastHint') }}</p>
-          <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.lastSample') }}: {{ date(view.forecast_observation.last_sample_at) }}</p>
+          <p v-if="view.config.forecast_enabled !== false && view.forecast_observation" class="mt-1 text-xs text-gray-500">{{ t('accountRefill.lastSample') }}: {{ date(view.forecast_observation.last_sample_at) }}</p>
         </div>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4"><div v-for="item in usageItems" :key="item.key" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800"><div class="text-xs text-gray-500">{{ t(`accountRefill.${item.key}`) }}</div><div class="mt-1 font-semibold tabular-nums">{{ number(item.value) }}</div></div></div>
         <p class="text-xs leading-5 text-gray-500">{{ t('accountRefill.progressHint') }}</p>
@@ -302,6 +306,7 @@ async function switchGroup(id: number) {
 function accept(data: RefillView, reset: boolean) {
   if (!reset && data.config.group_id !== selectedGroup.value) return
   data.config.delivery.privacy_enabled ??= true
+  data.config.forecast_enabled ??= true
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}

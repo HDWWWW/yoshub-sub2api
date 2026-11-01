@@ -62,6 +62,10 @@ func (s *AccountRefillService) recordCapacitySample(c AccountRefillConfig, revis
 		*t = refillCapacityTracker{revision: revision, groupID: c.GroupID, target: c.TargetConcurrency, hold: c.ConcurrencySustainSeconds}
 	}
 	recordRefillObservation(&t.observation, c, e.InUse, e.Capacity, refillCapacityHigh(c, e), now)
+	if !refillForecastEnabled(c) {
+		t.forecast, t.forecastBasis = AccountRefillCapacityObservation{}, ""
+		return
+	}
 	basis := refillForecastBasis(e)
 	if t.forecastBasis != basis {
 		t.forecast = AccountRefillCapacityObservation{}
@@ -106,6 +110,10 @@ func (s *AccountRefillService) capacityObservation(c AccountRefillConfig, revisi
 func (s *AccountRefillService) forecastObservation(c AccountRefillConfig, revision int64, e AccountRefillEvaluation, now time.Time) AccountRefillCapacityObservation {
 	s.capacityMu.Lock()
 	defer s.capacityMu.Unlock()
+	if !refillForecastEnabled(c) {
+		s.capacity.forecast, s.capacity.forecastBasis = AccountRefillCapacityObservation{}, ""
+		return AccountRefillCapacityObservation{Status: "disabled", RequiredSeconds: c.ConcurrencySustainSeconds}
+	}
 	o := s.capacity.readObservation(c, revision, s.capacity.forecast, now)
 	if o.Status == "disabled" || o.Status == "waiting" {
 		return o

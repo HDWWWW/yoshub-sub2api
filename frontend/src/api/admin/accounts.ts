@@ -531,31 +531,31 @@ export async function batchUpdateCredentials(request: {
  * @param updates - Fields to update
  * @returns Success confirmation
  */
-export async function bulkUpdate(
-  accountIdsOrPayload: number[] | Record<string, unknown>,
-  updates?: Record<string, unknown>
-): Promise<{
+export interface BulkAccountUpdateResult {
   success: number
   failed: number
   success_ids?: number[]
   failed_ids?: number[]
   long_context_inherited_count?: number
-  results: Array<{ account_id: number; success: boolean; error?: string }>
-  }> {
+  results: Array<{ account_id: number; success: boolean; error?: string; proxy_id?: number; managed_ipv6?: string }>
+}
+
+export async function bulkUpdate(
+  accountIdsOrPayload: number[] | Record<string, unknown>,
+  updates?: Record<string, unknown>
+): Promise<BulkAccountUpdateResult> {
   const payload = Array.isArray(accountIdsOrPayload)
     ? {
         account_ids: accountIdsOrPayload,
         ...(updates ?? {})
       }
     : accountIdsOrPayload
-  const { data } = await apiClient.post<{
-    success: number
-    failed: number
-    success_ids?: number[]
-    failed_ids?: number[]
-    long_context_inherited_count?: number
-    results: Array<{ account_id: number; success: boolean; error?: string }>
-  }>('/admin/accounts/bulk-update', payload)
+  const automaticProxy = ['ovh_ipv6', 'random', 'least_used'].includes(String(payload.proxy_mode || ''))
+  // Address provisioning can outlast the default request timeout. Scope this to automatic
+  // proxy batches; an interrupted response must not cause an automatic retry.
+  const { data } = automaticProxy
+    ? await apiClient.post<BulkAccountUpdateResult>('/admin/accounts/bulk-update', payload, { timeout: 300000 })
+    : await apiClient.post<BulkAccountUpdateResult>('/admin/accounts/bulk-update', payload)
   return data
 }
 

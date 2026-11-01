@@ -5,7 +5,7 @@ import type { OvhIPv6Status } from '@/api/admin/ovhIPv6'
 
 const { get, setEnabled } = vi.hoisted(() => ({ get: vi.fn(), setEnabled: vi.fn() }))
 vi.mock('@/api/admin/ovhIPv6', () => ({ ovhIPv6API: { get, setEnabled } }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key }) }))
 
 enableAutoUnmount(afterEach)
 

@@ -12,6 +12,40 @@ export interface OvhIPv6Status {
   error?: string
 }
 
+export interface OvhIPv6StorageStats {
+  sampled_at: string
+  issued: string | null
+  prefix: string
+  control_available: boolean
+  control_error?: string
+  files: {
+    configured: boolean
+    available: boolean
+    error?: string
+    items: Array<{
+      name: 'counter.json' | 'counter.guard.json' | 'leases.json'
+      bytes: number | null
+      disk_bytes: number | null
+      error?: string
+    }>
+    counter_bytes: number | null
+    counter_disk_bytes: number | null
+    total_bytes: number | null
+    total_disk_bytes: number | null
+  }
+  database: {
+    available: boolean
+    error?: string
+    rows: number | null
+    reserved: number | null
+    bound: number | null
+    retiring: number | null
+    table_bytes: number | null
+    index_bytes: number | null
+    total_bytes: number | null
+  }
+}
+
 const allocationOperationKeys = new Map<string, string>()
 
 function allocationStorageKey(name: string): string {
@@ -54,6 +88,9 @@ export const ovhIPv6API = {
   },
   async get(signal?: AbortSignal): Promise<OvhIPv6Status> {
     return (await apiClient.get<OvhIPv6Status>('/admin/proxies/ovh-ipv6', { signal })).data
+  },
+  async getStorage(signal?: AbortSignal): Promise<OvhIPv6StorageStats> {
+    return (await apiClient.get<OvhIPv6StorageStats>('/admin/proxies/ovh-ipv6/storage', { signal })).data
   },
   async setEnabled(enabled: boolean): Promise<OvhIPv6Status> {
     return (await apiClient.put<OvhIPv6Status>('/admin/proxies/ovh-ipv6', { enabled })).data

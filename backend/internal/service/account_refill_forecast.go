@@ -10,10 +10,15 @@ import (
 
 const refillForecastReason = "预计账号退出后并发达到目标"
 
+// Rules saved before the switch existed retain their enabled behavior.
+func refillForecastEnabled(c AccountRefillConfig) bool {
+	return c.ForecastEnabled == nil || *c.ForecastEnabled
+}
+
 // The current demand is retained in full. Only future capacity is reduced;
 // pending deliveries contribute their saved capacity, never live capacity.
 func refillForecastHigh(c AccountRefillConfig, e AccountRefillEvaluation) bool {
-	return e.ForecastAccounts > 0 && e.InUse > 0 &&
+	return refillForecastEnabled(c) && e.ForecastAccounts > 0 && e.InUse > 0 &&
 		float64(e.InUse)*100 >= float64(e.ForecastCapacity+e.PendingCapacity)*float64(c.TargetConcurrency)
 }
 

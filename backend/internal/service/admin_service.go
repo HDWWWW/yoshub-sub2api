@@ -496,9 +496,11 @@ type BulkUpdateAccountFilters struct {
 
 // BulkUpdateAccountResult captures the result for a single account update.
 type BulkUpdateAccountResult struct {
-	AccountID int64  `json:"account_id"`
-	Success   bool   `json:"success"`
-	Error     string `json:"error,omitempty"`
+	AccountID   int64  `json:"account_id"`
+	Success     bool   `json:"success"`
+	Error       string `json:"error,omitempty"`
+	ProxyID     int64  `json:"proxy_id,omitempty"`
+	ManagedIPv6 string `json:"managed_ipv6,omitempty"`
 }
 
 // AdminUpdateAPIKeyGroupIDResult is the result of AdminUpdateAPIKeyGroupID.

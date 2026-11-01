@@ -35,6 +35,7 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
+	ForecastEnabled           *bool                                  `json:"forecast_enabled,omitempty"`
 	RotationEnabled           bool                                   `json:"rotation_enabled"`
 	Rotation                  []AccountRefillRotationStep            `json:"rotation"`
 	Notifications             AccountRefillNotificationConfig        `json:"notifications"`
@@ -400,14 +401,16 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		e.InUse += row.InUse
 		if row.State == "ready" || row.State == "expiring" || row.State == "quota_low" {
 			e.Capacity += refillMax(0, a.Concurrency)
-			row.ForecastLoss = a.Concurrency > 0 && (quotaAtFloor || row.State == "expiring")
-			if row.ForecastLoss {
-				e.ForecastAccounts++
-			} else {
-				e.ForecastCapacity += refillMax(0, a.Concurrency)
+			if refillForecastEnabled(c) {
+				row.ForecastLoss = a.Concurrency > 0 && (quotaAtFloor || row.State == "expiring")
+				if row.ForecastLoss {
+					e.ForecastAccounts++
+				} else {
+					e.ForecastCapacity += refillMax(0, a.Concurrency)
+				}
 			}
 		}
-		if row.State == "ready" && !row.ForecastLoss {
+		if refillForecastEnabled(c) && row.State == "ready" && !row.ForecastLoss {
 			e.ForecastReady++
 		}
 		e.Accounts = append(e.Accounts, row)
@@ -448,7 +451,7 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		e.Reason = "在途任务已抵扣缺口，等待交付"
 	}
 	limitReady := e.Ready
-	if c.Mode == "capacity" {
+	if c.Mode == "capacity" && refillForecastEnabled(c) {
 		// Replacements may overlap with accounts at the quota floor, as with
 		// existing expiring-account replacements, without exceeding future stock.
 		limitReady = e.ForecastReady

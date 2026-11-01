@@ -36,6 +36,18 @@ OVH_IPV6_CONTROL_URL=http://172.22.0.1:11881
 OVH_IPV6_CONTROL_TOKEN=<same private control token>
 ```
 
+For the application's optional storage-usage view, also set
+`OVH_IPV6_STATE_STATS_DIR=/run/ovh-ipv6-state` and bind-mount the entire host state
+directory read-only at that path. Do not bind individual files: atomic renames
+would leave those mounts pointing at stale inodes. Grant the actual application
+UID directory traversal only (for example, `setfacl -m u:1000:--x
+/var/lib/yoshub-ipv6-egress`), retaining root ownership and `0600` files. The app
+only stats the three fixed regular files and never reads their contents. Verify
+permissions as the application UID and restore/check the traverse ACL after
+future systemd starts, which may reset its mask via `StateDirectoryMode=0700`.
+The existing agent protocol and process are unchanged; only new application
+slots need the mount. See `docs/yoshub-ovh-ipv6.md` for API fields and size scope.
+
 ## Control protocol
 
 All endpoints require `Authorization: Bearer <control token>`. JSON bodies are

@@ -2,21 +2,13 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <div class="flex flex-wrap-reverse items-start justify-between gap-3">
-          <AccountTableFilters
-            v-model:searchQuery="params.search"
-            :filters="params"
-            :groups="groups"
-            @update:filters="(newFilters) => Object.assign(params, newFilters)"
-            @change="debouncedReload"
-            @update:searchQuery="debouncedReload"
-          />
+        <div class="flex min-w-0 flex-col gap-3">
           <AccountTableActions
             :loading="loading"
             @refresh="handleManualRefresh"
             @create="showCreate = true"
           >
-            <template #after>
+            <template #before>
               <button class="btn btn-secondary" data-testid="open-account-scheduling" @click="showScheduling = true">{{ t('accountRefill.schedulingTitle') }}</button>
               <AstraPriorityControl />
               <button class="btn btn-secondary" data-testid="open-account-refill" @click="refillInitialTab = 'connection'; showAccountRefill = true">{{ t('accountRefill.title') }}</button>
@@ -30,6 +22,8 @@
               >
                 {{ t('admin.accounts.bulkConcurrency.title') }}
               </button>
+            </template>
+            <template #after>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -173,6 +167,14 @@
               </div>
             </template>
           </AccountTableActions>
+          <AccountTableFilters
+            v-model:searchQuery="params.search"
+            :filters="params"
+            :groups="groups"
+            @update:filters="(newFilters) => Object.assign(params, newFilters)"
+            @change="debouncedReload"
+            @update:searchQuery="debouncedReload"
+          />
         </div>
         <div
           v-if="hasPendingListSync"
