@@ -72,9 +72,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 	compatPromptCacheTenantIsolated bool,
-) (forwardResult *OpenAIForwardResult, forwardErr error) {
-	ctx = s.withRefillAutoFast(ctx, account)
-	defer func() { markRefillAutoFastResult(ctx, account, forwardResult) }()
+) (*OpenAIForwardResult, error) {
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)

@@ -261,8 +261,6 @@ type OpenAIForwardResult struct {
 	// The upstream response declaration remains separate above and is reconciled
 	// at usage-recording time, where the credential protocol is available.
 	ServiceTier *string
-	// RefillAutoFast captures the account-scoped free Fast decision for this turn.
-	RefillAutoFast bool
 	// ReasoningEffort is extracted from request body (reasoning.effort) or derived from model suffix
 	// after group policy rewriting and model-family remapping.
 	// Stored for usage records display; nil means not provided / not applicable.
@@ -447,7 +445,6 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
-	accountRefill         *AccountRefillService
 	accountRepo           AccountRepository
 	usageLogRepo          UsageLogRepository
 	usageBillingRepo      UsageBillingRepository

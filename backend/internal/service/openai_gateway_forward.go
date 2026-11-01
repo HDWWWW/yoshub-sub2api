@@ -18,9 +18,7 @@ import (
 )
 
 // Forward forwards request to OpenAI API
-func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (forwardResult *OpenAIForwardResult, forwardErr error) {
-	ctx = s.withRefillAutoFast(ctx, account)
-	defer func() { markRefillAutoFastResult(ctx, account, forwardResult) }()
+func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -649,7 +647,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	rawTier := requestView.ServiceTier
-	if tier := s.forcedOpenAIServiceTier(ctx, account); tier != "" {
+	if tier := openAIGroupForcedServiceTier(ctx, account); tier != "" {
 		rawTier = tier
 		if requestView.ServiceTier != tier {
 			markPatchSet("service_tier", tier)
