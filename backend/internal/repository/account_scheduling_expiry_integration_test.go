@@ -104,7 +104,11 @@ func TestLeaseExpirySurvivesNativeManualRenewalAndGraceUpdates(t *testing.T) {
 		query := "SELECT extract(epoch from " + aliasedAccountSchedulingExpirySQL("a") + ")::bigint FROM accounts a WHERE a.id=$1"
 		require.NoError(t, scanSingleRow(ctx, tx, query, []any{a.ID}, &actual))
 		require.Equal(t, expected.Unix(), actual)
-		require.True(t, loaded.ExpiresAt.Equal(native))
+		if loaded.HasNativeExpiry() {
+			require.Equal(t, expected.Unix(), loaded.ExpiresAt.Unix())
+		} else {
+			require.True(t, loaded.ExpiresAt.Equal(native))
+		}
 		require.Equal(t, 7, loaded.Priority)
 	}
 	assertDeadline(lease.Add(time.Hour))

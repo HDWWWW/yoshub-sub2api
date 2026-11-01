@@ -35,37 +35,38 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
-	RotationEnabled           bool                            `json:"rotation_enabled"`
-	Rotation                  []AccountRefillRotationStep     `json:"rotation"`
-	Notifications             AccountRefillNotificationConfig `json:"notifications"`
-	Enabled                   bool                            `json:"enabled"`
-	MonitorEnabled            bool                            `json:"monitor_enabled"`
-	Mode                      string                          `json:"mode"`
-	GroupID                   int64                           `json:"group_id"`
-	DeliveryGroupIDs          []int64                         `json:"delivery_group_ids"`
-	PushEnabled               bool                            `json:"push_enabled"`
-	MaxInFlight               int                             `json:"max_in_flight"`
-	IntervalMinutes           int                             `json:"interval_minutes"`
-	IntervalQuantity          int                             `json:"interval_quantity"`
-	Plan                      string                          `json:"plan"`
-	MinReady                  int                             `json:"min_ready"`
-	MaxReady                  int                             `json:"max_ready"`
-	LeadMinutes               int                             `json:"lead_minutes"`
-	MinRemaining5h            float64                         `json:"min_remaining_5h"`
-	MinRemaining7d            float64                         `json:"min_remaining_7d"`
-	TargetConcurrency         int                             `json:"target_concurrency_percent"`
-	ConcurrencySustainSeconds int                             `json:"concurrency_sustain_seconds"`
-	ImportExpiryGraceMinutes  int                             `json:"import_expiry_grace_minutes"`
-	CheckSeconds              int                             `json:"check_seconds"`
-	CooldownSeconds           int                             `json:"cooldown_seconds"`
-	DailyMaxCount             int                             `json:"daily_max_count"`
-	DailyMaxPoints            float64                         `json:"daily_max_points"`
-	MaxUnitPrice              float64                         `json:"max_unit_price"`
-	ImportConcurrency         int                             `json:"import_concurrency"`
-	WindowEnabled             bool                            `json:"window_enabled"`
-	WindowStart               string                          `json:"window_start"`
-	WindowEnd                 string                          `json:"window_end"`
-	Delivery                  AccountRefillDeliveryConfig     `json:"delivery"`
+	RotationEnabled           bool                                   `json:"rotation_enabled"`
+	Rotation                  []AccountRefillRotationStep            `json:"rotation"`
+	Notifications             AccountRefillNotificationConfig        `json:"notifications"`
+	Enabled                   bool                                   `json:"enabled"`
+	MonitorEnabled            bool                                   `json:"monitor_enabled"`
+	Mode                      string                                 `json:"mode"`
+	GroupID                   int64                                  `json:"group_id"`
+	DeliveryGroupIDs          []int64                                `json:"delivery_group_ids"`
+	PushEnabled               bool                                   `json:"push_enabled"`
+	MaxInFlight               int                                    `json:"max_in_flight"`
+	IntervalMinutes           int                                    `json:"interval_minutes"`
+	IntervalQuantity          int                                    `json:"interval_quantity"`
+	Plan                      string                                 `json:"plan"`
+	MinReady                  int                                    `json:"min_ready"`
+	MaxReady                  int                                    `json:"max_ready"`
+	LeadMinutes               int                                    `json:"lead_minutes"`
+	MinRemaining5h            float64                                `json:"min_remaining_5h"`
+	MinRemaining7d            float64                                `json:"min_remaining_7d"`
+	PlanQuotaThresholds       map[string]AccountRefillQuotaThreshold `json:"plan_quota_thresholds,omitempty"`
+	TargetConcurrency         int                                    `json:"target_concurrency_percent"`
+	ConcurrencySustainSeconds int                                    `json:"concurrency_sustain_seconds"`
+	ImportExpiryGraceMinutes  int                                    `json:"import_expiry_grace_minutes"`
+	CheckSeconds              int                                    `json:"check_seconds"`
+	CooldownSeconds           int                                    `json:"cooldown_seconds"`
+	DailyMaxCount             int                                    `json:"daily_max_count"`
+	DailyMaxPoints            float64                                `json:"daily_max_points"`
+	MaxUnitPrice              float64                                `json:"max_unit_price"`
+	ImportConcurrency         int                                    `json:"import_concurrency"`
+	WindowEnabled             bool                                   `json:"window_enabled"`
+	WindowStart               string                                 `json:"window_start"`
+	WindowEnd                 string                                 `json:"window_end"`
+	Delivery                  AccountRefillDeliveryConfig            `json:"delivery"`
 }
 
 type AccountRefillDeliveryConfig struct {
@@ -96,6 +97,9 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
+	if err := validateRefillPlanQuotas(c); err != nil {
+		return err
+	}
 	if err := validateRefillRotation(c); err != nil {
 		return err
 	}
@@ -187,6 +191,9 @@ func (j AccountRefillJob) pending() bool {
 }
 
 type AccountRefillAccount struct {
+	Plan            string     `json:"plan"`
+	MinRemaining5h  float64    `json:"min_remaining_5h"`
+	MinRemaining7d  float64    `json:"min_remaining_7d"`
 	ExpirySource    string     `json:"expiry_source"`
 	SourceSyncedAt  string     `json:"source_synced_at,omitempty"`
 	ID              int64      `json:"id"`
@@ -264,9 +271,8 @@ func decodeAccountRefillState(raw string) (accountRefillState, error) {
 	return state, nil
 }
 
-// ImportedAccountExpiry preserves the native timestamp and records only a private
-// scheduling grace. Legacy exports with an exact original+offset marker normalize
-// once; subsequent imports never accumulate another offset.
+// ImportedAccountExpiry stores the actual local deadline and a separate source
+// lease. Reprocessing marked input never accumulates another extension.
 func ImportedAccountExpiry(expires *int64, extra map[string]any) (*int64, map[string]any) {
 	return ImportedAccountExpiryWithGrace(expires, extra, AccountImportExpiryOffsetMinutes)
 }
@@ -279,6 +285,13 @@ func ImportedAccountExpiryWithGrace(expires *int64, extra map[string]any, minute
 		return expires, extra
 	}
 	original := *expires
+	if extra[AccountNativeExpiryExtraKey] == true {
+		a := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: extra}
+		recalculateNativeExpiry(a)
+		if a.ExpiresAt != nil && a.ExpiresAt.Unix() == original {
+			original = expiryTimestamp(extra[AccountExpiryBaseExtraKey])
+		}
+	}
 	if _, current := extra[AccountImportExpiryGraceExtraKey]; !current {
 		if v, ok := resolveAccountExtraNumber(extra, "import_original_expires_at"); ok && v > 0 {
 			offset, marked := resolveAccountExtraNumber(extra, "import_expiry_offset_seconds")
@@ -294,7 +307,11 @@ func ImportedAccountExpiryWithGrace(expires *int64, extra map[string]any, minute
 	copyExtra[AccountImportExpiryGraceExtraKey] = minutes * 60
 	copyExtra[AccountSourceExpiryExtraKey] = original
 	copyExtra[AccountSourceExpiryOriginExtraKey] = "import"
-	return &original, copyExtra
+	copyExtra[AccountNativeExpiryExtraKey] = true
+	copyExtra[AccountExpiryBaseExtraKey] = original
+	copyExtra[AccountExpiryManualExtraKey] = false
+	deadline := original + int64(minutes*60)
+	return &deadline, copyExtra
 }
 
 var refillTimezone = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -325,6 +342,9 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		sourceExpiry, origin := a.SourceExpiresAt()
 		synced, _ := a.Extra[AccountSourceExpiryCheckedExtraKey].(string)
 		row := AccountRefillAccount{ID: a.ID, Name: a.Name, State: "ready", ExpiresAt: a.SchedulingExpiresAt(), SourceExpiresAt: sourceExpiry, ExpirySource: origin, SourceSyncedAt: synced, Concurrency: a.Concurrency}
+		row.Plan = refillAccountPlan(a, jobs)
+		threshold := refillQuotaThreshold(c, row.Plan)
+		row.MinRemaining5h, row.MinRemaining7d = threshold.MinRemaining5h, threshold.MinRemaining7d
 		if load := loads[a.ID]; load != nil {
 			row.InUse = load.CurrentConcurrency
 		}
@@ -333,7 +353,7 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 			name        string
 			minimum     float64
 			destination **float64
-		}{{"5h", c.MinRemaining5h, &row.Remaining5h}, {"7d", c.MinRemaining7d, &row.Remaining7d}} {
+		}{{"5h", threshold.MinRemaining5h, &row.Remaining5h}, {"7d", threshold.MinRemaining7d, &row.Remaining7d}} {
 			used, valid := resolveAccountExtraNumber(a.Extra, "codex_"+w.name+"_used_percent")
 			if !valid || math.IsNaN(used) || math.IsInf(used, 0) || used < 0 || used > 100 {
 				continue

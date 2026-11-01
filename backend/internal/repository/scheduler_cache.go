@@ -1270,6 +1270,13 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		return nil
 	}
 	keys := []string{
+		// Native deadlines and legacy retention must agree across both cache paths.
+		service.AccountNativeExpiryExtraKey,
+		service.AccountImportExpiryGraceExtraKey,
+		service.AccountSourceExpiryExtraKey,
+		service.AccountSourceExpiryOriginExtraKey,
+		"import_original_expires_at",
+		"import_expiry_offset_seconds",
 		// Anthropic shared-window and Fable-only threshold checks run on this
 		// projection. UpdateExtra refreshes both payloads without a bucket rebuild.
 		"same_account_retry_count",

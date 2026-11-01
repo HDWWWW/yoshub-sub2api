@@ -97,7 +97,7 @@ func TestRefillDefaultsAndCustomGrace(t *testing.T) {
 	for _, minutes := range []int{0, 45, 120, 1440} {
 		expiry := int64(2000000000)
 		native, extra := ImportedAccountExpiryWithGrace(&expiry, map[string]any{"keep": true}, minutes)
-		require.Equal(t, expiry, *native)
+		require.Equal(t, expiry+int64(minutes*60), *native)
 		require.Equal(t, minutes*60, extra[AccountImportExpiryGraceExtraKey])
 		require.Equal(t, true, extra["keep"])
 	}

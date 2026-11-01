@@ -582,6 +582,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	ctx = WithAccountExpiryWrite(ctx, input.ExpiresAt)
 	if err := validateSchedulingPriorityMode(ctx, input.SchedulingPriorityMode, input.Priority); err != nil {
 		return nil, err
 	}
@@ -864,12 +865,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.Status = input.Status
 	}
 	if input.ExpiresAt != nil {
-		if *input.ExpiresAt <= 0 {
-			account.ExpiresAt = nil
-		} else {
-			expiresAt := time.Unix(*input.ExpiresAt, 0)
-			account.ExpiresAt = &expiresAt
-		}
+		ApplyAccountExpiryWrite(ctx, account, *input.ExpiresAt)
 	}
 	if input.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -28,7 +29,28 @@ func accountRefillReasonDetail(c AccountRefillConfig, e AccountRefillEvaluation)
 			excluded = append(excluded, fmt.Sprintf("%d 个将在 %d 分钟内到期", n, c.LeadMinutes))
 		}
 		if n := counts["quota_low"]; n > 0 {
-			excluded = append(excluded, fmt.Sprintf("%d 个额度低于下限（5h %.2f%% / 7d %.2f%%）", n, c.MinRemaining5h, c.MinRemaining7d))
+			if len(c.PlanQuotaThresholds) == 0 {
+				excluded = append(excluded, fmt.Sprintf("%d 个额度低于下限（5h %.2f%% / 7d %.2f%%）", n, c.MinRemaining5h, c.MinRemaining7d))
+			} else {
+				byThreshold := map[string]int{}
+				for _, account := range e.Accounts {
+					if account.State == "quota_low" {
+						plan := account.Plan
+						if plan == "" {
+							plan = "未识别套餐"
+						}
+						byThreshold[fmt.Sprintf("%s 额度低于下限（5h %.2f%% / 7d %.2f%%）", plan, account.MinRemaining5h, account.MinRemaining7d)]++
+					}
+				}
+				keys := make([]string, 0, len(byThreshold))
+				for key := range byThreshold {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				for _, key := range keys {
+					excluded = append(excluded, fmt.Sprintf("%d 个 %s", byThreshold[key], key))
+				}
+			}
 		}
 		if n := counts["unavailable"]; n > 0 {
 			excluded = append(excluded, fmt.Sprintf("%d 个暂不可调度", n))

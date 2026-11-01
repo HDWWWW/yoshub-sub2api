@@ -1,0 +1,73 @@
+//go:build integration
+
+package repository
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNativeExpiryAtomicRetentionSupplierEchoAndAutoPause(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	client := tx.Client()
+	repo := newAccountRepositoryWithSQL(client, tx, nil)
+	original := time.Now().Add(-15 * time.Minute).Truncate(time.Second).Unix()
+	deadline, extra := service.ImportedAccountExpiryWithGrace(&original, nil, 30)
+	extra[service.AccountDeliveryKeyExtraKey] = "legacy"
+	extra[service.AccountDeliveryExpiryExtraKey] = original
+	at := time.Unix(*deadline, 0)
+	a := mustCreateAccount(t, client, &service.Account{Name: "native-expiry-round-trip", Platform: service.PlatformOpenAI,
+		Type: service.AccountTypeOAuth, Priority: 7, Schedulable: true, ExpiresAt: &at, AutoPauseOnExpired: true, Extra: extra})
+	_, err := client.Account.UpdateOneID(a.ID).SetExpiresAt(at).SetAutoPauseOnExpired(true).Save(ctx)
+	require.NoError(t, err)
+	stale, err := repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountImportExpiryGraceExtraKey: 3600}))
+	stale.Name = "unrelated edit"
+	stale.Extra = map[string]any{"public": true, service.AccountDeliveryKeyExtraKey: "forged"}
+	require.NoError(t, repo.Update(ctx, stale))
+	loaded, err := repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.Equal(t, original+3600, loaded.ExpiresAt.Unix())
+	require.Equal(t, "legacy", loaded.Extra[service.AccountDeliveryKeyExtraKey])
+	require.Equal(t, true, loaded.Extra["public"])
+	require.Equal(t, 3600, loaded.ExpiryGraceSeconds())
+	var sqlDeadline int64
+	query := "SELECT extract(epoch from " + aliasedAccountSchedulingExpirySQL("a") + ")::bigint FROM accounts a WHERE a.id=$1"
+	require.NoError(t, scanSingleRow(ctx, tx, query, []any{a.ID}, &sqlDeadline))
+	require.Equal(t, loaded.ExpiresAt.Unix(), sqlDeadline)
+	_, err = repo.AutoPauseExpiredAccounts(ctx, time.Now())
+	require.NoError(t, err)
+	loaded, err = repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.True(t, loaded.Schedulable)
+	// The administrator's exact native date wins, even when the supplier echoes
+	// its original timestamp after this edit or a source sync arrives later.
+	manual := time.Now().Add(-time.Minute).Truncate(time.Second).Unix()
+	require.NoError(t, repo.Update(service.WithAccountExpiryWrite(ctx, &manual), loaded))
+	supplier := adminaccess.WithLegacyKey(ctx)
+	require.NoError(t, repo.Update(service.WithAccountExpiryWrite(supplier, &original), loaded))
+	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountSourceExpiryExtraKey: original + 60}))
+	loaded, err = repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.Equal(t, manual, loaded.ExpiresAt.Unix())
+	require.Equal(t, original, service.AccountForAdminRead(supplier, loaded).ExpiresAt.Unix())
+	require.NoError(t, scanSingleRow(ctx, tx, query, []any{a.ID}, &sqlDeadline))
+	require.Equal(t, manual, sqlDeadline)
+	_, err = repo.AutoPauseExpiredAccounts(ctx, time.Now())
+	require.NoError(t, err)
+	loaded, err = repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.False(t, loaded.Schedulable)
+	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountImportExpiryGraceExtraKey: 7200}))
+	loaded, err = repo.GetByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.Equal(t, original+7200, loaded.ExpiresAt.Unix())
+	require.False(t, loaded.Schedulable, "retention must not reactivate a paused account")
+}

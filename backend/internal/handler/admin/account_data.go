@@ -10,6 +10,7 @@ import (
 
 	"log/slog"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -187,7 +188,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 
 	dataAccounts := make([]DataAccount, 0, len(accounts))
 	for i := range accounts {
-		acc := accounts[i]
+		acc := *service.AccountForAdminRead(c.Request.Context(), &accounts[i])
 		var proxyKey *string
 		if acc.ProxyID != nil {
 			if key, ok := proxyKeyByID[*acc.ProxyID]; ok {
@@ -242,6 +243,15 @@ func (h *AccountHandler) ImportData(c *gin.Context) {
 		grace = h.accountRefill.ImportExpiryGraceMinutes(c.Request.Context())
 	}
 	applyExternalImportExpiry(&req, c.GetString("auth_method"), grace)
+	if key := adminaccess.KeyIdentity(c.Request.Context()); key != "" {
+		for i := range req.Data.Accounts {
+			a := &req.Data.Accounts[i]
+			if a.Extra[service.AccountNativeExpiryExtraKey] == true {
+				a.Extra[service.AccountDeliveryKeyExtraKey] = key
+				a.Extra[service.AccountDeliveryExpiryExtraKey] = a.Extra[service.AccountExpiryBaseExtraKey]
+			}
+		}
+	}
 	executeAdminIdempotentJSON(c, "admin.accounts.import_data", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		return h.importData(ctx, req)
 	})

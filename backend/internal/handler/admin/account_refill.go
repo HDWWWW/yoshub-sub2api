@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -85,28 +86,48 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Config   service.AccountRefillConfig `json:"config"`
-		APIToken string                      `json:"api_token"`
-		Revision int64                       `json:"revision"`
-		Webhook  string                      `json:"wecom_webhook"`
+		Config   json.RawMessage `json:"config"`
+		APIToken string          `json:"api_token"`
+		Revision int64           `json:"revision"`
+		Webhook  string          `json:"wecom_webhook"`
 	}
 	current, err := svc.View(c.Request.Context())
 	if err != nil {
 		response.Error(c, 503, "补号状态读取失败")
 		return
 	}
-	// Older clients omit new extension fields; preserve their saved values.
-	req.Config = current.Config
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128*1024)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "补号设置格式无效")
 		return
 	}
-	if err := svc.Configure(c.Request.Context(), req.Config, req.APIToken, req.Revision, req.Webhook); err != nil {
+	config, err := decodeAccountRefillConfig(current.Config, req.Config)
+	if err != nil {
+		response.BadRequest(c, "补号设置格式无效")
+		return
+	}
+	if err := svc.Configure(c.Request.Context(), config, req.APIToken, req.Revision, req.Webhook); err != nil {
 		refillResponseError(c, err)
 		return
 	}
 	h.GetAccountRefill(c)
+}
+
+func decodeAccountRefillConfig(current service.AccountRefillConfig, raw json.RawMessage) (service.AccountRefillConfig, error) {
+	// Omitted fields from older clients retain their values. A provided plan map
+	// replaces the old map so disabling an override actually removes it.
+	if len(raw) == 0 {
+		return current, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return current, err
+	}
+	if _, present := fields["plan_quota_thresholds"]; present {
+		current.PlanQuotaThresholds = nil
+	}
+	err := json.Unmarshal(raw, &current)
+	return current, err
 }
 
 func (h *AccountHandler) CheckAccountRefill(c *gin.Context) {

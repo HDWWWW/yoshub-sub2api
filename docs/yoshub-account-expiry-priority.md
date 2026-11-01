@@ -15,12 +15,14 @@ Native admin requests, responses and exports retain the exact configured priorit
 - Identical expiry instants share a tier for normal load balancing.
 - Undated accounts follow, retaining their relative manual priority.
 - Expired accounts come last; auto-pause still obeys the per-account option.
-- Imported OpenAI OAuth accounts use their private 60-minute grace when computing
-  the scheduling deadline. Their native `expires_at` remains the supplier timestamp.
+- From `native-expiry.1`, imports store the actual deadline in native `expires_at`;
+  supplier reclaim time remains separate. Unconverted legacy records still use
+  internal grace. Only the importing key receives the original delivery timestamp
+  through a compatibility view, which is never used by scheduling.
 
 The normal and advanced OpenAI schedulers, legacy fallback, cached candidates and
 mixed-platform gateway use this internal rank. Refreshes never mutate shared snapshots.
-The expiry worker now only pauses accounts, using the same internal grace as selection.
+The expiry worker now only pauses accounts, using the same effective deadline as selection.
 Manual priority changes are no longer overwritten, including during external delivery.
 Disabling the expiry flag restores selection from the native priorities immediately
 on application restart. No schema change or OAuth credential change is required.

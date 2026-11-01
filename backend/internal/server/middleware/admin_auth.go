@@ -161,6 +161,7 @@ func validateAdminAPIKey(
 	c.Set(string(ContextKeyUserRole), admin.Role)
 	c.Set(ContextKeyAuthEmail, admin.Email)
 	c.Set("auth_method", "admin_api_key")
+	c.Request = c.Request.WithContext(adminaccess.WithLegacyKey(c.Request.Context()))
 	return true
 }
 

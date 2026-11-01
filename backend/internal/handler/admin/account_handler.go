@@ -370,7 +370,7 @@ func (h *AccountHandler) isSimpleMode() bool {
 
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
-		Account:            h.accountResponseFromService(account),
+		Account:            h.accountResponseFromService(service.AccountForAdminRead(ctx, account)),
 		simpleMode:         h.isSimpleMode(),
 		CurrentConcurrency: 0,
 	}
@@ -804,9 +804,10 @@ func (h *AccountHandler) List(c *gin.Context) {
 	result := make([]AccountWithConcurrency, len(accounts))
 	for i := range accounts {
 		acc := &accounts[i]
-		accountResponse := h.accountResponseFromService(acc)
+		visible := service.AccountForAdminRead(c.Request.Context(), acc)
+		accountResponse := h.accountResponseFromService(visible)
 		if lite {
-			accountResponse = h.accountListResponseFromService(acc)
+			accountResponse = h.accountListResponseFromService(visible)
 			if h.isSimpleMode() {
 				accountResponse.GroupIDs = filterSimpleModeGroupIDs(accountResponse.GroupIDs, simpleModeCompositeServiceGroupIDs(acc))
 			}

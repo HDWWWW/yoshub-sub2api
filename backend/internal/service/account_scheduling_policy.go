@@ -9,15 +9,15 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
-// AccountImportExpiryGraceExtraKey is private scheduling metadata. Native admin
-// reads/writes and exports retain the supplier's expires_at and priority values.
+// AccountImportExpiryGraceExtraKey stores the import retention policy. Native
+// expiry includes retention; the original supplier deadline is kept separately.
 const AccountImportExpiryGraceExtraKey = "yoshub_import_expiry_grace_seconds"
 const AccountSourceExpiryExtraKey = "yoshub_source_expires_at"
 const AccountSourceExpiryOriginExtraKey = "yoshub_source_expiry_origin"
 const AccountSourceExpiryCheckedExtraKey = "yoshub_source_expiry_checked_at"
 
 func isAccountImportExpiryExtra(key string) bool {
-	return key == AccountManualPriorityExtraKey || key == AccountImportExpiryGraceExtraKey || key == AccountSourceExpiryExtraKey || key == AccountSourceExpiryOriginExtraKey || key == AccountSourceExpiryCheckedExtraKey || key == "import_original_expires_at" || key == "import_expiry_offset_seconds"
+	return key == AccountManualPriorityExtraKey || IsAccountExpiryExtra(key)
 }
 
 func (a *Account) SourceExpiresAt() (*time.Time, string) {
@@ -77,13 +77,13 @@ func preserveAccountImportExpiryExtra(current, incoming map[string]any) map[stri
 	return out
 }
 
-// SchedulingExpiresAt adds a bounded, import-only grace period without changing
-// ExpiresAt or OAuth token expiry. Keep validation aligned with the SQL predicate.
+// SchedulingExpiresAt uses the materialized native deadline, or calculates the
+// bounded extension for legacy records. Keep it aligned with the SQL predicate.
 func (a *Account) SchedulingExpiresAt() *time.Time {
 	if a == nil || a.ExpiresAt == nil {
 		return nil
 	}
-	if !a.IsOpenAIOAuth() {
+	if !a.IsOpenAIOAuth() || a.HasNativeExpiry() {
 		return a.ExpiresAt
 	}
 	base := a.ExpiresAt

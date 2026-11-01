@@ -20,6 +20,7 @@ describe('account expiry grace controls', () => {
     await w.get('[data-testid="expiry-grace-minutes"]').setValue(125)
     await w.get('[data-testid="expiry-grace-save"]').trigger('click'); await flushPromises()
     expect(save).toHaveBeenLastCalledWith(34, 125)
+    expect(w.emitted('saved')?.[0]).toEqual([Date.parse('2026-11-01T03:00:00Z') / 1000])
     await w.get('[data-testid="expiry-grace-minutes"]').setValue(0)
     await w.get('[data-testid="expiry-grace-save"]').trigger('click'); await flushPromises()
     expect(save).toHaveBeenLastCalledWith(34, 0)

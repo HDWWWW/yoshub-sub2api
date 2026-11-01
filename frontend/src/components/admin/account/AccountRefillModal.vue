@@ -59,6 +59,17 @@
             <p class="text-sm leading-6 text-gray-500">{{ t(form.mode === 'interval' ? 'accountRefill.intervalHint' : form.mode === 'fixed' ? 'accountRefill.fixedHint' : 'accountRefill.ruleHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label v-for="field in ruleFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step || 1" class="input" :data-testid="`refill-${field.key}`" /></label></div>
             <p v-if="form.mode === 'capacity'" class="input-hint">{{ t('accountRefill.capacityObservationHint') }}</p>
+            <div v-if="form.mode !== 'interval'" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <p class="text-sm font-medium">{{ t('accountRefill.planQuotaTitle') }}</p>
+              <p class="input-hint">{{ t('accountRefill.planQuotaHint') }}</p>
+              <div v-for="plan in ['pro5x', 'pro20x']" :key="plan" class="space-y-3">
+                <label class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="!!form.plan_quota_thresholds?.[plan]" :data-testid="`refill-quota-${plan}-enabled`" @change="togglePlanQuota(plan)" />{{ plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }} · {{ t('accountRefill.planQuotaOverride') }}</label>
+                <div v-if="form.plan_quota_thresholds?.[plan]" class="grid gap-3 sm:grid-cols-2">
+                  <label><span class="input-label">{{ t('accountRefill.min_remaining_5h') }}</span><input v-model.number="form.plan_quota_thresholds[plan]!.min_remaining_5h" type="number" min="0" max="100" step="0.1" class="input" :data-testid="`refill-quota-${plan}-5h`" /></label>
+                  <label><span class="input-label">{{ t('accountRefill.min_remaining_7d') }}</span><input v-model.number="form.plan_quota_thresholds[plan]!.min_remaining_7d" type="number" min="0" max="100" step="0.1" class="input" :data-testid="`refill-quota-${plan}-7d`" /></label>
+                </div>
+              </div>
+            </div>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.window_enabled" type="checkbox" />{{ t('accountRefill.window_enabled') }}</label>
             <div v-if="form.window_enabled" class="grid gap-4 sm:grid-cols-2"><label><span class="input-label">{{ t('accountRefill.window_start') }}</span><input v-model="form.window_start" type="time" class="input" /></label><label><span class="input-label">{{ t('accountRefill.window_end') }}</span><input v-model="form.window_end" type="time" class="input" /></label></div>
             <p class="input-hint">{{ t('accountRefill.windowHint') }}</p>
@@ -180,7 +191,7 @@
         <h4 class="text-sm font-medium">{{ t('accountRefill.evaluation') }}</h4>
         <p class="text-xs text-gray-500">{{ t('accountRefill.evaluationLocalHint') }} {{ t('accountRefill.evaluationUpdated') }}: {{ date(view.evaluation.checked_at) }}</p>
         <p v-if="view.evaluation.error" class="text-sm text-amber-700" role="alert">{{ view.evaluation.error }}</p>
-        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in view.evaluation.accounts" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}</td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}</td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}</td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
+        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in view.evaluation.accounts" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}<div v-if="account.plan" class="text-xs text-gray-500">{{ account.plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }}</div></td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}<div v-if="account.min_remaining_5h != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_5h) }) }}</div></td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}<div v-if="account.min_remaining_7d != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_7d) }) }}</div></td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
       </div>
       <p v-if="conflict" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.conflict') }}</p>
     </div>
@@ -242,7 +253,7 @@ const manualDisabled = computed(() => busy.value || !view.value || (!manualPendi
 const keyDays = computed(() => { const at = view.value?.key?.expires_at; return at && !at.startsWith('0001') ? (Date.parse(at) - now.value) / 86400000 : null })
 const keyRemaining = computed(() => keyDays.value === null ? '' : keyDays.value <= 0 ? t('accountRefill.expired') : t('accountRefill.keyRemaining', { days: Math.floor(keyDays.value * 10) / 10 }))
 const fixedExpiry = computed({ get: () => form.value?.delivery.fixed_expires_at ? new Date(form.value.delivery.fixed_expires_at * 1000 + 8 * 3600000).toISOString().slice(0, 16) : '', set: v => { if (form.value) form.value.delivery.fixed_expires_at = v ? Math.floor(Date.parse(`${v}:00+08:00`) / 1000) : null } })
-type NumericKey = { [K in keyof RefillConfig]: RefillConfig[K] extends number ? K : never }[keyof RefillConfig]
+type NumericKey = { [K in keyof RefillConfig]-?: RefillConfig[K] extends number ? K : never }[keyof RefillConfig]
 const ruleFields = computed<{ key: NumericKey; min: number; max: number; step?: number }[]>(() => [
   ...(['min_ready', 'max_ready'] as const).map(key => ({ key, min: 1, max: 100 })),
   { key: 'lead_minutes', min: 0, max: 1440 },
@@ -257,6 +268,12 @@ const date = (v: string | null | undefined) => !v || v.startsWith('0001') ? '—
 const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`accountRefill.states.${state}`) : state
 const elapsed = (job: RefillJob) => { const seconds = Math.max(0, Math.floor(((job.finished_at ? Date.parse(job.finished_at) : now.value) - Date.parse(job.created_at)) / 1000)); return `${Math.floor(seconds / 60)}m ${seconds % 60}s` }
 function initializeRotation() { if (form.value?.rotation_enabled && !form.value.rotation?.length) form.value.rotation = [{ plan: 'pro20x', count: 1 }, { plan: 'pro5x', count: 2 }] }
+function togglePlanQuota(plan: string) {
+  if (!form.value) return
+  const thresholds = form.value.plan_quota_thresholds ??= {}
+  if (thresholds[plan]) delete thresholds[plan]
+  else thresholds[plan] = { min_remaining_5h: form.value.min_remaining_5h, min_remaining_7d: form.value.min_remaining_7d }
+}
 function moveRotation(index: number) { if (form.value && index > 0) { const rows = form.value.rotation; [rows[index - 1], rows[index]] = [rows[index]!, rows[index - 1]!] } }
 async function switchGroup(id: number) {
   if (!id || busy.value || dirty.value || manualPending.value) return
@@ -270,6 +287,7 @@ function accept(data: RefillView, reset: boolean) {
   if (!reset && data.config.group_id !== selectedGroup.value) return
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
+  data.config.plan_quota_thresholds ??= {}
   if (!reset && data.revision < revision) return
   if (!reset && view.value && Date.parse(data.evaluation.checked_at) < Date.parse(view.value.evaluation.checked_at)) data.evaluation = view.value.evaluation
   if (!reset && dirty.value && data.revision !== revision) conflict.value = true

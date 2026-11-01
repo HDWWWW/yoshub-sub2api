@@ -782,6 +782,7 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 			return errors.New("指定截止时间已过期")
 		}
 		extra := map[string]any{"refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
+			"refill_plan":            j.Plan,
 			"codex_fingerprint_mode": j.DeliveryConfig.FingerprintMode, "openai_oauth_responses_websockets_v2_enabled": j.DeliveryConfig.WSMode != "off", "openai_oauth_responses_websockets_v2_mode": j.DeliveryConfig.WSMode}
 		graceMinutes := AccountImportExpiryOffsetMinutes
 		if j.ExpiryGraceMinutes != nil {

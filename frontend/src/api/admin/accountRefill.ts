@@ -36,6 +36,7 @@ export interface RefillConfig {
   lead_minutes: number
   min_remaining_5h: number
   min_remaining_7d: number
+  plan_quota_thresholds?: Record<string, { min_remaining_5h: number; min_remaining_7d: number }>
   target_concurrency_percent: number
   concurrency_sustain_seconds: number
   import_expiry_grace_minutes: number
@@ -100,7 +101,7 @@ export interface RefillView {
     error?: string
     checked_at: string; ready: number; healthy: number; expiring: number; pending: number
     in_use: number; capacity: number; needed: number; reason: string
-    accounts: { id: number; name: string; state: string; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number }[]
+    accounts: { id: number; name: string; state: string; plan?: string; min_remaining_5h?: number; min_remaining_7d?: number; expires_at: string | null; source_expires_at: string | null; expiry_source: string; source_synced_at?: string; remaining_5h: number | null; remaining_7d: number | null; concurrency: number; in_use: number }[]
   }
   daily: { count: number; points: number; reserved_points: number; spent_points: number }
   next_check_at: string

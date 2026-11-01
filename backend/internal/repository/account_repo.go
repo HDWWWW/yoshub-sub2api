@@ -688,7 +688,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'opencode_go_usage_snapshot',
 			extra -> 'grok_observed_models',
 			extra -> 'upstream_model_metadata',
-			extra -> 'yoshub_manual_scheduling_priority'
+			extra -> 'yoshub_manual_scheduling_priority',
+			expires_at, extra
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -720,6 +721,8 @@ func lockAndMergeAccountProbeExtra(
 		currentGrokObservedModels      []byte
 		currentUpstreamModelMetadata   []byte
 		currentManualPriority          []byte
+		currentExpiry                  sql.NullTime
+		currentExtra                   []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -737,6 +740,8 @@ func lockAndMergeAccountProbeExtra(
 		&currentGrokObservedModels,
 		&currentUpstreamModelMetadata,
 		&currentManualPriority,
+		&currentExpiry,
+		&currentExtra,
 	); err != nil {
 		return nil, err
 	}
@@ -745,6 +750,18 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	locked := &service.Account{Platform: account.Platform, Type: account.Type}
+	if currentExpiry.Valid {
+		locked.ExpiresAt = &currentExpiry.Time
+	}
+	if len(currentExtra) > 0 {
+		if err := json.Unmarshal(currentExtra, &locked.Extra); err != nil {
+			return nil, err
+		}
+	}
+	account.Extra = extra
+	service.MergeLockedAccountExpiry(ctx, account, locked)
+	extra = account.Extra
 	if !service.HasManualSchedulingPriorityWrite(ctx) {
 		delete(extra, service.AccountManualPriorityExtraKey)
 		value, ok, err := decodeAccountExtraJSON(currentManualPriority)
@@ -2817,6 +2834,11 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
 	if len(updates) == 0 {
 		return nil
+	}
+	for key := range updates {
+		if service.IsAccountExpiryExtra(key) {
+			return r.updateAccountExpiryExtra(ctx, id, updates)
+		}
 	}
 
 	// 使用 JSONB 合并操作实现原子更新，避免读-改-写的并发丢失更新问题

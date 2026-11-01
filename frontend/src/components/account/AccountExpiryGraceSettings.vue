@@ -30,6 +30,7 @@ import { useI18n } from 'vue-i18n'
 import { accountExpiryGraceAPI } from '@/api/admin/accountExpiryGrace'
 
 const props = defineProps<{ accountId: number; active: boolean }>()
+const emit = defineEmits<{ saved: [expiresAt: number | null] }>()
 const { t } = useI18n()
 const expanded = ref(false), loading = ref(false), loaded = ref(false), saving = ref(false), success = ref(false)
 const minutes = ref(0), saved = ref(0), effectiveExpiry = ref<string | null>(null), sourceExpiry = ref<string | null>(null), error = ref('')
@@ -59,6 +60,7 @@ async function save() {
     const result = await accountExpiryGraceAPI.save(props.accountId, minutes.value)
     if (current !== generation) return
     minutes.value = saved.value = result.minutes; effectiveExpiry.value = result.effective_expires_at; sourceExpiry.value = result.source_expires_at; success.value = true
+    emit('saved', result.effective_expires_at ? Math.floor(new Date(result.effective_expires_at).getTime() / 1000) : null)
   } catch { if (current === generation) error.value = t('accountRefill.expiryGraceError') }
   finally { if (current === generation) saving.value = false }
 }

@@ -17,11 +17,12 @@ func accountSchedulingExpirySQL(expires, platform, kind, extra string) string {
 		source = fmt.Sprintf(`(CASE WHEN %s ~ '^[0-9]{1,12}$' THEN CASE WHEN (%s)::bigint BETWEEN 1 AND 253402214399 THEN LEAST(%s, to_timestamp((%s)::bigint)) ELSE %s END ELSE %s END)`, value, value, expires, value, source, source)
 	}
 	base := fmt.Sprintf("(CASE WHEN %s IS NULL THEN NULL WHEN %s = 'openai' AND %s = 'oauth' THEN %s ELSE %s END)", expires, platform, kind, source, expires)
-	return fmt.Sprintf(`(%s + CASE WHEN %s = 'openai' AND %s = 'oauth'
+	legacy := fmt.Sprintf(`(%s + CASE WHEN %s = 'openai' AND %s = 'oauth'
 		AND %s ~ '^[0-9]{1,5}$'
 		THEN CASE WHEN (%s)::integer BETWEEN 1 AND 86400
 			THEN (%s)::integer * INTERVAL '1 second' ELSE INTERVAL '0 seconds' END
 		ELSE INTERVAL '0 seconds' END)`, base, platform, kind, raw, raw, raw)
+	return fmt.Sprintf("(CASE WHEN %s = 'openai' AND %s = 'oauth' AND %s->'%s' = 'true'::jsonb THEN %s ELSE %s END)", platform, kind, extra, service.AccountNativeExpiryExtraKey, expires, legacy)
 }
 
 func aliasedAccountSchedulingExpirySQL(alias string) string {

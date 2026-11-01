@@ -30,7 +30,7 @@ func TestImportedAccountExpiry(t *testing.T) {
 	original := time.Now().Add(time.Hour).Unix()
 	extra := map[string]any{"unrelated": true}
 	deadline, marked := ImportedAccountExpiry(&original, extra)
-	require.Equal(t, original, *deadline)
+	require.Equal(t, original+3600, *deadline)
 	require.Len(t, extra, 1)
 	require.Equal(t, 3600, marked[AccountImportExpiryGraceExtraKey])
 	again, againExtra := ImportedAccountExpiry(deadline, marked)
@@ -40,14 +40,15 @@ func TestImportedAccountExpiry(t *testing.T) {
 	require.Equal(t, *deadline, *repeated)
 	later := original + 900
 	changed, _ := ImportedAccountExpiry(&later, marked)
-	require.Equal(t, later, *changed)
+	require.Equal(t, later+3600, *changed)
 	legacyExpiry := original + 3600
 	legacy, legacyExtra := ImportedAccountExpiry(&legacyExpiry, map[string]any{"import_original_expires_at": original, "import_expiry_offset_seconds": 3600})
-	require.Equal(t, original, *legacy)
+	require.Equal(t, original+3600, *legacy)
 	require.NotContains(t, legacyExtra, "import_original_expires_at")
-	// A subsequent manual renewal by exactly one hour must not look like a legacy export.
-	renewed, _ := ImportedAccountExpiry(&legacyExpiry, marked)
-	require.Equal(t, legacyExpiry, *renewed)
+	// An already materialized timestamp is idempotent; a different import is extended once.
+	renewedExpiry := original + 7200
+	renewed, _ := ImportedAccountExpiry(&renewedExpiry, marked)
+	require.Equal(t, renewedExpiry+3600, *renewed)
 	missing, _ := ImportedAccountExpiry(nil, nil)
 	require.Nil(t, missing)
 }
@@ -64,8 +65,8 @@ func TestAccountRefillEvaluation(t *testing.T) {
 	a.Extra = extra
 	e := evaluateAccountRefill(c, []Account{a}, nil, nil, now)
 	require.Equal(t, 1, e.Needed)
-	require.Equal(t, a.ExpiresAt.Unix()+3600, e.Accounts[0].ExpiresAt.Unix())
-	require.Equal(t, a.ExpiresAt.Unix(), e.Accounts[0].SourceExpiresAt.Unix())
+	require.Equal(t, a.ExpiresAt.Unix(), e.Accounts[0].ExpiresAt.Unix())
+	require.Equal(t, original, e.Accounts[0].SourceExpiresAt.Unix())
 	c.MaxReady = 1
 	require.Equal(t, 1, evaluateAccountRefill(c, []Account{a}, nil, nil, now).Needed)
 	c.MaxReady = 20

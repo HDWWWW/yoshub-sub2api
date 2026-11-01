@@ -1993,6 +1993,10 @@
           {{ t('admin.accounts.expiresAtHint') }}
           {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
         </p>
+        <template v-if="account?.platform === 'openai' && account.type === 'oauth' && !isSparkShadow">
+          <p class="input-hint">{{ t('accountRefill.nativeExpiryHint') }}</p>
+          <AccountExpiryGraceSettings :account-id="account.id" :active="show" @saved="form.expires_at = $event" />
+        </template>
       </div>
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
@@ -2713,8 +2717,6 @@
           </button>
         </div>
       </div>
-
-      <AccountExpiryGraceSettings v-if="account?.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" :account-id="account.id" :active="show" />
 
       <div
         v-if="account?.platform === 'openai'"
