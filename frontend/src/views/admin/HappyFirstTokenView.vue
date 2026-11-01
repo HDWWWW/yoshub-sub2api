@@ -27,6 +27,16 @@
             ><span class="mt-0.5 inline-block h-5 w-5 rounded-full bg-white shadow transition-transform" :class="enabled ? 'translate-x-[22px]' : 'translate-x-0.5'"></span></button>
           </div>
           <div class="space-y-6 p-6">
+            <div class="flex items-center justify-between gap-6">
+              <div>
+                <h2 id="happy-delta-label" class="font-medium text-gray-900 dark:text-white">{{ t('happyFirstToken.deltaMode') }}</h2>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.deltaHint') }}</p>
+              </div>
+              <button id="happy-delta" type="button" role="switch" :aria-checked="deltaMode" aria-labelledby="happy-delta-label"
+                class="relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary-600"
+                :class="deltaMode ? 'bg-primary-600' : 'bg-gray-300 dark:bg-dark-600'" :disabled="saving" @click="deltaMode = !deltaMode"
+              ><span class="mt-0.5 inline-block h-5 w-5 rounded-full bg-white shadow transition-transform" :class="deltaMode ? 'translate-x-[22px]' : 'translate-x-0.5'"></span></button>
+            </div>
             <div class="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 class="font-medium text-gray-900 dark:text-white">{{ t('happyFirstToken.rangeTitle') }}</h2>
@@ -57,6 +67,13 @@
               <div v-for="group in visibleGroups" :key="group.id" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
                 <label class="flex items-center gap-3 text-sm font-medium"><input type="checkbox" :checked="!!overrideFor(group.id)" :disabled="saving" :data-testid="`happy-group-${group.id}`" @change="toggleGroup(group.id)" />{{ group.name }} <span class="font-normal text-gray-500">#{{ group.id }} · {{ t(overrideFor(group.id) ? 'happyFirstToken.customGroup' : 'happyFirstToken.inherit') }}</span></label>
                 <template v-for="override in overrides.filter(g => g.group_id === group.id)" :key="override.group_id">
+                  <label class="mt-4 block text-sm"><span class="input-label">{{ t('happyFirstToken.deltaMode') }}</span>
+                    <select v-model="override.deltaMode" class="input" :disabled="saving" :data-testid="`happy-group-delta-${group.id}`">
+                      <option value="inherit">{{ t('happyFirstToken.inherit') }}</option>
+                      <option value="enabled">{{ t('happyFirstToken.enabled') }}</option>
+                      <option value="disabled">{{ t('happyFirstToken.disabled') }}</option>
+                    </select>
+                  </label>
                   <div class="mt-4 grid items-end gap-4 sm:grid-cols-3">
                     <label class="flex items-center gap-2 pb-3 text-sm"><input v-model="override.enabled" type="checkbox" :disabled="saving" />{{ t('happyFirstToken.groupEnable') }}</label>
                     <label><span class="input-label">{{ t('happyFirstToken.minimum') }} ({{ t('happyFirstToken.seconds') }})</span><input v-model="override.minimum" class="input" type="number" min="0" max="60" step="0.001" required :disabled="saving" :aria-invalid="!validRange(override.minimum, override.maximum)" /></label>
@@ -99,21 +116,22 @@ const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
 const enabled = ref(false)
+const deltaMode = ref(false)
 const minimum = ref<number | string>(0.1)
 const maximum = ref<number | string>(1)
 const saved = ref('')
 const groups = ref<AdminGroup[]>([])
-const overrides = ref<{ group_id: number; enabled: boolean; minimum: number | string; maximum: number | string }[]>([])
+const overrides = ref<{ group_id: number; enabled: boolean; deltaMode: string; minimum: number | string; maximum: number | string }[]>([])
 const groupSearch = ref('')
 const visibleGroups = computed(() => groups.value.filter(g => g.name.toLowerCase().includes(groupSearch.value.toLowerCase())))
 const overrideFor = (id: number) => overrides.value.find(g => g.group_id === id)
 function toggleGroup(id: number) {
   if (overrideFor(id)) overrides.value = overrides.value.filter(g => g.group_id !== id)
-  else overrides.value.push({ group_id: id, enabled: enabled.value, minimum: minimum.value, maximum: maximum.value })
+  else overrides.value.push({ group_id: id, enabled: enabled.value, deltaMode: 'inherit', minimum: minimum.value, maximum: maximum.value })
 }
 const validRange = (min: number | string, max: number | string) => min !== '' && max !== '' && Number.isFinite(Number(min)) && Number.isFinite(Number(max)) && Number(min) >= 0 && Number(max) <= 60 && Number(min) <= Number(max)
 const valid = computed(() => validRange(minimum.value, maximum.value) && overrides.value.every(g => validRange(g.minimum, g.maximum)))
-const payload = computed<HappyFirstTokenSettings>(() => ({ enabled: enabled.value, min_delay_ms: Math.round(Number(minimum.value) * 1000), max_delay_ms: Math.round(Number(maximum.value) * 1000), group_overrides: overrides.value.map(g => ({ group_id: g.group_id, enabled: g.enabled, min_delay_ms: Math.round(Number(g.minimum) * 1000), max_delay_ms: Math.round(Number(g.maximum) * 1000) })) }))
+const payload = computed<HappyFirstTokenSettings>(() => ({ enabled: enabled.value, delta_mode: deltaMode.value, min_delay_ms: Math.round(Number(minimum.value) * 1000), max_delay_ms: Math.round(Number(maximum.value) * 1000), group_overrides: overrides.value.map(g => ({ group_id: g.group_id, enabled: g.enabled, ...(g.deltaMode === 'inherit' ? {} : { delta_mode: g.deltaMode === 'enabled' }), min_delay_ms: Math.round(Number(g.minimum) * 1000), max_delay_ms: Math.round(Number(g.maximum) * 1000) })) }))
 const dirty = computed(() => JSON.stringify(payload.value) !== saved.value)
 const rangeLabel = computed(() => Number(minimum.value) === Number(maximum.value)
   ? t('happyFirstToken.fixed', { seconds: minimum.value })
@@ -121,9 +139,10 @@ const rangeLabel = computed(() => Number(minimum.value) === Number(maximum.value
 
 function apply(settings: HappyFirstTokenSettings) {
   enabled.value = settings.enabled
+  deltaMode.value = settings.delta_mode ?? false
   minimum.value = settings.min_delay_ms / 1000
   maximum.value = settings.max_delay_ms / 1000
-  overrides.value = (settings.group_overrides || []).map(g => ({ group_id: g.group_id, enabled: g.enabled, minimum: g.min_delay_ms / 1000, maximum: g.max_delay_ms / 1000 }))
+  overrides.value = (settings.group_overrides || []).map(g => ({ group_id: g.group_id, enabled: g.enabled, deltaMode: g.delta_mode == null ? 'inherit' : g.delta_mode ? 'enabled' : 'disabled', minimum: g.min_delay_ms / 1000, maximum: g.max_delay_ms / 1000 }))
   saved.value = JSON.stringify(payload.value)
 }
 

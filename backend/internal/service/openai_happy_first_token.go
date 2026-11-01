@@ -16,6 +16,10 @@ import (
 // its own notification bytes from account-failover decisions.
 const openAIHappyFirstTokenEvent = "event: gateway.status\ndata: {\"type\":\"gateway.status\",\"metadata\":{\"gateway_status\":\"upstream_connected\"}}\n\n"
 
+// Opt-in compatibility event for downstreams that count nonempty .delta events.
+// This is connection status, never response.output_text.delta or billable text.
+const openAIHappyFirstTokenDeltaEvent = "event: gateway.status.delta\ndata: {\"type\":\"gateway.status.delta\",\"delta\":\"upstream_connected\",\"metadata\":{\"gateway_status\":\"upstream_connected\"}}\n\n"
+
 const openAIHappyFirstTokenDeadlineKey = "openai_happy_first_token_deadline"
 
 // Called only after an upstream HTTP success has opened a Responses SSE stream.
@@ -38,6 +42,9 @@ func (s *OpenAIGatewayService) startOpenAIResponseSignals(ctx context.Context, c
 		}
 		settings = settings.ForGroup(groupID)
 		if settings.Enabled {
+			if settings.DeltaMode && len(initialFrame) == 0 {
+				initialFrame = [][]byte{[]byte(openAIHappyFirstTokenDeltaEvent)}
+			}
 			value, _ := c.Get(openAIHappyFirstTokenDeadlineKey)
 			deadline, scheduled := value.(time.Time)
 			if !scheduled {

@@ -15,6 +15,7 @@ const SettingKeyHappyFirstToken = "happy_first_token_settings"
 type HappyFirstTokenGroupOverride struct {
 	GroupID    int64 `json:"group_id"`
 	Enabled    bool  `json:"enabled"`
+	DeltaMode  *bool `json:"delta_mode,omitempty"`
 	MinDelayMS int   `json:"min_delay_ms"`
 	MaxDelayMS int   `json:"max_delay_ms"`
 }
@@ -22,6 +23,7 @@ type HappyFirstTokenGroupOverride struct {
 type HappyFirstTokenSettings struct {
 	GroupOverrides []HappyFirstTokenGroupOverride `json:"group_overrides,omitempty"`
 	Enabled        bool                           `json:"enabled"`
+	DeltaMode      bool                           `json:"delta_mode"`
 	MinDelayMS     int                            `json:"min_delay_ms"`
 	MaxDelayMS     int                            `json:"max_delay_ms"`
 }
@@ -59,10 +61,14 @@ func (v HappyFirstTokenSettings) Validate() error {
 func (v HappyFirstTokenSettings) ForGroup(id int64) HappyFirstTokenSettings {
 	for _, g := range v.GroupOverrides {
 		if g.GroupID == id {
-			return HappyFirstTokenSettings{Enabled: g.Enabled, MinDelayMS: g.MinDelayMS, MaxDelayMS: g.MaxDelayMS}
+			deltaMode := v.DeltaMode
+			if g.DeltaMode != nil {
+				deltaMode = *g.DeltaMode
+			}
+			return HappyFirstTokenSettings{Enabled: g.Enabled, DeltaMode: deltaMode, MinDelayMS: g.MinDelayMS, MaxDelayMS: g.MaxDelayMS}
 		}
 	}
-	return HappyFirstTokenSettings{Enabled: v.Enabled, MinDelayMS: v.MinDelayMS, MaxDelayMS: v.MaxDelayMS}
+	return HappyFirstTokenSettings{Enabled: v.Enabled, DeltaMode: v.DeltaMode, MinDelayMS: v.MinDelayMS, MaxDelayMS: v.MaxDelayMS}
 }
 
 func (s *SettingService) GetHappyFirstTokenSettings(ctx context.Context) (HappyFirstTokenSettings, error) {

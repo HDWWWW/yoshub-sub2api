@@ -23,6 +23,7 @@ func (h *SettingHandler) UpdateHappyFirstTokenSettings(c *gin.Context) {
 	var req struct {
 		GroupOverrides *[]service.HappyFirstTokenGroupOverride `json:"group_overrides"`
 		Enabled        *bool                                   `json:"enabled" binding:"required"`
+		DeltaMode      *bool                                   `json:"delta_mode"`
 		MinDelayMS     *int                                    `json:"min_delay_ms" binding:"required"`
 		MaxDelayMS     *int                                    `json:"max_delay_ms" binding:"required"`
 	}
@@ -33,13 +34,22 @@ func (h *SettingHandler) UpdateHappyFirstTokenSettings(c *gin.Context) {
 	settings := service.HappyFirstTokenSettings{Enabled: *req.Enabled, MinDelayMS: *req.MinDelayMS, MaxDelayMS: *req.MaxDelayMS}
 	if req.GroupOverrides != nil {
 		settings.GroupOverrides = *req.GroupOverrides
-	} else {
+	}
+	if req.DeltaMode != nil {
+		settings.DeltaMode = *req.DeltaMode
+	}
+	if req.GroupOverrides == nil || req.DeltaMode == nil {
 		current, err := h.settingService.GetHappyFirstTokenSettings(c.Request.Context())
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
 		}
-		settings.GroupOverrides = current.GroupOverrides
+		if req.GroupOverrides == nil {
+			settings.GroupOverrides = current.GroupOverrides
+		}
+		if req.DeltaMode == nil {
+			settings.DeltaMode = current.DeltaMode
+		}
 	}
 	if err := settings.Validate(); err != nil {
 		response.BadRequest(c, err.Error())

@@ -38,7 +38,7 @@ func TestHappyFirstTokenSettingsPersistenceAndCache(t *testing.T) {
 	s := &SettingService{settingRepo: repo}
 	ctx := context.Background()
 	require.Equal(t, DefaultHappyFirstTokenSettings(), s.happyFirstTokenSettings(ctx))
-	want := HappyFirstTokenSettings{Enabled: true, MinDelayMS: 100, MaxDelayMS: 1000}
+	want := HappyFirstTokenSettings{Enabled: true, DeltaMode: true, MinDelayMS: 100, MaxDelayMS: 1000}
 	require.NoError(t, s.UpdateHappyFirstTokenSettings(ctx, want))
 	require.Equal(t, want, s.happyFirstTokenSettings(ctx), "save must invalidate the cached disabled value immediately")
 
@@ -83,9 +83,9 @@ func happyTestContext(t *testing.T) (*gin.Context, *happySignalRecorder) {
 	return c, r
 }
 
-func happyTestService(t *testing.T, delayMS int) *OpenAIGatewayService {
+func happyTestService(t *testing.T, delayMS int, delta ...bool) *OpenAIGatewayService {
 	t.Helper()
-	raw, err := json.Marshal(HappyFirstTokenSettings{Enabled: true, MinDelayMS: delayMS, MaxDelayMS: delayMS})
+	raw, err := json.Marshal(HappyFirstTokenSettings{Enabled: true, DeltaMode: len(delta) > 0 && delta[0], MinDelayMS: delayMS, MaxDelayMS: delayMS})
 	require.NoError(t, err)
 	return &OpenAIGatewayService{
 		cfg:            &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
@@ -164,49 +164,58 @@ func TestHappyFirstTokenPrecedesOutputWithoutChangingTTFT(t *testing.T) {
 }
 
 func TestHappyFirstTokenPreservesFailuresAndRetry(t *testing.T) {
-	for _, passthrough := range []bool{false, true} {
-		for _, tc := range []struct {
-			name, body string
-			retry      bool
-		}{
-			{"rate_limit", `data: {"type":"response.failed","response":{"status":"failed","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"Too many requests"}}}` + "\n\n", true},
-			{"overload", `data: {"type":"error","error":{"code":"server_is_overloaded","message":"Server overloaded"}}` + "\n\n", true},
-			{"eof", "", true},
-			{"invalid_request", `data: {"type":"response.failed","response":{"status":"failed","error":{"type":"invalid_request_error","code":"invalid_request_error","message":"Invalid input"}}}` + "\n\n", false},
-		} {
-			name := "native/" + tc.name
-			if passthrough {
-				name = "passthrough/" + tc.name
-			}
-			t.Run(name, func(t *testing.T) {
-				c, rec := happyTestContext(t)
-				s := happyTestService(t, 0)
-				resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {"losing-account-state"}}, Body: happyBodyAfterSignal(t, rec, tc.body, 0)}
-				_, err := happyRunStream(s, c, resp, passthrough, time.Now())
-				require.Error(t, err)
-				var failover *UpstreamFailoverError
-				require.Equal(t, tc.retry, errors.As(err, &failover))
-				if !tc.retry {
-					require.Contains(t, rec.Body.String(), `"type":"response.failed"`)
-					require.Contains(t, rec.Body.String(), "invalid_request_error")
-					return
+	for _, delta := range []bool{false, true} {
+		for _, passthrough := range []bool{false, true} {
+			for _, tc := range []struct {
+				name, body string
+				retry      bool
+			}{
+				{"rate_limit", `data: {"type":"response.failed","response":{"status":"failed","error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"Too many requests"}}}` + "\n\n", true},
+				{"overload", `data: {"type":"error","error":{"code":"server_is_overloaded","message":"Server overloaded"}}` + "\n\n", true},
+				{"eof", "", true},
+				{"invalid_request", `data: {"type":"response.failed","response":{"status":"failed","error":{"type":"invalid_request_error","code":"invalid_request_error","message":"Invalid input"}}}` + "\n\n", false},
+			} {
+				name := "native/" + tc.name
+				if passthrough {
+					name = "passthrough/" + tc.name
 				}
-				require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "preamble must not prevent account failover")
-				require.Equal(t, openAIHappyFirstTokenEvent, rec.Body.String(), "failed attempt output must remain staged")
-				resp.Body = io.NopCloser(strings.NewReader(happySuccessStream))
-				resp.Header.Set(openAICodexTurnStateHeader, "winning-account-state")
-				_, err = happyRunStream(s, c, resp, passthrough, time.Now())
-				require.NoError(t, err)
-				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"gateway.status"`))
-				require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
-				require.NotContains(t, rec.Body.String(), `"type":"response.failed"`)
-				require.Greater(t, OpenAICompactKeepaliveAdjustedWrittenSize(c), 0)
-				require.Empty(t, rec.Result().Header.Get(openAICodexTurnStateHeader), "a preamble must not attach either account's state")
-			})
+				if delta {
+					name += "/delta"
+				}
+				t.Run(name, func(t *testing.T) {
+					c, rec := happyTestContext(t)
+					s := happyTestService(t, 0, delta)
+					expected := openAIHappyFirstTokenEvent
+					if delta {
+						expected = openAIHappyFirstTokenDeltaEvent
+					}
+					resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {"losing-account-state"}}, Body: happyBodyAfterSignal(t, rec, tc.body, 0)}
+					_, err := happyRunStream(s, c, resp, passthrough, time.Now())
+					require.Error(t, err)
+					var failover *UpstreamFailoverError
+					require.Equal(t, tc.retry, errors.As(err, &failover))
+					if !tc.retry {
+						require.Contains(t, rec.Body.String(), `"type":"response.failed"`)
+						require.Contains(t, rec.Body.String(), "invalid_request_error")
+						return
+					}
+					require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "preamble must not prevent account failover")
+					require.Equal(t, expected, rec.Body.String(), "failed attempt output must remain staged")
+					resp.Body = io.NopCloser(strings.NewReader(happySuccessStream))
+					resp.Header.Set(openAICodexTurnStateHeader, "winning-account-state")
+					_, err = happyRunStream(s, c, resp, passthrough, time.Now())
+					require.NoError(t, err)
+					require.Equal(t, 1, strings.Count(rec.Body.String(), `"gateway_status":"upstream_connected"`))
+					require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
+					require.NotContains(t, rec.Body.String(), `"type":"response.failed"`)
+					require.Greater(t, OpenAICompactKeepaliveAdjustedWrittenSize(c), 0)
+					require.Empty(t, rec.Result().Header.Get(openAICodexTurnStateHeader), "a preamble must not attach either account's state")
+				})
+			}
 		}
 	}
-}
 
+}
 func TestHappyFirstTokenNeverDelaysRealOutputOrDropsTurnState(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -352,4 +361,20 @@ func TestHappyFirstTokenGroupOverrides(t *testing.T) {
 		}
 		stop()
 	}
+}
+
+func TestHappyFirstTokenDeltaGroupInheritance(t *testing.T) {
+	on, off := true, false
+	settings := HappyFirstTokenSettings{Enabled: true, DeltaMode: true, GroupOverrides: []HappyFirstTokenGroupOverride{
+		{GroupID: 2, Enabled: true}, {GroupID: 3, Enabled: true, DeltaMode: &off}, {GroupID: 4, Enabled: true, DeltaMode: &on},
+	}}
+	require.True(t, settings.ForGroup(0).DeltaMode)
+	require.True(t, settings.ForGroup(2).DeltaMode)
+	require.False(t, settings.ForGroup(3).DeltaMode)
+	settings.DeltaMode = false
+	require.False(t, settings.ForGroup(2).DeltaMode)
+	require.True(t, settings.ForGroup(4).DeltaMode)
+	var old HappyFirstTokenSettings
+	require.NoError(t, json.Unmarshal([]byte(`{"enabled":true,"min_delay_ms":500,"max_delay_ms":1000}`), &old))
+	require.False(t, old.ForGroup(0).DeltaMode, "existing saved settings keep the wire format")
 }
