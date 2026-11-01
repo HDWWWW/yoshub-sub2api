@@ -35,6 +35,7 @@ type accountRefillLoads interface {
 }
 
 type AccountRefillService struct {
+	autoFast     sync.Map // group ID -> immutable refillAutoFastSnapshot
 	rulesMu      sync.Mutex
 	ruleRoot     *AccountRefillService
 	ruleGroupID  int64
@@ -324,6 +325,11 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			enabled := *state.Config.ForecastEnabled
 			c.ForecastEnabled = &enabled
 		}
+		// Omitted by legacy clients: preserve the administrator's saved choice.
+		if c.AutoFast == nil {
+			c.AutoFast = state.Config.AutoFast
+		}
+		state.AutoFastActive = nil
 		state.Config = c
 		state.Revision++
 		state.NextCheckAt = time.Time{}
@@ -331,7 +337,11 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		state.LeaseSyncAt = nil
 		state.DemandSince = nil
 		state.Message = "配置已保存"
-		return saveRefillState(&state, save)
+		if err := saveRefillState(&state, save); err != nil {
+			return err
+		}
+		s.publishRefillAutoFast(state.Config.GroupID, state.Revision, nil, time.Now())
+		return nil
 	})
 }
 
@@ -362,6 +372,7 @@ func (s *AccountRefillService) evaluate(ctx context.Context, state *accountRefil
 		return err
 	}
 	state.Evaluation = evaluateAccountRefill(state.Config, accounts, loads, jobs, now)
+	markRefillAutoFastAccounts(state, now)
 	return nil
 }
 

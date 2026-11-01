@@ -22,6 +22,42 @@
       </nav>
       <form id="refill-settings" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="busy" class="space-y-5">
+          <div v-if="form.auto_fast" v-show="activeTab === 'autoFast'" class="space-y-5" data-testid="refill-auto-fast-panel">
+            <div class="rounded-lg bg-primary-50 p-4 text-sm leading-6 text-primary-800 dark:bg-primary-900/20 dark:text-primary-200">
+              <p class="font-medium">{{ t('accountRefill.autoFastIntro') }}</p>
+              <p class="mt-2">{{ t('accountRefill.autoFastBilling') }}</p>
+            </div>
+            <label class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <span class="text-sm font-medium">{{ t('accountRefill.autoFastEnable') }}</span>
+              <input v-model="form.auto_fast.enabled" type="checkbox" role="switch" class="h-5 w-5 accent-primary-600" data-testid="refill-auto-fast-enabled" />
+            </label>
+            <div class="space-y-3">
+              <h4 class="text-sm font-medium">{{ t('accountRefill.autoFastStart') }}</h4>
+              <label class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="form.auto_fast.lead_minutes == null" data-testid="refill-auto-fast-follow-lead" @change="form.auto_fast.lead_minutes = ($event.target as HTMLInputElement).checked ? null : form.lead_minutes" />{{ t('accountRefill.autoFastFollowLead', { minutes: form.lead_minutes }) }}</label>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label v-if="form.auto_fast.lead_minutes != null"><span class="input-label">{{ t('accountRefill.autoFastLead') }}</span><input v-model.number="form.auto_fast.lead_minutes" type="number" min="0" max="1440" step="1" required class="input" data-testid="refill-auto-fast-lead" /></label>
+                <label><span class="input-label">{{ t('accountRefill.autoFastStartRemaining') }}</span><input v-model.number="form.auto_fast.start_remaining_percent" type="number" min="0" max="100" step="any" required class="input" data-testid="refill-auto-fast-start-remaining" /></label>
+              </div>
+              <p class="input-hint">{{ t('accountRefill.autoFastStartHint') }}</p>
+            </div>
+            <div class="space-y-3">
+              <h4 class="text-sm font-medium">{{ t('accountRefill.autoFastStop') }}</h4>
+              <div class="flex flex-wrap gap-2" role="group" :aria-label="t('accountRefill.autoFastStop')">
+                <button v-for="mode in (['follow', 'custom'] as const)" :key="mode" type="button" class="btn" :class="form.auto_fast.stop_mode === mode ? 'btn-primary' : 'btn-secondary'" :aria-pressed="form.auto_fast.stop_mode === mode" :data-testid="`refill-auto-fast-${mode}`" @click="form.auto_fast.stop_mode = mode">{{ t(`accountRefill.autoFastMode_${mode}`) }}</button>
+              </div>
+              <template v-if="form.auto_fast.stop_mode === 'follow'">
+                <p class="text-sm leading-6 text-gray-600 dark:text-dark-300">{{ t('accountRefill.autoFastFollowHint') }}</p>
+                <div class="rounded-lg bg-gray-50 p-3 text-sm tabular-nums dark:bg-dark-800">
+                  <p>{{ t('accountRefill.autoFastCommonFloor', { five: number(form.min_remaining_5h), seven: number(form.min_remaining_7d), fiveUsed: number(100 - form.min_remaining_5h), sevenUsed: number(100 - form.min_remaining_7d) }) }}</p>
+                  <p v-for="(threshold, plan) in form.plan_quota_thresholds" :key="plan" class="mt-1">{{ plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }} · {{ t('accountRefill.autoFastCommonFloor', { five: number(threshold.min_remaining_5h), seven: number(threshold.min_remaining_7d), fiveUsed: number(100 - threshold.min_remaining_5h), sevenUsed: number(100 - threshold.min_remaining_7d) }) }}</p>
+                </div>
+              </template>
+              <div v-else class="grid gap-4 sm:grid-cols-2">
+                <label v-for="window in (['5h', '7d'] as const)" :key="window"><span class="input-label">{{ t('accountRefill.autoFastStopUsed', { window }) }}</span><input v-model.number="form.auto_fast[`stop_used_${window}_percent`]" type="number" min="0.01" max="100" step="any" required class="input" :data-testid="`refill-auto-fast-used-${window}`" /><span class="input-hint">{{ t('accountRefill.autoFastRemainingEquivalent', { percent: number(100 - form.auto_fast[`stop_used_${window}_percent`]) }) }}</span></label>
+              </div>
+            </div>
+            <p class="text-xs leading-6 text-gray-500 dark:text-dark-400">{{ t('accountRefill.autoFastRuntimeHint') }}</p>
+          </div>
           <div v-show="activeTab === 'connection'" class="space-y-5">
             <label class="block"><span class="input-label">{{ t('accountRefill.token') }} · {{ t(view.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span>
               <input v-model="token" type="password" autocomplete="new-password" class="input" placeholder="rst_…" data-testid="refill-token" />
@@ -207,7 +243,7 @@
         <h4 class="text-sm font-medium">{{ t('accountRefill.evaluation') }}</h4>
         <p class="text-xs text-gray-500">{{ t('accountRefill.evaluationLocalHint') }} {{ t('accountRefill.evaluationUpdated') }}: {{ date(view.evaluation.checked_at) }}</p>
         <p v-if="view.evaluation.error" class="text-sm text-amber-700" role="alert">{{ view.evaluation.error }}</p>
-        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in view.evaluation.accounts" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}<div v-if="account.plan" class="text-xs text-gray-500">{{ account.plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }}</div></td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}<div v-if="account.min_remaining_5h != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_5h) }) }}</div></td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}<div v-if="account.min_remaining_7d != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_7d) }) }}</div></td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
+        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in view.evaluation.accounts" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}<div v-if="account.plan" class="text-xs text-gray-500">{{ account.plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }}</div></td><td class="p-2">{{ stateLabel(account.state) }}<span v-if="account.auto_fast" class="mt-1 block text-xs font-medium text-primary-600 dark:text-primary-400">{{ t('accountRefill.autoFast') }}</span></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}<div v-if="account.min_remaining_5h != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_5h) }) }}</div></td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}<div v-if="account.min_remaining_7d != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_7d) }) }}</div></td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
       </div>
       <p v-if="conflict" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.conflict') }}</p>
     </div>
@@ -237,7 +273,7 @@ const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual';
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
 const app = useAppStore()
-const tabs = ['connection', 'rules', 'delivery', 'manual', 'notifications', 'progress'] as const
+const tabs = ['connection', 'rules', 'autoFast', 'delivery', 'manual', 'notifications', 'progress'] as const
 const activeTab = ref<typeof tabs[number]>('connection')
 const view = ref<RefillView | null>(null)
 const form = ref<RefillConfig | null>(null)
@@ -307,6 +343,7 @@ function accept(data: RefillView, reset: boolean) {
   if (!reset && data.config.group_id !== selectedGroup.value) return
   data.config.delivery.privacy_enabled ??= true
   data.config.forecast_enabled ??= true
+  data.config.auto_fast ??= { enabled: false, lead_minutes: null, start_remaining_percent: 0, stop_mode: 'follow', stop_used_5h_percent: 85, stop_used_7d_percent: 85 }
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}

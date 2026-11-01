@@ -149,15 +149,23 @@ func (s *AccountRefillService) sampleCapacity(ctx context.Context) {
 		return
 	}
 	state, err := decodeAccountRefillState(raw)
-	if err != nil || !state.Config.MonitorEnabled || state.Config.Mode != "capacity" || state.Config.GroupID <= 0 {
+	capacityEnabled := state.Config.MonitorEnabled && state.Config.Mode == "capacity"
+	if err != nil || (!capacityEnabled && !refillAutoFastEnabled(state.Config)) || state.Config.GroupID <= 0 {
 		s.resetCapacityObservation()
+		s.publishRefillAutoFast(state.Config.GroupID, state.Revision, nil, time.Now())
 		return
 	}
 	if err := s.evaluate(ctx, &state, time.Now()); err != nil {
 		s.resetCapacityObservation()
+		s.publishRefillAutoFast(state.Config.GroupID, state.Revision, nil, time.Now())
 		return
 	}
-	s.recordCapacitySample(state.Config, state.Revision, state.Evaluation, time.Now())
+	if capacityEnabled {
+		s.recordCapacitySample(state.Config, state.Revision, state.Evaluation, time.Now())
+	} else {
+		s.resetCapacityObservation()
+	}
+	s.syncRefillAutoFast(ctx, &state, state.Evaluation.CheckedAt)
 }
 
 func (s *AccountRefillService) ImportExpiryGraceMinutes(ctx context.Context) int {
