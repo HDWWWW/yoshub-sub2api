@@ -35,6 +35,7 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
+	AutoFast                  *AccountRefillAutoFastConfig           `json:"auto_fast,omitempty"`
 	ForecastEnabled           *bool                                  `json:"forecast_enabled,omitempty"`
 	RotationEnabled           bool                                   `json:"rotation_enabled"`
 	Rotation                  []AccountRefillRotationStep            `json:"rotation"`
@@ -99,6 +100,9 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
+	if err := validateRefillAutoFast(c.AutoFast); err != nil {
+		return err
+	}
 	if err := validateRefillPlanQuotas(c); err != nil {
 		return err
 	}
@@ -198,6 +202,7 @@ func (j AccountRefillJob) pending() bool {
 }
 
 type AccountRefillAccount struct {
+	AutoFast        bool       `json:"auto_fast"`
 	Plan            string     `json:"plan"`
 	MinRemaining5h  float64    `json:"min_remaining_5h"`
 	MinRemaining7d  float64    `json:"min_remaining_7d"`
@@ -234,6 +239,7 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
+	AutoFastActive     map[int64]time.Time                `json:"auto_fast_active,omitempty"`
 	RotationCursor     int                                `json:"rotation_cursor"`
 	EncryptedWebhook   string                             `json:"encrypted_webhook,omitempty"`
 	NotificationStatus AccountRefillNotificationStatus    `json:"notification_status"`
