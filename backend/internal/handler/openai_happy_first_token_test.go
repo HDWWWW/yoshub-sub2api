@@ -122,7 +122,7 @@ func TestHappyFirstTokenHandlerKeepsRateLimitAndAccountFailover(t *testing.T) {
 			attempts := append([]int64(nil), upstream.attempts...)
 			upstream.mu.Unlock()
 			// Existing OAuth 429 policy retries each account once before switching.
-			require.Equal(t, []int64{9901, 9901, 9902, 9902}, attempts, "status=%d body=%s", rec.Code, rec.Body.String())
+			require.Equal(t, []int64{9901, 9901, 9901, 9901, 9902, 9902, 9902, 9902}, attempts, "status=%d body=%s", rec.Code, rec.Body.String())
 			if status == http.StatusOK && !tc.chat {
 				require.Contains(t, rec.Body.String(), "rate_limit_exceeded")
 				require.Equal(t, http.StatusOK, rec.Code)

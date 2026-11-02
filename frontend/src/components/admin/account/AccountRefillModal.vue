@@ -83,6 +83,7 @@
             <p class="input-hint">{{ t('accountRefill.windowHint') }}</p>
           </div>
           <div v-show="activeTab === 'delivery'" class="space-y-5">
+            <label class="block"><span class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</span><input v-model.number="form.delivery.same_account_retry_count" data-testid="refill-same-account-retries" type="number" min="0" :max="MAX_SAME_ACCOUNT_RETRY_COUNT" step="1" required class="input" /><p class="input-hint">{{ t('admin.accounts.sameAccountRetryCountHint', { default: DEFAULT_SAME_ACCOUNT_RETRY_COUNT, max: MAX_SAME_ACCOUNT_RETRY_COUNT }) }}</p></label>
             <OpenAIPrivacyControl :model-value="form.delivery.privacy_enabled !== false" @update:model-value="form.delivery.privacy_enabled = $event" />
             <label class="flex items-center gap-2 text-sm"><input v-model="form.push_enabled" type="checkbox" />{{ t('accountRefill.push_enabled') }}</label><p class="input-hint">{{ t('accountRefill.pushHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2">
@@ -240,6 +241,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT } from '@/components/account/sameAccountRetry'
 import OpenAIPrivacyControl from '@/components/account/OpenAIPrivacyControl.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import { accountRefillAPI, type RefillConfig, type RefillView, type RefillJob, type ManualRefillRequest } from '@/api/admin/accountRefill'
@@ -346,6 +348,7 @@ async function switchGroup(id: number) {
 }
 function accept(data: RefillView, reset: boolean) {
   if (!reset && data.config.group_id !== selectedGroup.value) return
+  data.config.delivery.same_account_retry_count ??= DEFAULT_SAME_ACCOUNT_RETRY_COUNT
   data.config.delivery.privacy_enabled ??= true
   data.config.forecast_enabled ??= true
   data.config.immediate_failure_retry ??= true

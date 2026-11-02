@@ -1,4 +1,4 @@
-export const DEFAULT_SAME_ACCOUNT_RETRY_COUNT = 1
+export const DEFAULT_SAME_ACCOUNT_RETRY_COUNT = 3
 export const MAX_SAME_ACCOUNT_RETRY_COUNT = 10
 
 export function normalizeSameAccountRetryCount(value: unknown): number {

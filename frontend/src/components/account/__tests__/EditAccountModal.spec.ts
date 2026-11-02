@@ -353,7 +353,7 @@ describe('EditAccountModal', () => {
 
   it('shows the default without pool mode and preserves a legacy pool override', async () => {
     const wrapper = mountModal(buildAccount())
-    expect(wrapper.get<HTMLInputElement>('[data-testid="same-account-retry-count"]').element.value).toBe('1')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="same-account-retry-count"]').element.value).toBe('3')
     const account = buildAccount()
     account.credentials.pool_mode = true
     account.credentials.pool_mode_retry_count = 5

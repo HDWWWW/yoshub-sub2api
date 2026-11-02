@@ -341,7 +341,7 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 // 约束：
 //   - 单次等待不超过 antigravitySingleAccountSmartRetryMaxWait
 //   - 总累计等待不超过 antigravitySingleAccountSmartRetryTotalMaxWait
-//   - 按账号配置限制重试次数（默认 1 次）
+//   - 按账号配置限制重试次数（默认 3 次）
 func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 	p antigravityRetryLoopParams,
 	resp *http.Response,

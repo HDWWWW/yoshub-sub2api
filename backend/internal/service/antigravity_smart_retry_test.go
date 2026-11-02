@@ -332,7 +332,7 @@ func TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError(t *test
 	require.Len(t, repo.modelRateLimitCalls, 2)
 	require.Equal(t, "gemini-3-flash", repo.modelRateLimitCalls[0].modelKey)
 	require.Equal(t, antigravityGeminiModelRateLimitKey, repo.modelRateLimitCalls[1].modelKey)
-	require.Len(t, upstream.calls, 1, "should have made one retry call (max attempts)")
+	require.Len(t, upstream.calls, 3, "should exhaust the default three retries")
 }
 
 // TestHandleSmartRetry_503_ModelCapacityExhausted_RetrySuccess 测试 503 MODEL_CAPACITY_EXHAUSTED 重试成功
@@ -722,7 +722,7 @@ func TestHandleSmartRetry_NetworkError_ExhaustsRetry(t *testing.T) {
 	require.NotNil(t, result.switchError, "should return switchError after network error exhausted retry")
 	require.Equal(t, account.ID, result.switchError.OriginalAccountID)
 	require.Equal(t, "claude-sonnet-4-5", result.switchError.RateLimitedModel)
-	require.Len(t, upstream.calls, 1, "should have made one retry call")
+	require.Len(t, upstream.calls, 3, "should exhaust the default three retries")
 
 	// 验证模型限流已设置
 	require.Len(t, repo.modelRateLimitCalls, 1)
@@ -879,7 +879,7 @@ func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_ClearsSession(t *
 	require.Equal(t, "sticky-hash-abc", cache.deleteCalls[0].sessionHash)
 
 	// 验证仅重试 1 次
-	require.Len(t, upstream.calls, 1, "should make exactly 1 retry call (maxAttempts=1)")
+	require.Len(t, upstream.calls, 3, "should exhaust the default three retries")
 
 	// 验证模型限流已设置
 	require.Len(t, repo.modelRateLimitCalls, 1)

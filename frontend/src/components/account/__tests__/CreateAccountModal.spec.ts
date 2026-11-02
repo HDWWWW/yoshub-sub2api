@@ -227,7 +227,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await wrapper.get('form#create-account-form input[type="text"]').setValue('retry account')
     await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
     const input = wrapper.get<HTMLInputElement>('[data-testid="same-account-retry-count"]')
-    expect(input.element.value).toBe('1')
+    expect(input.element.value).toBe('3')
     await input.setValue(count)
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()

@@ -370,6 +370,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/refill/jobs/:job_id/dismiss", h.Admin.Account.DismissAccountRefill)
 		accounts.GET("/refill/jobs/:job_id/delivery", gin.HandlerFunc(stepUpAuth), h.Admin.Account.DownloadAccountRefill)
 		accounts.GET("", h.Admin.Account.List)
+		accounts.GET("/retry-default", h.Admin.Setting.GetDefaultAccountRetryCount)
+		accounts.PUT("/retry-default", h.Admin.Setting.SetDefaultAccountRetryCount)
 		accounts.GET("/astra-priority", h.Admin.Setting.GetAstraPriority)
 		accounts.PUT("/astra-priority", h.Admin.Setting.SetAstraPriority)
 		accounts.GET("/upstream-billing-rates", h.Admin.Account.GetUpstreamBillingRates)

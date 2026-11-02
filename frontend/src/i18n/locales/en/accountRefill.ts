@@ -1,4 +1,7 @@
 export default {
+  "retryDefaultTitle": "Default retries",
+  "retryDefaultHint": "Used for new or manually imported accounts without an explicit count. Initially 3; range 0–10 additional attempts. Existing accounts and explicit imported settings are preserved. Automatic refill uses each rule’s delivery settings.",
+  "retryDefaultError": "Could not load or save default retries",
   "ruleGroup": "Current group rule",
   "ruleOn": "Automatic refill on",
   "ruleOff": "Automatic refill off",

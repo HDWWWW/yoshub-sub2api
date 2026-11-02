@@ -13,6 +13,7 @@ export interface RefillDeliveryConfig {
   schedulable: boolean
   auto_pause_on_expired: boolean
   fingerprint_mode: string
+  same_account_retry_count?: number | null
   privacy_enabled?: boolean
   expiry_mode: string
   fixed_expires_at: number | null

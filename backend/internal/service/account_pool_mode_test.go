@@ -120,13 +120,13 @@ func TestSameAccountRetryCountForAllAccountTypes(t *testing.T) {
 	for _, accountType := range []string{AccountTypeOAuth, AccountTypeAPIKey, AccountTypeBedrock, "setup-token", "service_account", "upstream"} {
 		t.Run(accountType, func(t *testing.T) {
 			account := &Account{Type: accountType, Platform: PlatformOpenAI}
-			require.Equal(t, 1, account.GetPoolModeRetryCount())
+			require.Equal(t, 3, account.GetPoolModeRetryCount())
 			for _, count := range []int{0, 1, 4, 10} {
 				account.Extra = map[string]any{"same_account_retry_count": float64(count)}
 				require.Equal(t, count, account.GetPoolModeRetryCount())
 			}
 			account.Extra["same_account_retry_count"] = "oops"
-			require.Equal(t, 1, account.GetPoolModeRetryCount())
+			require.Equal(t, 3, account.GetPoolModeRetryCount())
 			account.Extra["same_account_retry_count"] = float64(99)
 			require.Equal(t, 10, account.GetPoolModeRetryCount())
 		})

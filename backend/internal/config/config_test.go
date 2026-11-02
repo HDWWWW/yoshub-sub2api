@@ -67,7 +67,7 @@ func TestLoadGeminiSameAccountRetries(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, 1, cfg.Gateway.MaxSameAccountRetriesGemini)
+	require.Equal(t, 3, cfg.Gateway.MaxSameAccountRetriesGemini)
 
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_MAX_SAME_ACCOUNT_RETRIES_GEMINI", "0")

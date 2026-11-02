@@ -3210,6 +3210,7 @@
         <input
           id="same-account-retry-count"
           v-model.number="poolModeRetryCount"
+          @input="retryCountEdited = true"
           data-testid="same-account-retry-count"
           type="number"
           min="0"
@@ -4096,6 +4097,7 @@
 <script setup lang="ts">
 import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT, normalizeSameAccountRetryCount } from '@/components/account/sameAccountRetry'
 import { ref, reactive, computed, watch } from 'vue'
+import { accountRetryAPI } from '@/api/admin/accountRetry'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
@@ -4237,7 +4239,7 @@ const withAccountRequestSettings = <T extends Record<string, unknown> | undefine
   const name = upstreamRequestIdHeader.value.trim()
   return {
     ...(extra || {}),
-    same_account_retry_count: normalizeSameAccountRetryCount(poolModeRetryCount.value),
+    ...(retryCountEdited.value ? { same_account_retry_count: normalizeSameAccountRetryCount(poolModeRetryCount.value) } : {}),
     ...(name ? { upstream_request_id_header: name } : {})
   }
 }
@@ -4628,6 +4630,8 @@ const poolModeEnabled = ref(false)
 const explicitCacheUpstreamEnabled = ref(false)
 const explicitCacheUpstreamMaxTTL = ref<string | number>('')
 const poolModeRetryCount = ref(DEFAULT_POOL_MODE_RETRY_COUNT)
+const retryCountEdited = ref(false)
+let retryDefaultsGeneration = 0
 const poolModeRetryStatusCodesInput = ref('')
 
 function parsePoolModeRetryStatusCodes(input: string): number[] {
@@ -5078,6 +5082,10 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal) {
+      const generation = ++retryDefaultsGeneration
+      accountRetryAPI.get().then(data => {
+        if (props.show && generation === retryDefaultsGeneration && !retryCountEdited.value) poolModeRetryCount.value = data.count
+      }).catch(() => { /* The backend applies its saved default if this field is untouched. */ })
       // Load TLS fingerprint profiles
       adminAPI.tlsFingerprintProfiles.list()
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
@@ -5651,6 +5659,8 @@ const resetForm = () => {
     antigravityModelMappings.value = [...mappings]
   })
   poolModeEnabled.value = false
+  retryDefaultsGeneration++
+  retryCountEdited.value = false
   poolModeRetryCount.value = DEFAULT_POOL_MODE_RETRY_COUNT
   poolModeRetryStatusCodesInput.value = ''
   explicitCacheUpstreamEnabled.value = false
@@ -5990,7 +6000,7 @@ const handleSubmit = async () => {
     // Pool mode
     if (poolModeEnabled.value) {
       credentials.pool_mode = true
-      credentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+      if (retryCountEdited.value) credentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
       const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
       if (parsedRetryStatusCodes.length > 0) {
         credentials.pool_mode_retry_status_codes = parsedRetryStatusCodes
@@ -6165,7 +6175,7 @@ const handleSubmit = async () => {
   // Add pool mode if enabled
   if (poolModeEnabled.value) {
     credentials.pool_mode = true
-    credentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
+    if (retryCountEdited.value) credentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
     const parsedRetryStatusCodes = parsePoolModeRetryStatusCodes(poolModeRetryStatusCodesInput.value)
     if (parsedRetryStatusCodes.length > 0) {
       credentials.pool_mode_retry_status_codes = parsedRetryStatusCodes

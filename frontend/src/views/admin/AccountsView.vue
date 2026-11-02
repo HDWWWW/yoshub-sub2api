@@ -11,6 +11,7 @@
             <template #before>
               <button class="btn btn-secondary" data-testid="open-account-scheduling" @click="showScheduling = true">{{ t('accountRefill.schedulingTitle') }}</button>
               <AstraPriorityControl />
+              <AccountRetryDefaults />
               <button class="btn btn-secondary" data-testid="open-account-refill" @click="refillInitialTab = 'connection'; showAccountRefill = true">{{ t('accountRefill.title') }}</button>
               <button class="btn btn-secondary" data-testid="open-manual-refill" @click="refillInitialTab = 'manual'; showAccountRefill = true">{{ t('accountRefill.manual') }}</button>
               <button
@@ -537,6 +538,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
+import AccountRetryDefaults from '@/components/admin/account/AccountRetryDefaults.vue'
 import AstraPriorityControl from '@/components/admin/account/AstraPriorityControl.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'

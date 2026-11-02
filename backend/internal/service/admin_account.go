@@ -524,6 +524,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if input.ProxyMode != "" || s.needsProxyWriteTransaction(ctx, input.ProxyID) {
 		return s.createAccountProxyMode(ctx, input)
 	}
+	if err := s.settingService.applyDefaultAccountRetryCount(ctx, input); err != nil {
+		return nil, err
+	}
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err

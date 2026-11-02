@@ -36,7 +36,7 @@ const geminiStickySessionTTL = time.Hour
 
 const (
 	// 未注入配置时的同账号重试次数，与 gateway.max_same_account_retries_gemini 默认值一致
-	geminiDefaultSameAccountRetries = 1
+	geminiDefaultSameAccountRetries = defaultPoolModeRetryCount
 	geminiRetryBaseDelay            = 1 * time.Second
 	geminiRetryMaxDelay             = 16 * time.Second
 )

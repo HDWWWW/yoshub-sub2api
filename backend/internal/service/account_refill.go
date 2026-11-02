@@ -74,22 +74,23 @@ type AccountRefillConfig struct {
 }
 
 type AccountRefillDeliveryConfig struct {
-	PrivacyEnabled     *bool             `json:"privacy_enabled,omitempty"`
-	WSMode             string            `json:"ws_mode"`
-	ProxyMode          string            `json:"proxy_mode"`
-	ProxyID            *int64            `json:"proxy_id"`
-	NameTemplate       string            `json:"name_template"`
-	NotesTemplate      string            `json:"notes_template"`
-	Priority           int               `json:"priority"`
-	LoadFactor         int               `json:"load_factor"`
-	RateMultiplier     float64           `json:"rate_multiplier"`
-	AutoPauseOnExpired bool              `json:"auto_pause_on_expired"`
-	Status             string            `json:"status"`
-	Schedulable        bool              `json:"schedulable"`
-	FingerprintMode    string            `json:"fingerprint_mode"`
-	ExpiryMode         string            `json:"expiry_mode"`
-	FixedExpiresAt     *int64            `json:"fixed_expires_at"`
-	ModelMapping       map[string]string `json:"model_mapping"`
+	SameAccountRetryCount *int              `json:"same_account_retry_count,omitempty"`
+	PrivacyEnabled        *bool             `json:"privacy_enabled,omitempty"`
+	WSMode                string            `json:"ws_mode"`
+	ProxyMode             string            `json:"proxy_mode"`
+	ProxyID               *int64            `json:"proxy_id"`
+	NameTemplate          string            `json:"name_template"`
+	NotesTemplate         string            `json:"notes_template"`
+	Priority              int               `json:"priority"`
+	LoadFactor            int               `json:"load_factor"`
+	RateMultiplier        float64           `json:"rate_multiplier"`
+	AutoPauseOnExpired    bool              `json:"auto_pause_on_expired"`
+	Status                string            `json:"status"`
+	Schedulable           bool              `json:"schedulable"`
+	FingerprintMode       string            `json:"fingerprint_mode"`
+	ExpiryMode            string            `json:"expiry_mode"`
+	FixedExpiresAt        *int64            `json:"fixed_expires_at"`
+	ModelMapping          map[string]string `json:"model_mapping"`
 }
 
 func DefaultAccountRefillConfig() AccountRefillConfig {
@@ -141,6 +142,9 @@ func (c AccountRefillConfig) Validate() error {
 		return errors.New("结束时间格式应为 HH:mm，限定时段的开始和结束不能相同")
 	}
 	d := c.Delivery
+	if d.SameAccountRetryCount != nil && (*d.SameAccountRetryCount < 0 || *d.SameAccountRetryCount > maxPoolModeRetryCount) {
+		return errors.New("同账号重试次数须为 0–10")
+	}
 	if !slices.Contains([]string{"off", "ctx_pool", "http_bridge", "passthrough"}, d.WSMode) || !slices.Contains([]string{"off", "session", "full"}, d.FingerprintMode) ||
 		!slices.Contains([]string{StatusActive, "inactive"}, d.Status) || d.Priority < 0 || d.LoadFactor < 0 || d.LoadFactor > 10000 ||
 		math.IsNaN(d.RateMultiplier) || math.IsInf(d.RateMultiplier, 0) || d.RateMultiplier < 0 || d.RateMultiplier > 1000 || len(d.NameTemplate) > 256 || len(d.NotesTemplate) > 2000 || len(d.ModelMapping) > 200 {
@@ -164,6 +168,13 @@ func (c AccountRefillConfig) Validate() error {
 		return errors.New("自动补号须将新账号设为正常且允许调度，避免持续补入不可用账号")
 	}
 	return nil
+}
+
+func (d AccountRefillDeliveryConfig) sameAccountRetryCount() int {
+	if d.SameAccountRetryCount == nil {
+		return defaultPoolModeRetryCount
+	}
+	return *d.SameAccountRetryCount
 }
 
 func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {

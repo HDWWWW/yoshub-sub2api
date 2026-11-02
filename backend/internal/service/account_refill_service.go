@@ -339,6 +339,10 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			enabled := *state.Config.ImmediateFailureRetry
 			c.ImmediateFailureRetry = &enabled
 		}
+		if c.Delivery.SameAccountRetryCount == nil && state.Config.Delivery.SameAccountRetryCount != nil {
+			count := *state.Config.Delivery.SameAccountRetryCount
+			c.Delivery.SameAccountRetryCount = &count
+		}
 		state.Config = c
 		state.Revision++
 		state.NextCheckAt = time.Time{}
@@ -855,7 +859,7 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		if *deadline <= time.Now().Unix() {
 			return errors.New("指定截止时间已过期")
 		}
-		extra := map[string]any{"refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
+		extra := map[string]any{"same_account_retry_count": j.DeliveryConfig.sameAccountRetryCount(), "refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
 			"refill_plan":            j.Plan,
 			"codex_fingerprint_mode": j.DeliveryConfig.FingerprintMode, "openai_oauth_responses_websockets_v2_enabled": j.DeliveryConfig.WSMode != "off", "openai_oauth_responses_websockets_v2_mode": j.DeliveryConfig.WSMode}
 		graceMinutes := AccountImportExpiryOffsetMinutes

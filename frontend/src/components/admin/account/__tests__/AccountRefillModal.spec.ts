@@ -45,6 +45,16 @@ async function openProgress() {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it.each([0, 3, 10])('saves and reloads %s same-account retries', async count => {
+  const w = await open()
+  const input = w.get<HTMLInputElement>('[data-testid="refill-same-account-retries"]')
+  expect(input.element.value).toBe('3')
+  await input.setValue(count)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ same_account_retry_count: count }) }), '', 1, '')
+  expect(input.element.value).toBe(String(count))
+  w.unmount()
+ })
  it.each([true, false])('announces completed manual pool imports once (request id: %s)', async withRequestID => {
   const job = { ...responseWithJobs(1).jobs[0]!, reason: '手动补号', status: 'processing', ...(withRequestID ? { manual_request_id: 'manual-1' } : {}) }
   get.mockResolvedValue({ ...response(), jobs: [job] })

@@ -1,4 +1,7 @@
 export default {
+  "retryDefaultTitle": "默认重试次数",
+  "retryDefaultHint": "新建或手动导入账号未指定次数时使用此值，初始为 3 次。0 表示不重试，最多 10 次，不含首次请求。已有账号和导入文件中的明确配置保留；自动补号使用各规则的推送设置。",
+  "retryDefaultError": "默认重试次数读取或保存失败",
   "ruleGroup": "当前分组规则",
   "ruleOn": "自动补号已开启",
   "ruleOff": "自动补号未开启",
