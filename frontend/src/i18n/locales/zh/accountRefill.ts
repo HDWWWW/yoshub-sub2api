@@ -85,6 +85,8 @@ export default {
   "amountReleased": "已释放预占",
   "enabled": "开启自动补号",
   "monitor_enabled": "启用监测",
+  "immediateFailureRetry": "失败后立即补 1 个",
+  "immediateFailureRetryHint": "勾选后，号商确认自动补号失败时，跳过检测间隔和下单冷却，有缺口就重补 1 个。取消勾选后按普通间隔和冷却补号，冷却从上次下单开始算。两种情况都遵守预算、在途数量等限制，超时或卡住不会当作失败。",
   "push_enabled": "允许推送",
   "enableHint": "开启后按已保存的规则自动购买账号并消耗号商积分。请先关闭号商原有的自动补号，避免重复购买。",
   "token": "号商 API Key",

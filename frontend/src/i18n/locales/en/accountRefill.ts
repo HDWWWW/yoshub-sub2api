@@ -85,6 +85,8 @@ export default {
   "amountReleased": "Reservation released",
   "enabled": "Enable automatic purchases",
   "monitor_enabled": "Enable monitoring",
+  "immediateFailureRetry": "Immediately replace one failed refill",
+  "immediateFailureRetryHint": "When checked, a confirmed automatic refill failure skips the check interval and order cooldown to replace one account if demand remains. When unchecked, normal check intervals and cooldown apply; cooldown starts at the last order. Both modes respect budgets and in-flight limits. Timeouts or stalled orders are not confirmed failures.",
   "push_enabled": "Enable delivery",
   "enableHint": "When enabled, saved rules purchase accounts using supplier credits. Disable the supplier’s existing automation first to avoid duplicate purchases.",
   "token": "Supplier API key",

@@ -36,6 +36,7 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
+	ImmediateFailureRetry     *bool                                  `json:"immediate_failure_retry,omitempty"`
 	ForecastEnabled           *bool                                  `json:"forecast_enabled,omitempty"`
 	RotationEnabled           bool                                   `json:"rotation_enabled"`
 	Rotation                  []AccountRefillRotationStep            `json:"rotation"`

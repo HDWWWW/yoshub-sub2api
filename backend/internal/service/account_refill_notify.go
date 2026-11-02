@@ -151,6 +151,9 @@ func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *ac
 		mode, next = "手动补号", "手动订单不自动重下，请核对后按需手动补号。"
 	} else if j.ReplacementPending {
 		next = fmt.Sprintf("仍有缺口时立即按原套餐 %s 自动重补 1 个，跳过普通下单冷却；不推进轮转、不叠加补号；继续受开关、时段、在途、上限、预算及号商限流约束。", j.Plan)
+		if !refillImmediateFailureRetryEnabled(state.Config) {
+			next = fmt.Sprintf("立即重补已关闭；仍有缺口时按原套餐 %s 自动重补 1 个，遵守普通检测间隔和下单冷却；不推进轮转、不叠加补号；继续受开关、时段、在途、上限、预算及号商限流约束。", j.Plan)
+		}
 		if !state.Config.Enabled || !state.Config.MonitorEnabled || !state.Config.PushEnabled {
 			next = "当前自动购买、监测或推送已暂停；恢复后重新检查缺口再决定是否重补原套餐。"
 		}

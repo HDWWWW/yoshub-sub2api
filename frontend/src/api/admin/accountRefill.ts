@@ -24,6 +24,7 @@ export interface RefillConfig {
   notifications: { refill_started: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
+  immediate_failure_retry?: boolean | null
   mode: string
   group_id: number
   delivery_group_ids: number[]

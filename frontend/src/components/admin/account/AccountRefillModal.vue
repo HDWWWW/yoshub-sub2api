@@ -37,6 +37,10 @@
           <div v-show="activeTab === 'rules'" class="space-y-5">
             <div class="flex flex-wrap gap-6"><label class="flex items-center gap-2 text-sm"><input v-model="form.enabled" type="checkbox" data-testid="refill-enabled" />{{ t('accountRefill.enabled') }}</label><label class="flex items-center gap-2 text-sm"><input v-model="form.monitor_enabled" type="checkbox" />{{ t('accountRefill.monitor_enabled') }}</label></div>
             <p class="text-sm leading-6 text-amber-700 dark:text-amber-300">{{ t('accountRefill.enableHint') }}</p>
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.immediate_failure_retry" type="checkbox" data-testid="refill-immediate-failure-retry" />{{ t('accountRefill.immediateFailureRetry') }}</label>
+              <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.immediateFailureRetryHint') }}</p>
+            </div>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.mode') }}</span><select v-model="form.mode" class="input"><option v-for="mode in ['capacity', 'fixed', 'interval']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
               <label v-if="!form.rotation_enabled"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="form.plan" class="input"><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
@@ -341,6 +345,7 @@ function accept(data: RefillView, reset: boolean) {
   if (!reset && data.config.group_id !== selectedGroup.value) return
   data.config.delivery.privacy_enabled ??= true
   data.config.forecast_enabled ??= true
+  data.config.immediate_failure_retry ??= true
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}

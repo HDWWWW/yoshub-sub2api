@@ -326,6 +326,10 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			enabled := *state.Config.ForecastEnabled
 			c.ForecastEnabled = &enabled
 		}
+		if c.ImmediateFailureRetry == nil && state.Config.ImmediateFailureRetry != nil {
+			enabled := *state.Config.ImmediateFailureRetry
+			c.ImmediateFailureRetry = &enabled
+		}
 		state.Config = c
 		state.Revision++
 		state.NextCheckAt = time.Time{}
@@ -511,7 +515,8 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}
 		replacement := nextRefillFailureReplacement(&state)
-		if replacement < 0 && now.Sub(state.LastSubmitAt) < time.Duration(state.Config.CooldownSeconds)*time.Second {
+		immediateReplacement := replacement >= 0 && refillImmediateFailureRetryEnabled(state.Config)
+		if !immediateReplacement && now.Sub(state.LastSubmitAt) < time.Duration(state.Config.CooldownSeconds)*time.Second {
 			state.Message = "补号冷却中，等待下次检查"
 			return persist()
 		}
