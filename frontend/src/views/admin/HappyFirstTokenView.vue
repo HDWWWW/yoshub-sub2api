@@ -14,6 +14,10 @@
       </div>
       <form v-else class="space-y-6" @submit.prevent="save">
         <div class="card overflow-hidden">
+          <div class="border-b border-gray-100 px-6 py-5 dark:border-dark-700">
+            <h2 class="font-semibold text-gray-900 dark:text-white">{{ t('happyFirstToken.globalTitle') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.globalHint') }}</p>
+          </div>
           <div class="flex items-center justify-between gap-6 border-b border-gray-100 px-6 py-5 dark:border-dark-700">
             <div>
               <h2 id="happy-first-token-enable" class="font-medium text-gray-900 dark:text-white">{{ t('happyFirstToken.enable') }}</h2>
@@ -47,48 +51,71 @@
             <div class="grid gap-5 sm:grid-cols-2">
               <div>
                 <label for="happy-minimum" class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('happyFirstToken.minimum') }} ({{ t('happyFirstToken.seconds') }})</label>
-                <input id="happy-minimum" v-model="minimum" type="number" min="0" max="60" step="0.001" required class="input w-full tabular-nums" :disabled="saving" :aria-invalid="!valid" aria-describedby="happy-delay-limits" />
+                <input id="happy-minimum" v-model="minimum" type="number" min="0" max="60" step="0.001" required class="input w-full tabular-nums" :disabled="saving" :aria-invalid="!globalValid" aria-describedby="happy-delay-limits" />
               </div>
               <div>
                 <label for="happy-maximum" class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('happyFirstToken.maximum') }} ({{ t('happyFirstToken.seconds') }})</label>
-                <input id="happy-maximum" v-model="maximum" type="number" min="0" max="60" step="0.001" required class="input w-full tabular-nums" :disabled="saving" :aria-invalid="!valid" aria-describedby="happy-delay-limits" />
+                <input id="happy-maximum" v-model="maximum" type="number" min="0" max="60" step="0.001" required class="input w-full tabular-nums" :disabled="saving" :aria-invalid="!globalValid" aria-describedby="happy-delay-limits" />
               </div>
             </div>
             <div class="rounded-lg bg-gray-50 px-4 py-4 dark:bg-dark-900/50">
-              <p v-if="valid" class="font-medium tabular-nums text-gray-900 dark:text-white">{{ rangeLabel }}</p>
+              <p v-if="globalValid" class="font-medium tabular-nums text-gray-900 dark:text-white">{{ rangeLabel }}</p>
               <p v-else class="text-sm text-red-600 dark:text-red-400" role="alert">{{ t('happyFirstToken.invalid') }}</p>
               <p id="happy-delay-limits" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.limits') }}</p>
             </div>
             <p class="text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.timingHint') }}</p>
-            <section class="space-y-4 border-t border-gray-100 pt-6 dark:border-dark-700">
-              <h2 class="font-medium text-gray-900 dark:text-white">{{ t('happyFirstToken.groupTitle') }}</h2>
-              <p class="text-sm leading-6 text-gray-500">{{ t('happyFirstToken.groupHint') }}</p>
-              <input v-model="groupSearch" class="input" :placeholder="t('happyFirstToken.searchGroups')" :aria-label="t('happyFirstToken.searchGroups')" />
-              <div v-for="group in visibleGroups" :key="group.id" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
-                <label class="flex items-center gap-3 text-sm font-medium"><input type="checkbox" :checked="!!overrideFor(group.id)" :disabled="saving" :data-testid="`happy-group-${group.id}`" @change="toggleGroup(group.id)" />{{ group.name }} <span class="font-normal text-gray-500">#{{ group.id }} · {{ t(overrideFor(group.id) ? 'happyFirstToken.customGroup' : 'happyFirstToken.inherit') }}</span></label>
-                <template v-for="override in overrides.filter(g => g.group_id === group.id)" :key="override.group_id">
-                  <label class="mt-4 block text-sm"><span class="input-label">{{ t('happyFirstToken.deltaMode') }}</span>
+          </div>
+        </div>
+        <section class="card overflow-hidden" aria-labelledby="happy-groups-title">
+          <div class="space-y-4 border-b border-gray-100 px-6 py-5 dark:border-dark-700">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <h2 id="happy-groups-title" class="font-semibold text-gray-900 dark:text-white">{{ t('happyFirstToken.groupTitle') }}</h2>
+              <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.groupCount', { count: overrides.length }) }}</span>
+            </div>
+            <p class="text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.groupHint') }}</p>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <input v-model="groupSearch" class="input min-w-0 flex-1" :placeholder="t('happyFirstToken.searchGroups')" :aria-label="t('happyFirstToken.searchGroups')" />
+              <label class="flex shrink-0 items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <input v-model="onlyOverrides" type="checkbox" data-testid="happy-custom-only" />{{ t('happyFirstToken.onlyOverrides') }}
+              </label>
+            </div>
+          </div>
+          <div class="space-y-4 p-6">
+            <div v-for="group in visibleGroups" :key="group.id" class="rounded-lg border p-4" :class="overrideFor(group.id) ? 'border-primary-200 dark:border-primary-800' : 'border-gray-200 dark:border-dark-700'" :data-testid="`happy-group-card-${group.id}`">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <h3 class="break-words text-sm font-semibold text-gray-900 dark:text-white">{{ group.name }} <span class="font-normal text-gray-500">#{{ group.id }}</span></h3>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t(overrideFor(group.id) ? 'happyFirstToken.customGroup' : 'happyFirstToken.inherit') }}<span v-if="group.status !== 'active'"> · {{ t('happyFirstToken.inactiveGroup') }}</span></p>
+                </div>
+                <label class="flex shrink-0 items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" :checked="!!overrideFor(group.id)" :disabled="saving" :data-testid="`happy-group-${group.id}`" @change="toggleGroup(group.id)" />{{ t('happyFirstToken.customGroup') }}
+                </label>
+              </div>
+              <p class="mt-3 text-sm tabular-nums text-gray-600 dark:text-gray-300" :data-testid="`happy-group-effective-${group.id}`">{{ effectiveLabel(group.id) }}</p>
+              <template v-for="override in overrides.filter(g => g.group_id === group.id)" :key="override.group_id">
+                <div class="mt-4 grid gap-4 border-t border-gray-100 pt-4 sm:grid-cols-2 dark:border-dark-700">
+                  <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"><input v-model="override.enabled" type="checkbox" :disabled="saving" :data-testid="`happy-group-enable-${group.id}`" />{{ t('happyFirstToken.groupEnable') }}</label>
+                  <label><span class="input-label">{{ t('happyFirstToken.deltaMode') }}</span>
                     <select v-model="override.deltaMode" class="input" :disabled="saving" :data-testid="`happy-group-delta-${group.id}`">
                       <option value="inherit">{{ t('happyFirstToken.inherit') }}</option>
                       <option value="enabled">{{ t('happyFirstToken.enabled') }}</option>
                       <option value="disabled">{{ t('happyFirstToken.disabled') }}</option>
                     </select>
                   </label>
-                  <div class="mt-4 grid items-end gap-4 sm:grid-cols-3">
-                    <label class="flex items-center gap-2 pb-3 text-sm"><input v-model="override.enabled" type="checkbox" :disabled="saving" />{{ t('happyFirstToken.groupEnable') }}</label>
-                    <label><span class="input-label">{{ t('happyFirstToken.minimum') }} ({{ t('happyFirstToken.seconds') }})</span><input v-model="override.minimum" class="input" type="number" min="0" max="60" step="0.001" required :disabled="saving" :aria-invalid="!validRange(override.minimum, override.maximum)" /></label>
-                    <label><span class="input-label">{{ t('happyFirstToken.maximum') }} ({{ t('happyFirstToken.seconds') }})</span><input v-model="override.maximum" class="input" type="number" min="0" max="60" step="0.001" required :disabled="saving" :aria-invalid="!validRange(override.minimum, override.maximum)" /></label>
-                  </div>
-                </template>
-              </div>
-              <p v-if="!visibleGroups.length" class="text-sm text-gray-500">{{ t('happyFirstToken.noGroups') }}</p>
-              <div v-for="override in overrides.filter(o => !groups.some(g => g.id === o.group_id))" :key="override.group_id" class="flex justify-between text-sm text-amber-700"><span>{{ t('happyFirstToken.missingGroup') }} #{{ override.group_id }}</span><button type="button" :disabled="saving" @click="toggleGroup(override.group_id)">{{ t('happyFirstToken.removeOverride') }}</button></div>
-            </section>
+                  <label><span class="input-label">{{ t('happyFirstToken.minimum') }} ({{ t('happyFirstToken.seconds') }})</span><input v-model="override.minimum" class="input" type="number" min="0" max="60" step="0.001" required :disabled="saving" :aria-invalid="!validRange(override.minimum, override.maximum)" :data-testid="`happy-group-minimum-${group.id}`" /></label>
+                  <label><span class="input-label">{{ t('happyFirstToken.maximum') }} ({{ t('happyFirstToken.seconds') }})</span><input v-model="override.maximum" class="input" type="number" min="0" max="60" step="0.001" required :disabled="saving" :aria-invalid="!validRange(override.minimum, override.maximum)" :data-testid="`happy-group-maximum-${group.id}`" /></label>
+                </div>
+                <p v-if="!validRange(override.minimum, override.maximum)" class="mt-3 text-sm text-red-600 dark:text-red-400" role="alert">{{ t('happyFirstToken.invalid') }}</p>
+              </template>
+            </div>
+            <p v-if="!visibleGroups.length" class="text-sm text-gray-500 dark:text-gray-400">{{ t('happyFirstToken.noGroups') }}</p>
+            <div v-for="override in missingGroups" :key="override.group_id" class="flex flex-wrap justify-between gap-3 text-sm text-amber-700 dark:text-amber-400"><span>{{ t('happyFirstToken.missingGroup') }} #{{ override.group_id }}</span><button type="button" :disabled="saving" @click="toggleGroup(override.group_id)">{{ t('happyFirstToken.removeOverride') }}</button></div>
+            <p v-if="hiddenInvalidGroups" class="text-sm text-red-600 dark:text-red-400" role="alert">{{ t('happyFirstToken.hiddenInvalidGroups') }}</p>
           </div>
-          <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-6 py-4 dark:border-dark-700">
-            <p class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite">{{ dirty ? t('happyFirstToken.unsaved') : '' }}</p>
-            <button type="submit" class="btn btn-primary" :disabled="saving || !valid || !dirty">{{ t(saving ? 'happyFirstToken.saving' : 'happyFirstToken.save') }}</button>
-          </div>
+        </section>
+        <div class="card flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+          <p class="text-sm text-gray-500 dark:text-gray-400" aria-live="polite">{{ dirty ? t('happyFirstToken.unsaved') : '' }}</p>
+          <button type="submit" class="btn btn-primary" :disabled="saving || !valid || !dirty">{{ t(saving ? 'happyFirstToken.saving' : 'happyFirstToken.save') }}</button>
         </div>
         <div class="grid gap-5 sm:grid-cols-2">
           <div v-for="item in ['scope', 'accuracy', 'privacy', 'errors']" :key="item" class="space-y-2">
@@ -106,7 +133,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAppStore } from '@/stores/app'
-import { getAll } from '@/api/admin/groups'
+import { getAllIncludingInactive } from '@/api/admin/groups'
 import type { AdminGroup } from '@/types'
 import { getHappyFirstTokenSettings, updateHappyFirstTokenSettings, type HappyFirstTokenSettings } from '@/api/admin/settings'
 
@@ -123,19 +150,44 @@ const saved = ref('')
 const groups = ref<AdminGroup[]>([])
 const overrides = ref<{ group_id: number; enabled: boolean; deltaMode: string; minimum: number | string; maximum: number | string }[]>([])
 const groupSearch = ref('')
-const visibleGroups = computed(() => groups.value.filter(g => g.name.toLowerCase().includes(groupSearch.value.toLowerCase())))
+const onlyOverrides = ref(false)
 const overrideFor = (id: number) => overrides.value.find(g => g.group_id === id)
+const visibleGroups = computed(() => {
+  const query = groupSearch.value.trim().toLowerCase()
+  return groups.value.filter(g =>
+    (!onlyOverrides.value || overrideFor(g.id)) &&
+    (!query || g.name.toLowerCase().includes(query) || String(g.id).includes(query.replace(/^#/, '')))
+  )
+})
+const missingGroups = computed(() => overrides.value.filter(o => !groups.value.some(g => g.id === o.group_id)))
 function toggleGroup(id: number) {
   if (overrideFor(id)) overrides.value = overrides.value.filter(g => g.group_id !== id)
   else overrides.value.push({ group_id: id, enabled: enabled.value, deltaMode: 'inherit', minimum: minimum.value, maximum: maximum.value })
 }
 const validRange = (min: number | string, max: number | string) => min !== '' && max !== '' && Number.isFinite(Number(min)) && Number.isFinite(Number(max)) && Number(min) >= 0 && Number(max) <= 60 && Number(min) <= Number(max)
-const valid = computed(() => validRange(minimum.value, maximum.value) && overrides.value.every(g => validRange(g.minimum, g.maximum)))
+const globalValid = computed(() => validRange(minimum.value, maximum.value))
+const valid = computed(() => globalValid.value && overrides.value.every(g => validRange(g.minimum, g.maximum)))
+const hiddenInvalidGroups = computed(() => overrides.value.some(g =>
+  !validRange(g.minimum, g.maximum) && !visibleGroups.value.some(visible => visible.id === g.group_id)
+))
 const payload = computed<HappyFirstTokenSettings>(() => ({ enabled: enabled.value, delta_mode: deltaMode.value, min_delay_ms: Math.round(Number(minimum.value) * 1000), max_delay_ms: Math.round(Number(maximum.value) * 1000), group_overrides: overrides.value.map(g => ({ group_id: g.group_id, enabled: g.enabled, ...(g.deltaMode === 'inherit' ? {} : { delta_mode: g.deltaMode === 'enabled' }), min_delay_ms: Math.round(Number(g.minimum) * 1000), max_delay_ms: Math.round(Number(g.maximum) * 1000) })) }))
 const dirty = computed(() => JSON.stringify(payload.value) !== saved.value)
 const rangeLabel = computed(() => Number(minimum.value) === Number(maximum.value)
   ? t('happyFirstToken.fixed', { seconds: minimum.value })
   : t('happyFirstToken.random', { min: minimum.value, max: maximum.value }))
+
+function effectiveLabel(id: number) {
+  const override = overrideFor(id)
+  if (!(override?.enabled ?? enabled.value)) return t('happyFirstToken.effectiveDisabled')
+  const min = override?.minimum ?? minimum.value
+  const max = override?.maximum ?? maximum.value
+  if (!validRange(min, max)) return t('happyFirstToken.invalid')
+  const delta = !override || override.deltaMode === 'inherit' ? deltaMode.value : override.deltaMode === 'enabled'
+  const timing = Number(min) === Number(max)
+    ? t('happyFirstToken.fixed', { seconds: min })
+    : t('happyFirstToken.random', { min, max })
+  return t('happyFirstToken.effectiveEnabled', { timing, mode: t(delta ? 'happyFirstToken.deltaEnabled' : 'happyFirstToken.deltaDisabled') })
+}
 
 function apply(settings: HappyFirstTokenSettings) {
   enabled.value = settings.enabled
@@ -149,7 +201,11 @@ function apply(settings: HappyFirstTokenSettings) {
 async function load() {
   loading.value = true
   loadError.value = false
-  try { const [settings, all] = await Promise.all([getHappyFirstTokenSettings(), getAll('openai')]); groups.value = all; apply(settings) }
+  try {
+    const [settings, all] = await Promise.all([getHappyFirstTokenSettings(), getAllIncludingInactive()])
+    groups.value = all.filter(group => group.platform === 'openai')
+    apply(settings)
+  }
   catch { loadError.value = true }
   finally { loading.value = false }
 }

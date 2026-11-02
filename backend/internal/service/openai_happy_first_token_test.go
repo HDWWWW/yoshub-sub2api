@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -377,4 +378,57 @@ func TestHappyFirstTokenDeltaGroupInheritance(t *testing.T) {
 	var old HappyFirstTokenSettings
 	require.NoError(t, json.Unmarshal([]byte(`{"enabled":true,"min_delay_ms":500,"max_delay_ms":1000}`), &old))
 	require.False(t, old.ForGroup(0).DeltaMode, "existing saved settings keep the wire format")
+}
+
+func TestHappyFirstTokenGlobalOffAllowsIndependentSharedAccountGroups(t *testing.T) {
+	on, off := true, false
+	settings := HappyFirstTokenSettings{
+		Enabled: false, DeltaMode: true, MinDelayMS: 60000, MaxDelayMS: 60000,
+		GroupOverrides: []HappyFirstTokenGroupOverride{
+			{GroupID: 2, Enabled: true, DeltaMode: &on},
+			{GroupID: 3, Enabled: false},
+			{GroupID: 4, Enabled: true, DeltaMode: &off},
+			{GroupID: 5, Enabled: true, MinDelayMS: 60000, MaxDelayMS: 60000},
+		},
+	}
+	s := happyTestService(t, 0)
+	s.settingService.defaultSubGroupReader = refillTestGroups{}
+	require.NoError(t, s.settingService.UpdateHappyFirstTokenSettings(context.Background(), settings))
+	// Reload as a second application instance would, then exercise the real SSE
+	// signal path with the same account shared by independently configured groups.
+	s.settingService = &SettingService{settingRepo: s.settingService.settingRepo}
+	for _, tc := range []struct {
+		id    int64
+		frame string
+	}{
+		{2, openAIHappyFirstTokenDeltaEvent},
+		{3, ""},
+		{4, openAIHappyFirstTokenEvent},
+		{5, ""}, // Its own delay wins over the zero-delay overrides.
+		{6, ""}, // No override inherits the disabled global setting.
+	} {
+		t.Run(fmt.Sprintf("group_%d", tc.id), func(t *testing.T) {
+			c, recorder := happyTestContext(t)
+			c.Set("api_key", &APIKey{GroupID: &tc.id})
+			account := happyAccount()
+			account.GroupIDs = []int64{2, 3, 4, 5, 6}
+			stop := s.startOpenAIResponseSignals(c.Request.Context(), c, account, nil, time.Now(), 0)
+			defer stop()
+			if tc.frame != "" {
+				select {
+				case <-recorder.flushed:
+				case <-time.After(2 * time.Second):
+					t.Fatal("enabled group did not send its notification")
+				}
+			} else {
+				select {
+				case <-recorder.flushed:
+					t.Fatal("group inherited another group's notification")
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+			stop()
+			require.Equal(t, tc.frame, recorder.Body.String())
+		})
+	}
 }

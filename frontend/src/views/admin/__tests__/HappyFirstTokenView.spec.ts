@@ -3,10 +3,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import HappyFirstTokenView from '../HappyFirstTokenView.vue'
 import happyFirstToken from '@/i18n/locales/zh/happyFirstToken'
 
-const { getSettings, updateSettings, showSuccess, showError } = vi.hoisted(() => ({
-  getSettings: vi.fn(), updateSettings: vi.fn(), showSuccess: vi.fn(), showError: vi.fn()
+const { getSettings, getGroups, updateSettings, showSuccess, showError } = vi.hoisted(() => ({
+  getSettings: vi.fn(), getGroups: vi.fn(), updateSettings: vi.fn(), showSuccess: vi.fn(), showError: vi.fn()
 }))
-vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn().mockResolvedValue([{ id: 2, name: 'Group two', platform: 'openai', status: 'active' }]) }))
+vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: getGroups }))
 vi.mock('@/api/admin/settings', () => ({
   getHappyFirstTokenSettings: getSettings,
   updateHappyFirstTokenSettings: updateSettings
@@ -69,6 +69,7 @@ describe('HappyFirstTokenView', () => {
   })
   beforeEach(() => {
     vi.clearAllMocks()
+    getGroups.mockResolvedValue([{ id: 2, name: 'Group two', platform: 'openai', status: 'active' }])
     getSettings.mockResolvedValue({ enabled: false, min_delay_ms: 100, max_delay_ms: 1000 })
     updateSettings.mockImplementation(async (settings) => settings)
   })
@@ -137,6 +138,72 @@ describe('HappyFirstTokenView', () => {
     await flushPromises()
     expect(wrapper.find('form').exists()).toBe(true)
     expect(updateSettings).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps multiple group settings independent across filtering, saving and reloading', async () => {
+    getGroups.mockResolvedValue([
+      { id: 2, name: 'Group two', platform: 'openai', status: 'active' },
+      { id: 3, name: 'Group three', platform: 'openai', status: 'inactive' },
+      { id: 4, name: 'Claude', platform: 'anthropic', status: 'active' }
+    ])
+    const wrapper = await openPage()
+    expect(wrapper.find('[data-testid="happy-group-4"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('分组已停用，可提前配置')
+    await wrapper.get('[data-testid="happy-group-2"]').setValue(true)
+    await wrapper.get('[data-testid="happy-group-enable-2"]').setValue(true)
+    await wrapper.get('[data-testid="happy-group-minimum-2"]').setValue('0.25')
+    await wrapper.get('[data-testid="happy-group-maximum-2"]').setValue('0.75')
+    await wrapper.get('[data-testid="happy-group-delta-2"]').setValue('enabled')
+    await wrapper.get('[data-testid="happy-group-3"]').setValue(true)
+    await wrapper.get('[data-testid="happy-group-delta-3"]').setValue('disabled')
+    expect(wrapper.get('[data-testid="happy-group-effective-2"]').text()).toContain('开启 · 随机等待 0.25–0.75 秒 · .delta 开启')
+    expect(wrapper.get('[data-testid="happy-group-effective-3"]').text()).toContain('关闭快乐首字')
+    const search = wrapper.get('input[aria-label="搜索 OpenAI 分组名称或 ID"]')
+    await search.setValue(' #3 ')
+    expect(wrapper.find('[data-testid="happy-group-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="happy-group-3"]').exists()).toBe(true)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const submitted = updateSettings.mock.calls[0]![0]
+    expect(submitted.enabled).toBe(false)
+    expect(submitted.group_overrides).toEqual([
+      { group_id: 2, enabled: true, delta_mode: true, min_delay_ms: 250, max_delay_ms: 750 },
+      { group_id: 3, enabled: false, delta_mode: false, min_delay_ms: 100, max_delay_ms: 1000 }
+    ])
+    wrapper.unmount()
+    getSettings.mockResolvedValue(submitted)
+    const reloaded = await openPage()
+    expect(reloaded.get('[data-testid="happy-group-effective-2"]').text()).toContain('0.25–0.75')
+    await reloaded.get('[data-testid="happy-group-3"]').setValue(false)
+    await reloaded.get('[data-testid="happy-custom-only"]').setValue(true)
+    expect(reloaded.find('[data-testid="happy-group-3"]').exists()).toBe(false)
+    expect(reloaded.find('[data-testid="happy-group-2"]').exists()).toBe(true)
+    await reloaded.get('form').trigger('submit')
+    await flushPromises()
+    expect(updateSettings.mock.calls[1]![0].group_overrides).toEqual([submitted.group_overrides[0]])
+    reloaded.unmount()
+  })
+
+  it('reports invalid hidden group values and blocks saving until corrected', async () => {
+    const wrapper = await openPage()
+    await wrapper.get('[data-testid="happy-group-2"]').setValue(true)
+    await wrapper.get('[data-testid="happy-group-minimum-2"]').setValue('2')
+    await wrapper.get('input[aria-label="搜索 OpenAI 分组名称或 ID"]').setValue('missing')
+    expect(wrapper.get('[role="alert"]').text()).toContain('未显示的分组中有无效等待时间')
+    await wrapper.get('form').trigger('submit')
+    expect(updateSettings).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('preserves persisted overrides when the group list fails to load', async () => {
+    getGroups.mockRejectedValueOnce(new Error('offline'))
+    const wrapper = await openPage()
+    expect(wrapper.find('form').exists()).toBe(false)
+    expect(updateSettings).not.toHaveBeenCalled()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="happy-group-2"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })
