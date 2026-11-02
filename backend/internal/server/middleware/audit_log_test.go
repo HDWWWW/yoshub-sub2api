@@ -188,3 +188,24 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.Equal(t, "<credential-bearing body omitted>", logs[0].RequestBody)
 	require.NotContains(t, logs[0].RequestBody, "audit-canary")
 }
+
+func TestRefillDownloadAuditsAccessWithoutCredentialBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	router.GET("/api/v1/admin/accounts/refill/jobs/:job_id/delivery", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/json", []byte(`{"accounts":[{"credentials":{"access_token":"audit-download-canary"}}]}`))
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/refill/jobs/local/delivery", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	auditService.Stop()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	require.Len(t, repository.logs, 1)
+	require.Equal(t, "admin.accounts.refill.download", repository.logs[0].Action)
+	require.Empty(t, repository.logs[0].RequestBody)
+}

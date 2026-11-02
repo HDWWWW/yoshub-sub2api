@@ -105,6 +105,7 @@
             <label class="block"><span class="input-label">{{ t('accountRefill.wecomWebhook') }} <span v-if="view.webhook_configured" class="text-green-600">{{ t('accountRefill.configured') }}</span></span><input v-model="webhook" type="password" autocomplete="new-password" class="input" data-testid="refill-webhook" :placeholder="t('accountRefill.webhookPlaceholder')" /></label>
             <p class="input-hint">{{ t('accountRefill.webhookHint') }}</p>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.refill_started" type="checkbox" data-testid="refill-notify-start" />{{ t('accountRefill.notifyStarted') }}</label>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('accountRefill.notifyStartedHint') }}</p>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.low_balance" type="checkbox" data-testid="refill-notify-balance" />{{ t('accountRefill.notifyLowBalance') }}</label>
             <label class="block"><span class="input-label">{{ t('accountRefill.lowBalanceThreshold') }}</span><input v-model.number="form.notifications.low_balance_threshold" type="number" min="0" max="10000000" step="0.01" class="input" data-testid="refill-balance-threshold" /></label>
             <p class="input-hint">{{ t('accountRefill.lowBalanceHint') }}</p>
@@ -171,6 +172,7 @@
                   <th class="p-2">{{ t('accountRefill.points') }}</th>
                   <th class="p-2">{{ t('accountRefill.elapsed') }}</th>
                   <th class="p-2">{{ t('accountRefill.created') }}</th>
+                  <th class="p-2">{{ t('common.actions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -186,6 +188,8 @@
                   </td>
                   <td class="max-w-80 p-2">
                     <span class="font-medium">{{ stateLabel(job.status) }}</span>
+                    <div v-if="job.supplier_status" class="mt-1 text-xs text-gray-500" data-testid="refill-supplier-status">{{ t('accountRefill.supplierStatus') }}: {{ supplierStateLabel(job.supplier_status) }} · {{ job.supplier_status }}</div>
+                    <div v-if="job.supplier_error" class="mt-1 break-words text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.supplierError') }}: {{ job.supplier_error }}</div>
                     <div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div>
                     <button v-if="['blocked', 'import_failed'].includes(job.status)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
                     <details v-if="job.status === 'blocked' && !job.supplier_id" class="mt-2 text-xs">
@@ -194,9 +198,12 @@
                       <button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t('accountRefill.dismiss') }}</button>
                     </details>
                   </td>
-                  <td class="p-2 tabular-nums">{{ number(job.price) }}</td>
+                  <td class="p-2 tabular-nums">{{ number(job.price) }}<div class="mt-1 whitespace-nowrap text-xs text-gray-500">{{ t(`accountRefill.${job.budget_released ? 'amountReleased' : job.supplier_status === 'succeeded' ? 'amountCharged' : 'amountHeld'}`) }}</div></td>
                   <td class="whitespace-nowrap p-2 tabular-nums">{{ elapsed(job) }}</td>
                   <td class="whitespace-nowrap p-2 text-xs">{{ date(job.created_at) }}</td>
+                  <td class="p-2">
+                    <button type="button" class="btn btn-secondary whitespace-nowrap text-xs" data-testid="refill-download" :disabled="!!downloadReason(job) || downloading.has(job.id)" :title="t(downloadReason(job) || 'accountRefill.downloadHint')" @click="download(job)">{{ t(downloading.has(job.id) ? 'accountRefill.downloading' : 'accountRefill.downloadJSON') }}</button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -219,6 +226,7 @@
       <button type="submit" form="refill-settings" class="btn btn-primary" :disabled="busy || !dirty || conflict || !form" data-testid="refill-save">{{ t(busy ? 'accountRefill.saving' : 'accountRefill.save') }}</button>
     </template>
   </BaseDialog>
+  <TotpStepUpDialog :controller="downloadStepUp" />
 </template>
 
 <script setup lang="ts">
@@ -232,6 +240,9 @@ import { accountRefillAPI, type RefillConfig, type RefillView, type RefillJob, t
 import { getAllIncludingInactive } from '@/api/admin/groups'
 import type { AdminGroup, Proxy } from '@/types'
 import { useAppStore } from '@/stores/app'
+import { saveAs } from 'file-saver'
+import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
 const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual'; proxies?: Proxy[] }>()
 const emit = defineEmits<{ close: [] }>()
@@ -246,6 +257,8 @@ const switchingGroup = ref(false)
 const groups = ref<AdminGroup[]>([])
 const manualProxies = computed(() => (props.proxies || []).filter(proxy => !proxy.managed_ipv6))
 const confirmedJobs = ref<string[]>([])
+const downloading = ref(new Set<string>())
+const downloadStepUp = useStepUp()
 const jobsPageSize = 10
 const jobsPage = ref(1)
 const pagedJobs = computed(() => view.value?.jobs.slice((jobsPage.value - 1) * jobsPageSize, jobsPage.value * jobsPageSize) || [])
@@ -279,13 +292,34 @@ const ruleFields = computed<{ key: NumericKey; min: number; max: number; step?: 
   ...(['min_remaining_5h', 'min_remaining_7d'] as const).map(key => ({ key, min: 0, max: 100, step: 0.1 })),
   ...(form.value?.mode === 'capacity' ? [{ key: 'target_concurrency_percent' as const, min: 1, max: 100 }, { key: 'concurrency_sustain_seconds' as const, min: 1, max: 3600 }] : []),
   ...(form.value?.mode === 'interval' ? [{ key: 'interval_minutes' as const, min: 1, max: 10080 }, { key: 'interval_quantity' as const, min: 1, max: 100 }] : []),
-  { key: 'check_seconds', min: 15, max: 3600 }, { key: 'cooldown_seconds', min: 60, max: 86400 }, { key: 'max_in_flight', min: 1, max: 20 }, { key: 'daily_max_count', min: 1, max: 1000 }, { key: 'daily_max_points', min: 0.01, max: 1e7, step: 0.01 }, { key: 'max_unit_price', min: 0, max: 1e7, step: 0.01 }
+  { key: 'check_seconds', min: 5, max: 3600 }, { key: 'cooldown_seconds', min: 5, max: 86400 }, { key: 'max_in_flight', min: 1, max: 20 }, { key: 'daily_max_count', min: 1, max: 1000 }, { key: 'daily_max_points', min: 0.01, max: 1e7, step: 0.01 }, { key: 'max_unit_price', min: 0, max: 1e7, step: 0.01 }
 ])
 const deliveryFields = [{ key: 'priority', max: 2147483647, step: 1 }, { key: 'load_factor', max: 10000, step: 1 }, { key: 'rate_multiplier', max: 1000, step: 0.01 }] as const
 const number = (v: number | null | undefined) => v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: 8 })
 const forecastAccounts = computed(() => view.value?.evaluation.accounts.filter(account => account.forecast_loss) || [])
 const date = (v: string | null | undefined) => !v || v.startsWith('0001') ? '—' : new Date(v).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`accountRefill.states.${state}`) : state
+const supplierStateLabel = (state: string) => ['queued', 'processing', 'succeeded', 'failed', 'review'].includes(state) ? stateLabel(state) : t('accountRefill.states.supplier_unknown')
+function downloadReason(job: RefillJob) {
+  if (job.status === 'delivery_expired' || (job.expires_at != null && job.expires_at * 1000 <= now.value)) return 'accountRefill.downloadExpired'
+  if (!job.supplier_id || job.supplier_status !== 'succeeded' || !job.result_ready) return 'accountRefill.downloadNotReady'
+  return ''
+}
+async function download(job: RefillJob) {
+  if (downloadReason(job) || downloading.value.has(job.id)) return
+  const groupID = selectedGroup.value
+  const current = generation
+  downloading.value.add(job.id)
+  try {
+    const data = await downloadStepUp.run(() => accountRefillAPI.download(job.id, groupID))
+    if (current !== generation) return
+    saveAs(new Blob([data], { type: 'application/json;charset=utf-8' }), `sub2api-refill-${job.id.replace(/[^a-zA-Z0-9._-]/g, '_')}.json`)
+    app.showSuccess(t('accountRefill.downloaded'))
+  } catch (e) {
+    if (current !== generation || isStepUpCancelled(e)) return
+    error.value = isStepUpBlocked(e) ? t(stepUpBlockReason(e) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN' ? 'stepUp.adminApiKeyForbidden' : 'stepUp.notEnabled') : message(e)
+  } finally { downloading.value.delete(job.id) }
+}
 const elapsed = (job: RefillJob) => { const seconds = Math.max(0, Math.floor(((job.finished_at ? Date.parse(job.finished_at) : now.value) - Date.parse(job.created_at)) / 1000)); return `${Math.floor(seconds / 60)}m ${seconds % 60}s` }
 function initializeRotation() { if (form.value?.rotation_enabled && !form.value.rotation?.length) form.value.rotation = [{ plan: 'pro20x', count: 1 }, { plan: 'pro5x', count: 2 }] }
 function togglePlanQuota(plan: string) {
@@ -333,7 +367,7 @@ function accept(data: RefillView, reset: boolean) {
   }
   now.value = Date.now()
 }
-function message(e: unknown) { const v = e as { response?: { data?: { message?: string; error?: string } } }; return v.response?.data?.message || v.response?.data?.error || t('accountRefill.error') }
+function message(e: unknown) { const v = e as { message?: string; response?: { data?: { message?: string; error?: string } } }; return v.response?.data?.message || v.response?.data?.error || v.message || t('accountRefill.error') }
 async function refresh(reset: boolean) {
   if (fetching || switchingGroup.value) return
   const current = generation
@@ -396,6 +430,7 @@ watch(() => props.show, async show => {
   if (timer) clearInterval(timer)
   token.value = ''
   webhook.value = ''
+  downloadStepUp.onCancel()
   if (!show) return
   loading.value = true; error.value = ''; form.value = null; view.value = null; activeTab.value = props.initialTab || 'connection'
   restoreManualRequest()
@@ -409,5 +444,5 @@ watch(() => props.show, async show => {
   finally { if (current === generation) loading.value = false }
   if (current === generation) timer = setInterval(() => { now.value = Date.now(); void refresh(false) }, 15000)
 }, { immediate: true })
-onBeforeUnmount(() => { generation++; token.value = ''; webhook.value = ''; if (timer) clearInterval(timer) })
+onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; webhook.value = ''; if (timer) clearInterval(timer) })
 </script>

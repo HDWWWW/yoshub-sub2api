@@ -160,7 +160,7 @@ func TestRefillFailureReplacementRequiresConfirmedFailure(t *testing.T) {
 }
 
 func TestRefillFailureReplacementUsesExistingGuards(t *testing.T) {
-	for _, guard := range []string{"disabled", "monitor", "push", "window", "cooldown", "count", "points", "price", "wallet", "preview", "pending"} {
+	for _, guard := range []string{"disabled", "monitor", "push", "window", "provider_backoff", "count", "points", "price", "wallet", "preview", "pending"} {
 		t.Run(guard, func(t *testing.T) {
 			s, store, p, _ := failureRefillHarness(t)
 			ctx := context.Background()
@@ -184,8 +184,8 @@ func TestRefillFailureReplacementUsesExistingGuards(t *testing.T) {
 					v.Config.WindowEnabled = true
 					v.Config.WindowStart = time.Now().In(refillTimezone).Add(time.Hour).Format("15:04")
 					v.Config.WindowEnd = time.Now().In(refillTimezone).Add(2 * time.Hour).Format("15:04")
-				case "cooldown":
-					v.LastSubmitAt = time.Now()
+				case "provider_backoff":
+					v.ProviderRetryAt = time.Now().Add(time.Minute)
 				case "count":
 					v.Config.DailyMaxCount = 1
 				case "points":

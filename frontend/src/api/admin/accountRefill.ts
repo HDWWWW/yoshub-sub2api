@@ -59,6 +59,9 @@ export interface RefillJob {
   supplier_id?: string
   status: string
   supplier_status?: string
+  supplier_error?: string
+  result_ready?: boolean
+  budget_released?: boolean
   reason: string
   reason_detail?: string
   plan: string
@@ -66,7 +69,7 @@ export interface RefillJob {
   created_at: string
   updated_at: string
   finished_at?: string
-  expires_at?: number
+  expires_at?: number | null
   error?: string
   account_id?: number
   attempts: number
@@ -116,6 +119,36 @@ export interface RefillView {
   import_expiry_offset_minutes: number
 }
 export const accountRefillAPI = {
+  async download(id: string, groupID: number) {
+    const { data } = await apiClient.get<string>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/delivery`, {
+      params: { group_id: groupID }, timeout: 60000,
+      // Keep the supplier file intact, but let the shared interceptor process
+      // JSON error envelopes (including the existing export step-up flow).
+      transformResponse: [(raw: string) => {
+        try {
+          const parsed = JSON.parse(raw)
+          if (parsed && typeof parsed === 'object' && 'code' in parsed && !Array.isArray(parsed.accounts)) return parsed
+        } catch { /* Validate successful responses below, including proxy errors. */ }
+        return raw
+      }]
+    })
+    // A proxy may return HTTP 200 with HTML or an error envelope. Validate the
+    // file before saving, but return the original text to preserve large IDs.
+    try {
+      if (typeof data !== 'string') throw new Error()
+      const document = JSON.parse(data)
+      const account = document?.accounts?.[0]
+      if (!document || Array.isArray(document) ||
+          (document.type != null && document.type !== '' && document.type !== 'sub2api-data') ||
+          (document.version != null && document.version !== 0 && document.version !== 1) ||
+          !Array.isArray(document.proxies) || !Array.isArray(document.accounts) || document.accounts.length !== 1 ||
+          account?.platform !== 'openai' || account?.type !== 'oauth' ||
+          typeof account.credentials?.access_token !== 'string' || !account.credentials.access_token.trim()) throw new Error()
+    } catch {
+      throw new Error('Invalid SUB2API delivery JSON')
+    }
+    return data
+  },
   async get(groupID?: number) { return (await apiClient.get<RefillView>('/admin/accounts/refill', { params: groupID ? { group_id: groupID } : {} })).data },
   async save(config: RefillConfig, api_token: string, revision: number, wecom_webhook = '') {
     return (await apiClient.put<RefillView>('/admin/accounts/refill', { config, api_token, revision, wecom_webhook }, { params: { group_id: config.group_id }, timeout: 100000 })).data

@@ -125,7 +125,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			if j.pending() {
 				pending++
 			}
-			if slices.Contains([]string{"blocked", "review", "import_failed"}, j.Status) {
+			if refillNeedsAttention(j.Status) {
 				return invalidManualRefill("请先在消费与进度中处理需要核对的原任务")
 			}
 		}

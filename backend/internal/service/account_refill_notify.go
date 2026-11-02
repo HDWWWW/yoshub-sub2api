@@ -133,8 +133,8 @@ func (s *AccountRefillService) notifyRefillBalance(ctx context.Context, state *a
 	return persist()
 }
 
-// The existing refill lifecycle switch covers both starts and confirmed
-// failures. Persist the attempt with the terminal result before contacting
+// The existing refill lifecycle switch covers starts, confirmed failures,
+// automatic imports and delivery delays. Persist attempts before contacting
 // WeCom, whose API has no idempotency key.
 func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
 	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
@@ -150,7 +150,7 @@ func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *ac
 	if j.ManualRequestID != "" || j.Reason == "手动补号" {
 		mode, next = "手动补号", "手动订单不自动重下，请核对后按需手动补号。"
 	} else if j.ReplacementPending {
-		next = fmt.Sprintf("仍有缺口时按原套餐 %s 自动重补，不推进轮转、不叠加补号；继续受开关、冷却、在途、上限及预算约束。", j.Plan)
+		next = fmt.Sprintf("仍有缺口时立即按原套餐 %s 自动重补 1 个，跳过普通下单冷却；不推进轮转、不叠加补号；继续受开关、时段、在途、上限、预算及号商限流约束。", j.Plan)
 		if !state.Config.Enabled || !state.Config.MonitorEnabled || !state.Config.PushEnabled {
 			next = "当前自动购买、监测或推送已暂停；恢复后重新检查缺口再决定是否重补原套餐。"
 		}
@@ -158,6 +158,54 @@ func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *ac
 	content := fmt.Sprintf("Sub2API 补号失败\n方式：%s\n套餐：%s\n结果：号商已确认失败，本地预算预占已释放\n积分：%g\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n后续：%s\n时间：%s", mode, j.Plan, j.Price, j.DeliveryGroupIDs, j.ID, j.SupplierID, next, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	s.sendRefillNotification(ctx, state, content)
 	return persist()
+}
+
+func automaticRefillJob(j *AccountRefillJob) bool {
+	return j.ManualRequestID == "" && j.Reason != "手动补号"
+}
+
+func (s *AccountRefillService) notifyRefillImported(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
+	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
+		!automaticRefillJob(j) || j.Status != "imported" || j.AccountID == 0 || j.ImportedNotificationAt != nil {
+		return nil
+	}
+	now := time.Now()
+	j.ImportedNotificationAt = &now
+	// Save the completed import and notification attempt together. A restart
+	// must neither re-import the account nor announce this completion twice.
+	if err := persist(); err != nil {
+		return err
+	}
+	content := fmt.Sprintf("Sub2API 自动补号成功\n结果：账号已导入并绑定分组\n套餐：%s\n积分：%g\n账号 ID：%d\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n耗时：%s\n时间：%s",
+		j.Plan, j.Price, j.AccountID, j.DeliveryGroupIDs, j.ID, j.SupplierID, now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	s.sendRefillNotification(ctx, state, content)
+	return persist()
+}
+
+const refillDeliveryAlertAfter = 5 * time.Minute
+
+func (s *AccountRefillService) notifyRefillDelayed(ctx context.Context, state *accountRefillState, now time.Time, persist func() error) error {
+	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" {
+		return nil
+	}
+	for i := range state.Jobs {
+		j := &state.Jobs[i]
+		if !automaticRefillJob(j) || !j.pending() || j.DelayedNotificationAt != nil ||
+			j.CreatedAt.IsZero() || now.Sub(j.CreatedAt) < refillDeliveryAlertAfter {
+			continue
+		}
+		j.DelayedNotificationAt = &now
+		if err := persist(); err != nil {
+			return err
+		}
+		content := fmt.Sprintf("Sub2API 自动补号超时提醒\n结果：下单已满 5 分钟，账号仍未成功导入\n套餐：%s\n当前状态：%s\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n已等待：%s\n请检查号商进度和交付导入状态；继续处理原任务，不因超时另下新单。每个任务只提醒一次。\n时间：%s",
+			j.Plan, j.Status, j.DeliveryGroupIDs, j.ID, j.SupplierID, now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+		s.sendRefillNotification(ctx, state, content)
+		if err := persist(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Notification monitoring works independently of automatic purchases.

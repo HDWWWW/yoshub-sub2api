@@ -343,7 +343,8 @@ func TestAccountRefillDurableReservationRetryAndRestart(t *testing.T) {
 	refillDue(t, store)
 	p.submitError = nil
 	// A new service instance shares only persisted state, not a process-local job map.
-	restarted := *s
+	restarted := &AccountRefillService{store: store, encryptor: s.encryptor, accounts: accounts,
+		admin: accounts, groups: s.groups, loads: s.loads, proxies: s.proxies, provider: p}
 	require.NoError(t, restarted.run(ctx, false))
 	require.Len(t, p.submitted, 2)
 	require.Equal(t, first.ID, p.submitted[1].ID)

@@ -311,6 +311,24 @@
               <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']" />
             </button>
           </template>
+
+          <template #cell-force_fast="{ row }">
+            <button
+              v-if="row.platform === 'openai'"
+              type="button"
+              role="switch"
+              :aria-checked="row.extra?.openai_force_fast === true"
+              :aria-label="t('admin.accounts.columns.forceFast')"
+              :title="t('admin.accounts.forceFastHint')"
+              :disabled="togglingForceFast.has(row.id)"
+              class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800"
+              :class="row.extra?.openai_force_fast === true ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500'"
+              @click="handleToggleForceFast(row)"
+            >
+              <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="row.extra?.openai_force_fast === true ? 'translate-x-4' : 'translate-x-0'" />
+            </button>
+            <span v-else class="text-gray-400 dark:text-dark-500">—</span>
+          </template>
           <template #cell-today_stats="{ row }">
             <AccountTodayStatsCell
               :stats="todayStatsByAccountId[String(row.id)] ?? null"
@@ -644,6 +662,15 @@ const showSchedulePanel = ref(false)
 const scheduleAcc = ref<Account | null>(null)
 const scheduleModelOptions = ref<SelectOption[]>([])
 const togglingSchedulable = ref<number | null>(null)
+const togglingForceFast = ref(new Set<number>())
+let forceFastSaveRevision = 0
+const forceFastSaves = new Map<number, { revision: number; enabled: boolean }>()
+const preserveForceFastSaves = <T extends { id: number; extra?: Account['extra'] }>(rows: T[], requestRevision: number): T[] => rows.map(row => {
+  const saved = forceFastSaves.get(row.id)
+  return saved && saved.revision > requestRevision
+    ? { ...row, extra: { ...row.extra, openai_force_fast: saved.enabled } }
+    : row
+})
 const menu = reactive<{show:boolean, acc:Account|null, anchorRect:DOMRect|null}>({ show: false, acc: null, anchorRect: null })
 const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
@@ -1132,7 +1159,11 @@ const {
   handlePageChange: baseHandlePageChange,
   handlePageSizeChange: baseHandlePageSizeChange
 } = useTableLoader<AccountListItem, any>({
-  fetchFn: adminAPI.accounts.list,
+  fetchFn: async (page, pageSize, filters, options) => {
+    const revision = forceFastSaveRevision
+    const result = await adminAPI.accounts.list(page, pageSize, filters, options)
+    return { ...result, items: preserveForceFastSaves(result.items || [], revision) }
+  },
   initialParams: {
     ...loadInitialAccountFilterValues(),
     type: '',
@@ -1473,6 +1504,7 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
     current.current_window_cost !== next.current_window_cost ||
     current.active_sessions !== next.active_sessions ||
     current.schedulable !== next.schedulable ||
+    current.extra?.openai_force_fast !== next.extra?.openai_force_fast ||
     current.status !== next.status ||
     current.rate_limit_reset_at !== next.rate_limit_reset_at ||
     current.overload_until !== next.overload_until ||
@@ -1524,6 +1556,7 @@ const refreshAccountsIncrementally = async () => {
   if (autoRefreshFetching.value) return
   syncAccountListDerivedParams()
   autoRefreshFetching.value = true
+  const fastRevision = forceFastSaveRevision
   try {
     const result = await adminAPI.accounts.listWithEtag(
       pagination.page,
@@ -1548,7 +1581,7 @@ const refreshAccountsIncrementally = async () => {
     if (!result.notModified && result.data) {
       pagination.total = result.data.total || 0
       pagination.pages = result.data.pages || 0
-      mergeAccountsIncrementally(result.data.items || [])
+      mergeAccountsIncrementally(preserveForceFastSaves(result.data.items || [], fastRevision))
       hasPendingListSync.value = false
     }
     upstreamBillingNow.value = Date.now()
@@ -1872,6 +1905,7 @@ const allColumns = computed(() => {
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
+    { key: 'force_fast', label: t('admin.accounts.columns.forceFast'), sortable: false },
     { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
   ]
   if (!authStore.isSimpleMode) {
@@ -2560,6 +2594,27 @@ const handleToggleSchedulable = async (a: Account) => {
     appStore.showError(t('admin.accounts.failedToToggleSchedulable'))
   } finally {
     togglingSchedulable.value = null
+  }
+}
+const handleToggleForceFast = async (a: Account) => {
+  if (a.platform !== 'openai' || togglingForceFast.value.has(a.id)) return
+  togglingForceFast.value.add(a.id)
+  enterAutoRefreshSilentWindow()
+  try {
+    const { enabled } = await adminAPI.accounts.setForceFast(a.id, a.extra?.openai_force_fast !== true)
+    // Keep saves newer than an in-flight list read. Reads started afterwards
+    // still accept server state, including changes made by another admin.
+    forceFastSaves.set(a.id, { revision: ++forceFastSaveRevision, enabled })
+    const current = accounts.value.find(account => account.id === a.id)
+    if (current) {
+      patchAccountInList({ ...current, extra: { ...current.extra, openai_force_fast: enabled } })
+    }
+    enterAutoRefreshSilentWindow()
+  } catch (error) {
+    console.error('Failed to toggle Force Fast:', error)
+    appStore.showError(t('admin.accounts.failedToToggleForceFast'))
+  } finally {
+    togglingForceFast.value.delete(a.id)
   }
 }
 const handleShowTempUnsched = (a: Account) => { tempUnschedAcc.value = a; showTempUnsched.value = true }

@@ -109,6 +109,8 @@ export default {
       schedulableEnabled: 'Scheduling enabled',
       schedulableDisabled: 'Scheduling disabled',
       failedToToggleSchedulable: 'Failed to toggle scheduling status',
+      forceFastHint: 'Force this account’s OpenAI requests to Fast (priority) and charge customers at Standard prices. Overrides group tier selection; global Fast filter and block rules still apply. Applies to new requests; reconnect existing WebSocket sessions.',
+      failedToToggleForceFast: 'Failed to toggle Force Fast',
       priorityQuick: {
         raise: 'Raise priority (value -1)',
         lower: 'Lower priority (value +1)',
@@ -283,6 +285,7 @@ export default {
         schedulerScore: 'Scheduler Score',
         status: 'Status',
         schedulable: 'Schedulable',
+        forceFast: 'Force Fast',
         todayStats: 'Today Stats',
         groups: 'Groups',
         usageWindows: 'Usage Windows',

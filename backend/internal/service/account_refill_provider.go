@@ -45,11 +45,22 @@ type RefillKeyInfo struct {
 type RefillProviderJob struct {
 	ID          string  `json:"id"`
 	Status      string  `json:"status"`
+	Service     string  `json:"service"`
+	Plan        string  `json:"plan"`
+	Format      string  `json:"format"`
+	Quantity    *int    `json:"quantity"`
+	Error       string  `json:"error"`
 	Price       float64 `json:"price"`
 	ExpiresAt   *int64  `json:"expires_at"`
 	ResultReady bool    `json:"result_ready"`
 }
 type RefillDelivery struct {
+	// Keep the complete supplier document for downloads, including version,
+	// proxies, extra and future import fields. Never persist or log this payload.
+	raw      json.RawMessage
+	Type     string            `json:"type,omitempty"`
+	Version  int               `json:"version,omitempty"`
+	Proxies  []json.RawMessage `json:"proxies"`
 	Accounts []struct {
 		Name        string         `json:"name"`
 		Platform    string         `json:"platform"`
@@ -58,6 +69,38 @@ type RefillDelivery struct {
 		ExpiresAt   *int64         `json:"expires_at"`
 	} `json:"accounts"`
 }
+
+func (d *RefillDelivery) UnmarshalJSON(data []byte) error {
+	type payload RefillDelivery
+	var decoded payload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*d = RefillDelivery(decoded)
+	d.raw = append(json.RawMessage(nil), data...)
+	return nil
+}
+
+func (d RefillDelivery) MarshalJSON() ([]byte, error) {
+	if len(d.raw) > 0 {
+		return d.raw, nil
+	}
+	type payload RefillDelivery
+	return json.Marshal(payload(d))
+}
+
+func validateRefillDelivery(delivery *RefillDelivery) error {
+	if delivery == nil || (delivery.Type != "" && delivery.Type != "sub2api-data") ||
+		(delivery.Version != 0 && delivery.Version != 1) || len(delivery.Accounts) != 1 ||
+		delivery.Accounts[0].Platform != PlatformOpenAI || delivery.Accounts[0].Type != AccountTypeOAuth {
+		return errors.New("号商交付不是有效的 SUB2API 账号 JSON")
+	}
+	if access, ok := delivery.Accounts[0].Credentials["access_token"].(string); !ok || strings.TrimSpace(access) == "" {
+		return errors.New("号商交付缺少接入凭据")
+	}
+	return nil
+}
+
 type RefillProvider interface {
 	Catalog(context.Context, string) (*RefillCatalog, error)
 	Submit(context.Context, string, AccountRefillJob) (*RefillProviderJob, error)
@@ -71,8 +114,12 @@ type refillProviderError struct {
 	retryAfter time.Duration
 }
 
+type refillProviderTemporaryError struct{ message string }
+
+func (e *refillProviderTemporaryError) Error() string { return e.message }
+
 func (e *refillProviderError) Error() string {
-	message := map[int]string{401: "令牌无效、已过期或被撤销", 402: "号商可用积分不足", 403: "权限不足，请确认读写和 JSON 导出权限", 404: "号商任务不存在", 409: "状态或报价冲突，请核对原任务", 410: "交付租期已结束", 422: "号商拒绝参数，请核对套餐与报价", 429: "号商请求限流"}[e.code]
+	message := map[int]string{401: "令牌无效、已过期或被撤销", 402: "号商可用积分不足", 403: "权限不足，请确认读写和 JSON 导出权限", 404: "号商任务不存在", 409: "状态或报价冲突，请核对原任务", 410: "交付租期已结束", 413: "号商请求体过大", 422: "号商拒绝参数，请核对套餐与报价", 429: "号商请求限流", 503: "号商服务暂时不可用，保留原任务重试"}[e.code]
 	if message == "" {
 		message = "号商连接暂时异常，保留原任务重试"
 	}
@@ -112,7 +159,7 @@ func (p *httpRefillProvider) request(ctx context.Context, token, method, path, k
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return errors.New("号商连接中断，保留原任务重试")
+		return &refillProviderTemporaryError{"号商连接中断，保留原任务重试"}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -126,7 +173,7 @@ func (p *httpRefillProvider) request(ctx context.Context, token, method, path, k
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024+1))
 	if err != nil || len(data) > 2*1024*1024 || json.Unmarshal(data, out) != nil {
-		return errors.New("号商响应不完整，保留原任务重试")
+		return &refillProviderTemporaryError{"号商响应不完整，保留原任务重试"}
 	}
 	return nil
 }

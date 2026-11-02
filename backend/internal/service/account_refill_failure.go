@@ -1,6 +1,9 @@
 package service
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // A confirmed failure supplies the plan for an existing demand slot. It never
 // adds demand or submits from a second worker. Old terminal jobs are not replayed.
@@ -16,6 +19,9 @@ func markRefillFailureReplacement(state *accountRefillState, job *AccountRefillJ
 	}
 	job.ReplacementPending = true
 	job.Error += "；仍有补号需求时自动重补原套餐"
+	// A confirmed automatic failure should re-evaluate demand in this worker
+	// turn, rather than waiting for the normal monitoring interval.
+	state.NextCheckAt = time.Time{}
 	// The failed reservation already consumed this interval's quantity. Return
 	// exactly that slot, instead of creating a separate replacement allowance.
 	if job.Mode == "interval" && state.Config.Mode == "interval" {

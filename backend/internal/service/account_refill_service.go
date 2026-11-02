@@ -81,7 +81,9 @@ func (s *AccountRefillService) Start() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		ticker := time.NewTicker(15 * time.Second)
+		// Wake often enough to honor the shortest configurable check/cooldown.
+		// Per-rule deadlines and supplier polling/backoff still gate each action.
+		ticker := time.NewTicker(accountRefillMinIntervalSeconds * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
@@ -376,6 +378,13 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		now := time.Now()
 		persist := func() error { return saveRefillState(&state, save) }
+		if !preview {
+			// Local delivery deadlines must still alert while provider requests are
+			// backed off or automatic purchasing/monitoring is paused.
+			if err := s.notifyRefillDelayed(ctx, &state, now, persist); err != nil {
+				return err
+			}
+		}
 		if now.Before(state.ProviderRetryAt) {
 			return nil
 		}
@@ -484,7 +493,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Evaluation.Needed = refillMin(state.IntervalRemaining, refillMax(0, state.Config.MaxReady-state.Evaluation.Ready-state.Evaluation.Pending), refillMax(0, state.Config.MaxInFlight-state.Evaluation.Pending))
 			state.Evaluation.Reason = "定时补号"
 			for _, j := range state.Jobs {
-				if slices.Contains([]string{"blocked", "review", "import_failed"}, j.Status) {
+				if refillNeedsAttention(j.Status) {
 					state.Evaluation.Needed = 0
 				}
 			}
@@ -501,12 +510,12 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				return persist()
 			}
 		}
-		if now.Sub(state.LastSubmitAt) < time.Duration(state.Config.CooldownSeconds)*time.Second {
+		replacement := nextRefillFailureReplacement(&state)
+		if replacement < 0 && now.Sub(state.LastSubmitAt) < time.Duration(state.Config.CooldownSeconds)*time.Second {
 			state.Message = "补号冷却中，等待下次检查"
 			return persist()
 		}
 		plan := nextRefillPurchasePlan(&state)
-		replacement := nextRefillFailureReplacement(&state)
 		var quote *RefillQuote
 		for i := range catalog.Items {
 			q := &catalog.Items[i]
@@ -621,6 +630,10 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 	}
 	now := time.Now()
 	j.UpdatedAt = now
+	if j.SupplierStatus == "succeeded" && !j.ResultReady && refillDeliveryExpired(j.ExpiresAt, now) {
+		finishRefillDeliveryExpired(j, now)
+		return persist()
+	}
 	if j.SupplierID != "" && j.SupplierStatus == "succeeded" && j.ResultReady {
 		if !state.Config.PushEnabled {
 			j.Status = "awaiting_push"
@@ -636,19 +649,34 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 			j.Error = "交付导入失败，请检查目标分组、代理或租期后重试原任务"
 			j.NextAttemptAt = now.Add(time.Minute)
 			var remote *refillProviderError
-			if errors.As(err, &remote) && remote.code == 429 {
-				state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
+			var temporary *refillProviderTemporaryError
+			if errors.As(err, &temporary) || (errors.As(err, &remote) && (remote.code == 409 || remote.code == 429 || remote.code >= 500)) {
+				j.Status = "awaiting_delivery"
+				j.ResultReady = false // Recheck the original task before fetching again.
+				j.Error = "号商交付暂不可用，继续查询原任务"
+				j.NextAttemptAt = now.Add(refillRetryDelay(err, 1))
 			}
-			if errors.As(err, &remote) && remote.code == 410 {
-				j.Status = "delivery_expired"
-				j.Error = "号商交付已过租期"
-				j.FinishedAt = &now
+			if remote != nil {
+				if remote.code == 429 {
+					state.ProviderRetryAt = j.NextAttemptAt
+				}
+				if remote.code == 410 {
+					finishRefillDeliveryExpired(j, now)
+				} else if j.Status == "import_failed" {
+					j.Error = remote.Error()
+				}
+			}
+			if errors.Is(err, errRefillDeliveryExpired) {
+				finishRefillDeliveryExpired(j, now)
 			}
 		} else {
 			j.Status = "imported"
 			j.Error = ""
 			j.FinishedAt = &now
 			state.Message = "新账号已导入并绑定分组"
+			if err := s.notifyRefillImported(ctx, state, j, persist); err != nil {
+				return err
+			}
 		}
 		return persist()
 	}
@@ -659,8 +687,11 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 	} else {
 		remote, err = s.provider.Status(ctx, token, j.SupplierID)
 	}
-	if err == nil && (remote == nil || remote.ID == "" || len(remote.ID) > 128 || !slices.Contains([]string{"queued", "processing", "succeeded", "failed", "review"}, remote.Status) || (j.SupplierID != "" && remote.ID != j.SupplierID)) {
-		err = errors.New("号商任务响应无效，保留原幂等键核对")
+	if err == nil {
+		if err = validateRefillProviderJob(remote, *j); err != nil {
+			j.Status = "supplier_unknown"
+			j.ResultReady = false
+		}
 	}
 	j.Attempts++
 	if err != nil {
@@ -680,11 +711,22 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 	}
 	j.SupplierID = remote.ID
 	j.SupplierStatus = remote.Status
+	publicError := []rune(strings.TrimSpace(remote.Error))
+	j.SupplierError = string(publicError[:refillMin(len(publicError), 1024)])
 	j.Status = remote.Status
 	j.ResultReady = remote.ResultReady
-	j.ExpiresAt = remote.ExpiresAt
+	if remote.ExpiresAt != nil {
+		j.ExpiresAt = remote.ExpiresAt
+	}
 	j.Error = ""
 	j.NextAttemptAt = now.Add(15 * time.Second)
+	if !refillProviderStatusKnown(remote.Status) {
+		j.Status = "supplier_unknown"
+		j.ResultReady = false
+		j.Error = "号商返回未知状态，保留原任务继续核对，暂停新增补号"
+		j.NextAttemptAt = now.Add(time.Minute)
+		return persist()
+	}
 	if remote.Status == "review" {
 		j.Error = "号商要求人工核对，保留原任务并暂停新增补号"
 		j.NextAttemptAt = now.Add(time.Minute)
@@ -706,6 +748,9 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 	}
 	if remote.Status == "succeeded" {
 		j.Status = "awaiting_delivery"
+		if refillDeliveryExpired(j.ExpiresAt, now) {
+			finishRefillDeliveryExpired(j, now)
+		}
 	}
 	return persist()
 }
@@ -755,17 +800,19 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 	if len(existing) == 1 {
 		account = &existing[0]
 	} else {
+		// Recover an already-created account before checking the download lease:
+		// a crash after activation must not erase the committed import result.
+		if refillDeliveryExpired(j.ExpiresAt, time.Now()) {
+			return errRefillDeliveryExpired
+		}
 		delivery, err := s.provider.Delivery(ctx, token, j.SupplierID)
 		if err != nil {
 			return err
 		}
-		if len(delivery.Accounts) != 1 {
-			return errors.New("号商交付必须包含一个账号")
+		if err := validateRefillDelivery(delivery); err != nil {
+			return err
 		}
 		a := delivery.Accounts[0]
-		if a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth {
-			return errors.New("交付账号类型不匹配")
-		}
 		credentials := map[string]any{}
 		for _, key := range []string{"access_token", "refresh_token", "id_token", "client_id", "expires_at", "email", "chatgpt_account_id", "chatgpt_user_id", "organization_id", "plan_type"} {
 			if value, ok := a.Credentials[key].(string); ok && value != "" {

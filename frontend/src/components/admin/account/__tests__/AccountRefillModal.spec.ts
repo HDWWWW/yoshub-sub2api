@@ -3,8 +3,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountRefillModal from '../AccountRefillModal.vue'
 import type { Proxy } from '@/types'
 
-const { get, save, check, retry, manual } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn() }))
-vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, save, check, retry, manual } }))
+const { get, save, check, retry, manual, download, saveAs } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn() }))
+vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, save, check, retry, manual, download } }))
+vi.mock('file-saver', () => ({ saveAs }))
+vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { name: 'TotpStepUpDialog', props: ['controller'], template: '<div />' } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [{ id: 2, name: 'OpenAI', platform: 'openai', status: 'active' }, { id: 3, name: 'Second group', platform: 'openai', status: 'active' }] }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn() }) }))
@@ -29,9 +31,126 @@ function responseWithJobs(count: number) {
   attempts: 1, next_attempt_at: '2026-11-01T04:00:00Z'
  })) }
 }
+
+function downloadableResponse() {
+ const data = responseWithJobs(1)
+ return { ...data, jobs: data.jobs.map(job => ({ ...job, supplier_id: 'supplier-1', supplier_status: 'succeeded', result_ready: true, expires_at: Math.floor(Date.now() / 1000) + 3600 })) }
+}
+
+async function openProgress() {
+ const wrapper = await open()
+ await wrapper.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
+ return wrapper
+}
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('accepts and saves five-second check and cooldown settings, rejecting lower input values', async () => {
+  const w = await open()
+  for (const field of ['check_seconds', 'cooldown_seconds']) {
+   const input = w.get(`[data-testid="refill-${field}"]`)
+   await input.setValue(4)
+   expect((input.element as HTMLInputElement).validity.rangeUnderflow).toBe(true)
+   await input.setValue(5)
+   expect((input.element as HTMLInputElement).checkValidity()).toBe(true)
+  }
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ check_seconds: 5, cooldown_seconds: 5 }), '', 1, '')
+  expect((w.get('[data-testid="refill-check_seconds"]').element as HTMLInputElement).value).toBe('5')
+  expect((w.get('[data-testid="refill-cooldown_seconds"]').element as HTMLInputElement).value).toBe('5')
+  w.unmount()
+ })
+ it('shows all documented supplier states and keeps unknown refund states out of success handling', async () => {
+  const statuses = ['queued', 'processing', 'succeeded', 'failed', 'review', 'cancelled', 'banned']
+  const base = downloadableResponse().jobs[0]!
+  get.mockResolvedValue({ ...response(), jobs: statuses.map((status, i) => ({ ...base, id: `job-${i}`, supplier_status: status, status: status === 'succeeded' ? 'imported' : status, supplier_error: status === 'failed' ? '公开失败原因' : '', budget_released: status === 'failed' })) })
+  const w = await openProgress()
+  const rows = w.findAll('[data-testid="refill-jobs"] tbody tr')
+  statuses.forEach((status, i) => {
+   expect(rows[i]!.get('[data-testid="refill-supplier-status"]').text()).toContain(status)
+   expect(rows[i]!.get('[data-testid="refill-download"]').attributes('disabled') === undefined).toBe(status === 'succeeded')
+  })
+  expect(rows[0]!.text()).toContain('accountRefill.amountHeld')
+  expect(rows[2]!.text()).toContain('accountRefill.amountCharged')
+  expect(rows[3]!.text()).toContain('accountRefill.amountReleased')
+  expect(rows[3]!.text()).toContain('公开失败原因')
+  expect(rows[5]!.text()).toContain('accountRefill.states.supplier_unknown')
+  expect(download).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('downloads the exact JSON for the selected order once without purchasing or importing', async () => {
+  vi.useRealTimers()
+  get.mockResolvedValue(downloadableResponse())
+  let finish!: (data: string) => void
+  download.mockReturnValue(new Promise<string>(resolve => { finish = resolve }))
+  const w = await openProgress()
+  const button = w.get('[data-testid="refill-download"]')
+  await button.trigger('click'); await button.trigger('click')
+  expect(download).toHaveBeenCalledTimes(1)
+  expect(download).toHaveBeenCalledWith('order-1', 2)
+  expect(button.attributes('disabled')).toBeDefined()
+  const raw = '{ "type":"sub2api-data", "version":1, "future_number":1234567890123456789, "accounts":[] }'
+  finish(raw); await flushPromises()
+  expect(saveAs).toHaveBeenCalledTimes(1)
+  expect(saveAs.mock.calls[0]![1]).toBe('sub2api-refill-order-1.json')
+  const blob = saveAs.mock.calls[0]![0] as Blob
+  const text = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsText(blob) })
+  expect(text).toBe(raw)
+  expect(button.attributes('disabled')).toBeUndefined()
+  expect(manual).not.toHaveBeenCalled(); expect(retry).not.toHaveBeenCalled(); expect(check).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('disables unready and expired downloads while treating a null expiry as unknown', async () => {
+  const base = downloadableResponse().jobs[0]!
+  get.mockResolvedValue({ ...response(), jobs: [
+   { ...base, id: 'not-ready', result_ready: false },
+   { ...base, id: 'expiry-boundary', expires_at: Math.floor(Date.now() / 1000) },
+   { ...base, id: 'zero-expiry', expires_at: 0 },
+   { ...base, id: 'terminal-expiry', status: 'delivery_expired' },
+   { ...base, id: 'no-id', supplier_id: '' },
+   { ...base, id: 'null-expiry', expires_at: null }
+  ] })
+  const w = await openProgress()
+  const buttons = w.findAll('[data-testid="refill-download"]')
+  expect(buttons.slice(0, 5).every(b => b.attributes('disabled') !== undefined)).toBe(true)
+  expect(buttons[1]!.attributes('title')).toBe('accountRefill.downloadExpired')
+  expect(buttons[5]!.attributes('disabled')).toBeUndefined()
+  w.unmount()
+ })
+ it.each([409, 410, 429, 502])('shows a download HTTP %i error without saving an error file', async status => {
+  get.mockResolvedValue(downloadableResponse())
+  download.mockRejectedValue({ status, message: `delivery-error-${status}` })
+  const w = await openProgress()
+  await w.get('[data-testid="refill-download"]').trigger('click'); await flushPromises()
+  expect(w.text()).toContain(`delivery-error-${status}`)
+  expect(saveAs).not.toHaveBeenCalled()
+  expect(w.get('[data-testid="refill-download"]').attributes('disabled')).toBeUndefined()
+  w.unmount()
+ })
+ it('uses existing export step-up verification and permits cancelling it', async () => {
+  get.mockResolvedValue(downloadableResponse())
+  download.mockRejectedValue({ status: 403, code: 'STEP_UP_REQUIRED' })
+  const w = await openProgress()
+  await w.get('[data-testid="refill-download"]').trigger('click'); await flushPromises()
+  const controller = w.findComponent({ name: 'TotpStepUpDialog' }).props('controller')
+  expect(controller.visible.value).toBe(true)
+  controller.onCancel(); await flushPromises()
+  expect(saveAs).not.toHaveBeenCalled()
+  expect(download).toHaveBeenCalledTimes(1)
+  expect(w.text()).not.toContain('accountRefill.error')
+  w.unmount()
+ })
+ it('discards a download arriving after the refill panel closes', async () => {
+  get.mockResolvedValue(downloadableResponse())
+  let finish!: (value: string) => void
+  download.mockReturnValue(new Promise<string>(resolve => { finish = resolve }))
+  const w = await openProgress()
+  await w.get('[data-testid="refill-download"]').trigger('click')
+  await w.setProps({ show: false })
+  finish('{}'); await flushPromises()
+  expect(saveAs).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it('offers only manual proxies for specified replenishment and saves a real selected ID', async () => {
   const w = await open()
   await w.setProps({ proxies: [

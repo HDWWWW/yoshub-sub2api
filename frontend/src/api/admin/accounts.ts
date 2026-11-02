@@ -598,6 +598,13 @@ export async function setSchedulable(id: number, schedulable: boolean): Promise<
   return data
 }
 
+export async function setForceFast(id: number, enabled: boolean): Promise<{ enabled: boolean }> {
+  const { data } = await apiClient.post<{ enabled: boolean }>(`/admin/accounts/${id}/force-fast`, {
+    enabled
+  })
+  return data
+}
+
 /**
  * Get available models for an account
  * @param id - Account ID
@@ -1166,6 +1173,7 @@ export const accountsAPI = {
   getTempUnschedulableStatus,
   resetTempUnschedulable,
   setSchedulable,
+  setForceFast,
   getAvailableModels,
   syncUpstreamModels,
   syncUpstreamModelsPreview,

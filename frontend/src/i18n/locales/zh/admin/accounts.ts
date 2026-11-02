@@ -107,6 +107,8 @@ export default {
       schedulableEnabled: '调度已开启',
       schedulableDisabled: '调度已关闭',
       failedToToggleSchedulable: '切换调度状态失败',
+      forceFastHint: '开启后，此账号的 OpenAI 请求强制使用 Fast（priority），用户按 Standard 价格扣费。账号设置优先于分组档位，全局 Fast 过滤和拦截规则仍生效。新请求生效，已有 WebSocket 会话需重连。',
+      failedToToggleForceFast: '切换强制 Fast 失败',
       priorityQuick: {
         raise: '提高优先级（数值 -1）',
         lower: '降低优先级（数值 +1）',
@@ -129,6 +131,7 @@ export default {
         schedulerScore: '调度权值',
         status: '状态',
         schedulable: '调度',
+        forceFast: '强制 Fast',
         todayStats: '今日统计',
         groups: '分组',
         usageWindows: '用量窗口',

@@ -12,6 +12,7 @@ import (
 
 const AccountRefillSettingKey = "account_refill_v1"
 const AccountImportExpiryOffsetMinutes = 60
+const accountRefillMinIntervalSeconds = 5
 
 var ErrAccountRefillBusy = errors.New("补号任务正在执行，请稍后刷新")
 
@@ -112,8 +113,8 @@ func (c AccountRefillConfig) Validate() error {
 		!slices.Contains([]string{"capacity", "fixed", "interval"}, c.Mode) || !slices.Contains(c.DeliveryGroupIDs, c.GroupID) || len(c.DeliveryGroupIDs) > 100 ||
 		c.MaxInFlight < 1 || c.MaxInFlight > 20 || c.IntervalMinutes < 1 || c.IntervalMinutes > 10080 || c.IntervalQuantity < 1 || c.IntervalQuantity > 100 ||
 		c.MinReady < 1 || c.MaxReady < c.MinReady || c.MaxReady > 100 ||
-		c.LeadMinutes < 0 || c.LeadMinutes > 1440 || c.CheckSeconds < 15 || c.CheckSeconds > 3600 ||
-		c.CooldownSeconds < 60 || c.CooldownSeconds > 86400 || c.TargetConcurrency < 1 || c.TargetConcurrency > 100 ||
+		c.LeadMinutes < 0 || c.LeadMinutes > 1440 || c.CheckSeconds < accountRefillMinIntervalSeconds || c.CheckSeconds > 3600 ||
+		c.CooldownSeconds < accountRefillMinIntervalSeconds || c.CooldownSeconds > 86400 || c.TargetConcurrency < 1 || c.TargetConcurrency > 100 ||
 		c.ConcurrencySustainSeconds < 1 || c.ConcurrencySustainSeconds > 3600 || c.ImportExpiryGraceMinutes < 0 || c.ImportExpiryGraceMinutes > 1440 ||
 		c.DailyMaxCount < 1 || c.DailyMaxCount > 1000 || c.ImportConcurrency < 1 || c.ImportConcurrency > 10000 {
 		return errors.New("补号参数超出允许范围")
@@ -159,38 +160,41 @@ func (c AccountRefillConfig) Validate() error {
 }
 
 type AccountRefillJob struct {
-	Mode                  string                      `json:"mode,omitempty"`
-	ReplacementPending    bool                        `json:"replacement_pending,omitempty"`
-	ReplacesJobID         string                      `json:"replaces_job_id,omitempty"`
-	ReplacementJobID      string                      `json:"replacement_job_id,omitempty"`
-	StartedNotificationAt *time.Time                  `json:"started_notification_at,omitempty"`
-	FailedNotificationAt  *time.Time                  `json:"failed_notification_at,omitempty"`
-	ManualRequestID       string                      `json:"manual_request_id,omitempty"`
-	ConfigRevision        int64                       `json:"config_revision,omitempty"`
-	ExpiryGraceMinutes    *int                        `json:"expiry_grace_minutes,omitempty"`
-	ID                    string                      `json:"id"`
-	SupplierID            string                      `json:"supplier_id,omitempty"`
-	Status                string                      `json:"status"`
-	SupplierStatus        string                      `json:"supplier_status,omitempty"`
-	Reason                string                      `json:"reason"`
-	ReasonDetail          string                      `json:"reason_detail,omitempty"`
-	Plan                  string                      `json:"plan"`
-	Price                 float64                     `json:"price"`
-	PriceVersion          int64                       `json:"price_version"`
-	GroupID               int64                       `json:"group_id"`
-	Concurrency           int                         `json:"concurrency"`
-	DeliveryGroupIDs      []int64                     `json:"delivery_group_ids"`
-	DeliveryConfig        AccountRefillDeliveryConfig `json:"delivery_config"`
-	BudgetReleased        bool                        `json:"budget_released"`
-	AccountID             int64                       `json:"account_id,omitempty"`
-	CreatedAt             time.Time                   `json:"created_at"`
-	UpdatedAt             time.Time                   `json:"updated_at"`
-	FinishedAt            *time.Time                  `json:"finished_at,omitempty"`
-	ExpiresAt             *int64                      `json:"expires_at,omitempty"`
-	ResultReady           bool                        `json:"result_ready"`
-	Error                 string                      `json:"error,omitempty"`
-	Attempts              int                         `json:"attempts"`
-	NextAttemptAt         time.Time                   `json:"next_attempt_at"`
+	Mode                   string                      `json:"mode,omitempty"`
+	ReplacementPending     bool                        `json:"replacement_pending,omitempty"`
+	ReplacesJobID          string                      `json:"replaces_job_id,omitempty"`
+	ReplacementJobID       string                      `json:"replacement_job_id,omitempty"`
+	StartedNotificationAt  *time.Time                  `json:"started_notification_at,omitempty"`
+	FailedNotificationAt   *time.Time                  `json:"failed_notification_at,omitempty"`
+	ImportedNotificationAt *time.Time                  `json:"imported_notification_at,omitempty"`
+	DelayedNotificationAt  *time.Time                  `json:"delayed_notification_at,omitempty"`
+	ManualRequestID        string                      `json:"manual_request_id,omitempty"`
+	ConfigRevision         int64                       `json:"config_revision,omitempty"`
+	ExpiryGraceMinutes     *int                        `json:"expiry_grace_minutes,omitempty"`
+	ID                     string                      `json:"id"`
+	SupplierID             string                      `json:"supplier_id,omitempty"`
+	Status                 string                      `json:"status"`
+	SupplierStatus         string                      `json:"supplier_status,omitempty"`
+	SupplierError          string                      `json:"supplier_error,omitempty"`
+	Reason                 string                      `json:"reason"`
+	ReasonDetail           string                      `json:"reason_detail,omitempty"`
+	Plan                   string                      `json:"plan"`
+	Price                  float64                     `json:"price"`
+	PriceVersion           int64                       `json:"price_version"`
+	GroupID                int64                       `json:"group_id"`
+	Concurrency            int                         `json:"concurrency"`
+	DeliveryGroupIDs       []int64                     `json:"delivery_group_ids"`
+	DeliveryConfig         AccountRefillDeliveryConfig `json:"delivery_config"`
+	BudgetReleased         bool                        `json:"budget_released"`
+	AccountID              int64                       `json:"account_id,omitempty"`
+	CreatedAt              time.Time                   `json:"created_at"`
+	UpdatedAt              time.Time                   `json:"updated_at"`
+	FinishedAt             *time.Time                  `json:"finished_at,omitempty"`
+	ExpiresAt              *int64                      `json:"expires_at,omitempty"`
+	ResultReady            bool                        `json:"result_ready"`
+	Error                  string                      `json:"error,omitempty"`
+	Attempts               int                         `json:"attempts"`
+	NextAttemptAt          time.Time                   `json:"next_attempt_at"`
 }
 
 func (j AccountRefillJob) pending() bool {
@@ -446,7 +450,7 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		e.Reason = "储备充足"
 	}
 	for _, j := range jobs {
-		if slices.Contains([]string{"blocked", "review", "import_failed"}, j.Status) {
+		if refillNeedsAttention(j.Status) {
 			e.Needed = 0
 			e.Reason = "原任务需要处理，暂停新增补号"
 		}

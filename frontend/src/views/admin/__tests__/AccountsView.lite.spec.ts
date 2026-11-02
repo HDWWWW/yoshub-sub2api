@@ -4,6 +4,7 @@ import { defineComponent } from 'vue'
 
 import AccountsView from '../AccountsView.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
+import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 
 const {
   listAccounts,
@@ -14,6 +15,7 @@ const {
   getAllProxies,
   getAllGroups,
   refreshCredentials,
+  setForceFast,
   showError,
   showWarning
 } = vi.hoisted(() => ({
@@ -25,6 +27,7 @@ const {
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
   refreshCredentials: vi.fn(),
+  setForceFast: vi.fn(),
   showError: vi.fn(),
   showWarning: vi.fn()
 }))
@@ -41,6 +44,7 @@ vi.mock('@/api/admin', () => ({
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
       toggleSchedulable: vi.fn(),
+      setForceFast,
       refreshCredentials
     },
     proxies: { getAll: getAllProxies },
@@ -50,6 +54,10 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ showError, showWarning, showSuccess: vi.fn(), showInfo: vi.fn() })
+}))
+
+vi.mock('@/api/admin/accountScheduling', () => ({
+  accountSchedulingAPI: { metadata: vi.fn().mockResolvedValue([]) }
 }))
 
 vi.mock('@/stores/auth', () => ({
@@ -62,10 +70,11 @@ vi.mock('vue-i18n', async () => {
 })
 
 const DataTableStub = defineComponent({
-  props: { data: { type: Array, default: () => [] } },
+  props: { data: { type: Array, default: () => [] }, columns: { type: Array, default: () => [] } },
   template: `
     <div>
       <div v-for="row in data" :key="row.id" :data-account-name="row.name">
+        <slot v-if="columns.some(column => column.key === 'force_fast')" name="cell-force_fast" :row="row" />
         <slot name="cell-groups" :row="row" />
         <slot name="cell-actions" :row="row" />
       </div>
@@ -167,6 +176,7 @@ describe('admin AccountsView lite account list', () => {
     getAllProxies.mockReset().mockResolvedValue([])
     getAllGroups.mockReset().mockResolvedValue([{ id: 7, name: 'codex', platform: 'openai' }])
     refreshCredentials.mockReset()
+    setForceFast.mockReset()
     showError.mockReset()
     showWarning.mockReset()
   })
@@ -194,6 +204,120 @@ describe('admin AccountsView lite account list', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="account-groups"]').text()).toBe('codex')
+    wrapper.unmount()
+  })
+
+  it('shows Force Fast beside scheduling and saves both toggle directions without loading account details', async () => {
+    setForceFast.mockResolvedValueOnce({ enabled: true }).mockResolvedValueOnce({ enabled: false })
+    const wrapper = mountView()
+    await flushPromises()
+
+    const table = wrapper.getComponent(DataTableStub)
+    const columns = table.props('columns') as Array<{ key: string }>
+    expect(columns[columns.findIndex(column => column.key === 'schedulable') + 1].key).toBe('force_fast')
+    const toggle = wrapper.get('[role="switch"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(setForceFast).toHaveBeenLastCalledWith(42, true)
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(setForceFast).toHaveBeenLastCalledWith(42, false)
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(getById).not.toHaveBeenCalled()
+    expect((table.props('data') as Array<typeof listRow>)[0].schedulable).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('restores Force Fast from the lite list and hides the switch for other platforms', async () => {
+    listAccounts.mockResolvedValue({
+      items: [
+        { ...listRow, extra: { openai_force_fast: true } },
+        { ...listRow, id: 43, name: 'Claude', platform: 'anthropic' }
+      ], total: 2, page: 1, page_size: 20, pages: 1
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.findAll('[role="switch"]')).toHaveLength(1)
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('keeps saved state on failure and allows retrying Force Fast', async () => {
+    setForceFast.mockRejectedValueOnce(new Error('save failed')).mockResolvedValueOnce({ enabled: true })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mountView()
+    await flushPromises()
+    const toggle = wrapper.get('[role="switch"]')
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(toggle.attributes('disabled')).toBeUndefined()
+    expect(showError).toHaveBeenCalledWith('admin.accounts.failedToToggleForceFast')
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('tracks pending Force Fast saves per account and ignores repeat clicks', async () => {
+    listAccounts.mockResolvedValue({
+      items: [listRow, { ...listRow, id: 43, name: 'Second' }], total: 2, page: 1, page_size: 20, pages: 1
+    })
+    let finishFirst!: (value: { enabled: boolean }) => void
+    let finishSecond!: (value: { enabled: boolean }) => void
+    setForceFast.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishSecond = resolve }))
+    const wrapper = mountView()
+    await flushPromises()
+    const [first, second] = wrapper.findAll('[role="switch"]')
+    await first.trigger('click')
+    await first.trigger('click')
+    expect(setForceFast).toHaveBeenCalledTimes(1)
+    expect(first.attributes('disabled')).toBeDefined()
+    await second.trigger('click')
+    expect(setForceFast).toHaveBeenCalledTimes(2)
+    finishFirst({ enabled: true })
+    await flushPromises()
+    expect(first.attributes('disabled')).toBeUndefined()
+    expect(second.attributes('disabled')).toBeDefined()
+    finishSecond({ enabled: true })
+    await flushPromises()
+    expect(second.attributes('disabled')).toBeUndefined()
+    expect(first.attributes('aria-checked')).toBe('true')
+    expect(second.attributes('aria-checked')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it.each(['manual', 'automatic'])('keeps a confirmed Fast toggle when an older %s refresh arrives late', async mode => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    if (mode === 'automatic') localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
+    setForceFast.mockResolvedValue({ enabled: true })
+    const wrapper = mountView()
+    await flushPromises()
+    let finishRefresh!: (value: unknown) => void
+    const stale = { items: [listRow], total: 1, page: 1, page_size: 20, pages: 1 }
+    if (mode === 'manual') {
+      listAccounts.mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve }))
+      wrapper.findComponent(AccountTableActions).vm.$emit('refresh')
+    } else {
+      listWithEtag.mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve }))
+      await vi.advanceTimersByTimeAsync(6000)
+    }
+    await flushPromises()
+    expect(finishRefresh).toBeTypeOf('function')
+    await wrapper.get('[role="switch"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+    finishRefresh(mode === 'manual' ? stale : { notModified: false, etag: 'stale-etag', data: stale })
+    await flushPromises()
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+    // A new read started after the save must still observe changes from elsewhere.
+    wrapper.findComponent(AccountTableActions).vm.$emit('refresh')
+    await flushPromises()
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false')
     wrapper.unmount()
   })
 

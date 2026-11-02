@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -154,6 +155,33 @@ func (h *AccountHandler) RetryAccountRefill(c *gin.Context) {
 		return
 	}
 	h.GetAccountRefill(c)
+}
+
+func (h *AccountHandler) DownloadAccountRefill(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	svc, ok := h.refillForRequest(c)
+	if !ok {
+		return
+	}
+	middleware.SetAuditAction(c, "admin.accounts.refill.download")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 55*time.Second)
+	defer cancel()
+	data, err := svc.DownloadDelivery(ctx, c.Param("job_id"))
+	if err != nil {
+		var downloadErr *service.AccountRefillDownloadError
+		if errors.As(err, &downloadErr) {
+			if downloadErr.StatusCode == http.StatusTooManyRequests && downloadErr.RetryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(int(math.Ceil(downloadErr.RetryAfter.Seconds()))))
+			}
+			response.Error(c, downloadErr.StatusCode, downloadErr.Error())
+		} else {
+			response.Error(c, http.StatusBadGateway, "交付下载失败，请稍后重试")
+		}
+		return
+	}
+	c.Header("Content-Disposition", `attachment; filename="sub2api-refill.json"`)
+	c.Data(http.StatusOK, "application/json; charset=utf-8", data)
 }
 
 func (h *AccountHandler) ManualAccountRefill(c *gin.Context) {
