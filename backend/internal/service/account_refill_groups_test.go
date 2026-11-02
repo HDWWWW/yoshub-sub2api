@@ -116,11 +116,13 @@ func TestAccountRefillRotationPersistsRetriesAndRestarts(t *testing.T) {
 	store.mutate(t, func(state *accountRefillState) {
 		state.Config.RotationEnabled = true
 		state.Config.Rotation = []AccountRefillRotationStep{{Plan: "pro20x", Count: 1}, {Plan: "pro5x", Count: 2}}
+		state.Config.PlanImportConcurrency = map[string]int{"pro5x": 50, "pro20x": 60}
 	})
 	ctx := context.Background()
 	require.NoError(t, s.run(ctx, false))
 	first := p.submitted[0]
 	require.Equal(t, "pro20x", first.Plan)
+	require.Equal(t, 60, first.Concurrency)
 	v, err := s.View(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, v.RotationCursor)
@@ -130,6 +132,7 @@ func TestAccountRefillRotationPersistsRetriesAndRestarts(t *testing.T) {
 	require.NoError(t, restarted.run(ctx, false))
 	require.Equal(t, first.ID, p.submitted[1].ID)
 	require.Equal(t, first.Plan, p.submitted[1].Plan)
+	require.Equal(t, first.Concurrency, p.submitted[1].Concurrency)
 	for _, expected := range []string{"pro5x", "pro5x", "pro20x"} {
 		store.mutate(t, func(state *accountRefillState) {
 			for i := range state.Jobs {
@@ -139,6 +142,8 @@ func TestAccountRefillRotationPersistsRetriesAndRestarts(t *testing.T) {
 		})
 		require.NoError(t, restarted.run(ctx, false))
 		require.Equal(t, expected, p.submitted[len(p.submitted)-1].Plan)
+		wantConcurrency := map[string]int{"pro5x": 50, "pro20x": 60}[expected]
+		require.Equal(t, wantConcurrency, p.submitted[len(p.submitted)-1].Concurrency)
 	}
 	// Editing an unrelated field keeps progress; changing the sequence resets it.
 	v, err = restarted.View(ctx)

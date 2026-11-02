@@ -27,12 +27,13 @@ import (
 
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
-	usage            *OpenAIUsage
-	firstTokenMs     *int
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
-	searchCount      int
+	usage              *OpenAIUsage
+	firstTokenMs       *int
+	responseID         string
+	imageCount         int
+	imageOutputSizes   []string
+	searchCount        int
+	clientDisconnected bool
 }
 
 type openaiNonStreamingResult struct {
@@ -248,7 +249,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	// 注意：OpenAI `/v1/responses` streaming 事件必须符合 OpenAI Responses schema；
 	// 否则下游 SDK（例如 OpenCode）会因为类型校验失败而报错。
 	errorEventSent := false
-	clientDisconnected := false // 客户端断开后继续 drain 上游以收集 usage
+	clientDisconnected := false // OpenAI disconnects cancel upstream; preserve usage already observed.
 	sawTerminalEvent := false
 	sawFailedEvent := false
 	sawBareError := false
@@ -285,7 +286,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return
 		}
 		clientDisconnected = true
-		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
+		closeOpenAIUpstreamOnDisconnect(resp, account)
+		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, returning collected usage")
 	}
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
@@ -299,7 +301,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if shouldFlush {
 				if err := flushBuffered(); err != nil {
 					clientDisconnected = true
-					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
+					closeOpenAIUpstreamOnDisconnect(resp, account)
+					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, returning collected usage")
 				} else {
 					clientOutputStarted = true
 					lastDownstreamWriteAt = time.Now()
@@ -329,14 +332,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		payload := `{"type":"error","sequence_number":0,"code":` + strconv.Quote(code) + `,"message":` + strconv.Quote(message) + `,"param":null}`
 		if err := flushBuffered(); err != nil {
 			clientDisconnected = true
+			closeOpenAIUpstreamOnDisconnect(resp, account)
 			return
 		}
 		if _, err := writePendingString("event: error\ndata: " + payload + "\n\n"); err != nil {
 			clientDisconnected = true
+			closeOpenAIUpstreamOnDisconnect(resp, account)
 			return
 		}
 		if err := flushBuffered(); err != nil {
 			clientDisconnected = true
+			closeOpenAIUpstreamOnDisconnect(resp, account)
 			return
 		}
 		clientOutputStarted = true
@@ -357,12 +363,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	streamSearchSeen := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
-			usage:            usage,
-			firstTokenMs:     firstTokenMs,
-			responseID:       responseID,
-			imageCount:       imageCounter.Count(),
-			imageOutputSizes: imageCounter.Sizes(),
-			searchCount:      searchCounter,
+			usage:              usage,
+			firstTokenMs:       firstTokenMs,
+			responseID:         responseID,
+			imageCount:         imageCounter.Count(),
+			imageOutputSizes:   imageCounter.Sizes(),
+			searchCount:        searchCounter,
+			clientDisconnected: clientDisconnected || openAIAccountContextError(ctx, account) != nil,
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -371,6 +378,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if err := flushBuffered(); err != nil {
 			clientDisconnected = true
+			closeOpenAIUpstreamOnDisconnect(resp, account)
 			logger.LegacyPrintf("service.openai_gateway", "%s", disconnectMessage)
 			return
 		}
@@ -801,7 +809,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				if shouldFlush {
 					if err := flushBuffered(); err != nil {
 						clientDisconnected = true
-						logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
+						closeOpenAIUpstreamOnDisconnect(resp, account)
+						logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, returning collected usage")
 					} else {
 						clientOutputStarted = true
 						lastDownstreamWriteAt = time.Now()
@@ -987,7 +996,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				recordOpenAIStreamKeepaliveBytes(c, n)
 				if err != nil {
 					clientDisconnected = true
-					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
+					closeOpenAIUpstreamOnDisconnect(resp, account)
+					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, returning collected usage")
 					continue
 				}
 				flusher.Flush()
@@ -996,12 +1006,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			if _, err := writePendingString(":\n\n"); err != nil {
 				clientDisconnected = true
-				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
+				closeOpenAIUpstreamOnDisconnect(resp, account)
+				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, returning collected usage")
 				continue
 			}
 			if err := flushBuffered(); err != nil {
 				clientDisconnected = true
-				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during keepalive flush, continuing to drain upstream for billing")
+				closeOpenAIUpstreamOnDisconnect(resp, account)
+				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during keepalive flush, returning collected usage")
 			} else {
 				lastDownstreamWriteAt = time.Now()
 			}

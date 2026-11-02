@@ -48,6 +48,7 @@ type RelayResult struct {
 	ClientToUpstreamFrames  int64
 	UpstreamToClientFrames  int64
 	DroppedDownstreamFrames int64
+	UnfinishedTurn          *RelayTurnResult
 }
 
 type RelayTurnResult struct {
@@ -79,6 +80,7 @@ type RelayOptions struct {
 	FirstMessageType                coderws.MessageType
 	FirstMessageSent                bool
 	StartClientAfterFirstDownstream bool
+	CancelOnClientDisconnect        bool
 	OnUsageParseFailure             func(eventType string, usageRaw string)
 	OnTurnComplete                  func(turn RelayTurnResult)
 	BeforeWriteClient               func(msgType coderws.MessageType, payload []byte, wroteDownstream bool) error
@@ -283,11 +285,15 @@ func Relay(
 	exitCh := make(chan relayExitSignal, 3)
 	dropDownstreamWrites := atomic.Bool{}
 	clientReaderStarted := atomic.Bool{}
+	clientDone := make(chan struct{})
 	startClientReader := func() {
 		if !clientReaderStarted.CompareAndSwap(false, true) {
 			return
 		}
-		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeClientFrameUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		go func() {
+			defer close(clientDone)
+			runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeClientFrameUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		}()
 	}
 	if !options.StartClientAfterFirstDownstream {
 		startClientReader()
@@ -323,6 +329,10 @@ func Relay(
 	go runIdleWatchdog(relayCtx, nowFn, options.IdleTimeout, &lastActivity, onTrace, exitCh)
 
 	firstExit := <-exitCh
+	// Preserve the initiating failure. Closing the downstream from the callback
+	// below may itself cancel the session; that must not replace a policy close,
+	// upstream timeout or rate limit with a client-cancellation error.
+	canceledAtExit := errors.Is(ctx.Err(), context.Canceled)
 	// An outer ingress cancellation is a control-plane close, not a graceful
 	// upstream disconnect. Leave the client connection open here so the
 	// adapter can emit the precise lease/request close code. Internal
@@ -350,7 +360,7 @@ func Relay(
 	hasSecondExit := false
 
 	// 客户端断开后尽力继续读取上游短窗口，捕获延迟 usage/terminal 事件用于计费。
-	if firstExit.stage == "read_client" && firstExit.graceful {
+	if firstExit.stage == "read_client" && firstExit.graceful && !options.CancelOnClientDisconnect {
 		dropDownstreamWrites.Store(true)
 		secondExit, hasSecondExit = waitRelayExit(exitCh, drainTimeout)
 	} else {
@@ -377,12 +387,38 @@ func Relay(
 	// fallback. Join the reader before touching relayState or firing the final
 	// turn callback; otherwise a late read can race Relay's result settlement.
 	<-upstreamDone
+	if options.CancelOnClientDisconnect && clientReaderStarted.Load() {
+		<-clientDone
+	}
 
 	emitTurnComplete(options.OnTurnComplete, state, finalizePendingBareError(state, nowFn()))
 	enrichResult(&result, state, nowFn().Sub(startAt))
 	result.ClientToUpstreamFrames = clientToUpstreamFrames.Load()
 	result.UpstreamToClientFrames = upstreamToClientFrames.Load()
 	result.DroppedDownstreamFrames = droppedDownstreamFrames.Load()
+	if options.CancelOnClientDisconnect && state.hasUnfinishedTurn() {
+		result.UnfinishedTurn = &RelayTurnResult{
+			RequestModel: state.currentRequestModel(), Usage: state.turnUsage,
+			RequestID: openAIWSRelayActiveTurnID(state), Duration: result.Duration,
+		}
+		if timing := state.activeTurn; timing != nil {
+			result.UnfinishedTurn.ResponseModel = relayTurnResponseModel(timing)
+			result.UnfinishedTurn.ResponseModelConflict = timing.responseModelConflict
+			result.UnfinishedTurn.ResponseServiceTier = timing.terminalResponseServiceTier
+			result.UnfinishedTurn.StartedAt = timing.startAt
+			result.UnfinishedTurn.Duration = nowFn().Sub(timing.startAt)
+			result.UnfinishedTurn.FirstTokenMs = openAIWSRelayCloneIntPtr(timing.firstTokenMs)
+		} else if started := state.pendingTurnStart.Load(); started != nil {
+			result.UnfinishedTurn.StartedAt = *started
+			result.UnfinishedTurn.Duration = nowFn().Sub(*started)
+		}
+	}
+	if options.CancelOnClientDisconnect && ((firstExit.stage == "read_client" && firstExit.graceful) || firstExit.stage == "write_client" || canceledAtExit) {
+		if result.UnfinishedTurn == nil {
+			return result, nil
+		}
+		return result, &RelayExit{Stage: "client_disconnected", Err: context.Canceled, WroteDownstream: combinedWroteDownstream}
+	}
 	if options.FirstMessageSent && firstExit.stage == "read_client" && firstExit.graceful {
 		emitRelayTrace(onTrace, RelayTraceEvent{
 			Stage:           "relay_client_closed",
@@ -1295,7 +1331,11 @@ func isDisconnectError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var networkError *net.OpError
+	if errors.As(err, &networkError) {
 		return true
 	}
 	switch coderws.CloseStatus(err) {

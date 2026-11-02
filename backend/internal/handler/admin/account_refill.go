@@ -127,6 +127,9 @@ func decodeAccountRefillConfig(current service.AccountRefillConfig, raw json.Raw
 	if _, present := fields["plan_quota_thresholds"]; present {
 		current.PlanQuotaThresholds = nil
 	}
+	if _, present := fields["plan_import_concurrency"]; present {
+		current.PlanImportConcurrency = nil
+	}
 	err := json.Unmarshal(raw, &current)
 	return current, err
 }

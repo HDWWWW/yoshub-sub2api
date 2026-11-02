@@ -2388,3 +2388,33 @@ func TestAdminGroupSpeedModesValidatePersistAndInvalidate(t *testing.T) {
 		require.Nil(t, repo.updated)
 	}
 }
+
+func TestAdminGroupReversePriorityCreateUpdateAndCacheInvalidation(t *testing.T) {
+	for _, platform := range []string{PlatformOpenAI, PlatformComposite, PlatformAnthropic} {
+		t.Run(platform, func(t *testing.T) {
+			repo := &groupRepoStubForAdmin{createID: 73}
+			invalidator := &authCacheInvalidatorStub{}
+			svc := &adminServiceImpl{groupRepo: repo, authCacheInvalidator: invalidator}
+			group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+				Name: "reverse-priority", Platform: platform, RateMultiplier: 1, ReverseAccountPriority: true,
+			})
+			require.NoError(t, err)
+			want := platform == PlatformOpenAI || platform == PlatformComposite
+			require.Equal(t, want, group.ReverseAccountPriority)
+			require.Equal(t, want, repo.created.ReverseAccountPriority)
+			repo.getByID = group
+			updated, err := svc.UpdateGroup(context.Background(), group.ID, &UpdateGroupInput{Description: ptrString("keep flag")})
+			require.NoError(t, err)
+			require.Equal(t, want, updated.ReverseAccountPriority, "omitted field must preserve existing policy")
+			for _, enabled := range []bool{false, true} {
+				updated, err = svc.UpdateGroup(context.Background(), group.ID, &UpdateGroupInput{ReverseAccountPriority: &enabled})
+				require.NoError(t, err)
+				require.Equal(t, want && enabled, updated.ReverseAccountPriority)
+				require.Contains(t, invalidator.groupIDs, group.ID)
+			}
+			updated, err = svc.UpdateGroup(context.Background(), group.ID, &UpdateGroupInput{Platform: PlatformAnthropic})
+			require.NoError(t, err)
+			require.False(t, updated.ReverseAccountPriority)
+		})
+	}
+}

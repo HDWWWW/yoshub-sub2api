@@ -124,6 +124,8 @@ const (
 	FieldAllowLive = "allow_live"
 	// FieldForceOpenaiFast holds the string denoting the force_openai_fast field in the database.
 	FieldForceOpenaiFast = "force_openai_fast"
+	// FieldReverseAccountPriority holds the string denoting the reverse_account_priority field in the database.
+	FieldReverseAccountPriority = "reverse_account_priority"
 	// FieldForceOpenaiUltrafast holds the string denoting the force_openai_ultrafast field in the database.
 	FieldForceOpenaiUltrafast = "force_openai_ultrafast"
 	// FieldFilterOpenaiServiceTier holds the string denoting the filter_openai_service_tier field in the database.
@@ -285,6 +287,7 @@ var Columns = []string{
 	FieldAllowMessagesDispatch,
 	FieldAllowLive,
 	FieldForceOpenaiFast,
+	FieldReverseAccountPriority,
 	FieldForceOpenaiUltrafast,
 	FieldFilterOpenaiServiceTier,
 	FieldFreeOpenaiFast,
@@ -416,6 +419,8 @@ var (
 	DefaultAllowLive bool
 	// DefaultForceOpenaiFast holds the default value on creation for the "force_openai_fast" field.
 	DefaultForceOpenaiFast bool
+	// DefaultReverseAccountPriority holds the default value on creation for the "reverse_account_priority" field.
+	DefaultReverseAccountPriority bool
 	// DefaultForceOpenaiUltrafast holds the default value on creation for the "force_openai_ultrafast" field.
 	DefaultForceOpenaiUltrafast bool
 	// DefaultFilterOpenaiServiceTier holds the default value on creation for the "filter_openai_service_tier" field.
@@ -707,6 +712,11 @@ func ByAllowLive(opts ...sql.OrderTermOption) OrderOption {
 // ByForceOpenaiFast orders the results by the force_openai_fast field.
 func ByForceOpenaiFast(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldForceOpenaiFast, opts...).ToFunc()
+}
+
+// ByReverseAccountPriority orders the results by the reverse_account_priority field.
+func ByReverseAccountPriority(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldReverseAccountPriority, opts...).ToFunc()
 }
 
 // ByForceOpenaiUltrafast orders the results by the force_openai_ultrafast field.

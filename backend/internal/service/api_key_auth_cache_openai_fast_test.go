@@ -18,6 +18,7 @@ func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 				Group: &Group{
 					ID: groupID, Name: "fast-roundtrip", Platform: PlatformOpenAI, Status: StatusActive,
 					Hydrated: true, ForceOpenAIFast: mode == "priority", ForceOpenAIUltrafast: mode == "ultrafast", FilterOpenAIServiceTier: mode == "filter", FreeOpenAIFast: true,
+					ReverseAccountPriority: true,
 				},
 			}
 			svc := &APIKeyService{}
@@ -36,6 +37,7 @@ func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 			require.Equal(t, mode == "ultrafast", materialized.Group.ForceOpenAIUltrafast)
 			require.Equal(t, mode == "filter", materialized.Group.FilterOpenAIServiceTier)
 			require.True(t, materialized.Group.FreeOpenAIFast)
+			require.True(t, materialized.Group.ReverseAccountPriority)
 			require.Equal(t, apiKeyAuthSnapshotVersion, cached.Snapshot.Version)
 		})
 	}

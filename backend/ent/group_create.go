@@ -738,6 +738,20 @@ func (_c *GroupCreate) SetNillableForceOpenaiFast(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetReverseAccountPriority sets the "reverse_account_priority" field.
+func (_c *GroupCreate) SetReverseAccountPriority(v bool) *GroupCreate {
+	_c.mutation.SetReverseAccountPriority(v)
+	return _c
+}
+
+// SetNillableReverseAccountPriority sets the "reverse_account_priority" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableReverseAccountPriority(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetReverseAccountPriority(*v)
+	}
+	return _c
+}
+
 // SetForceOpenaiUltrafast sets the "force_openai_ultrafast" field.
 func (_c *GroupCreate) SetForceOpenaiUltrafast(v bool) *GroupCreate {
 	_c.mutation.SetForceOpenaiUltrafast(v)
@@ -1211,6 +1225,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultForceOpenaiFast
 		_c.mutation.SetForceOpenaiFast(v)
 	}
+	if _, ok := _c.mutation.ReverseAccountPriority(); !ok {
+		v := group.DefaultReverseAccountPriority
+		_c.mutation.SetReverseAccountPriority(v)
+	}
 	if _, ok := _c.mutation.ForceOpenaiUltrafast(); !ok {
 		v := group.DefaultForceOpenaiUltrafast
 		_c.mutation.SetForceOpenaiUltrafast(v)
@@ -1430,6 +1448,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ForceOpenaiFast(); !ok {
 		return &ValidationError{Name: "force_openai_fast", err: errors.New(`ent: missing required field "Group.force_openai_fast"`)}
+	}
+	if _, ok := _c.mutation.ReverseAccountPriority(); !ok {
+		return &ValidationError{Name: "reverse_account_priority", err: errors.New(`ent: missing required field "Group.reverse_account_priority"`)}
 	}
 	if _, ok := _c.mutation.ForceOpenaiUltrafast(); !ok {
 		return &ValidationError{Name: "force_openai_ultrafast", err: errors.New(`ent: missing required field "Group.force_openai_ultrafast"`)}
@@ -1736,6 +1757,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
 		_node.ForceOpenaiFast = value
+	}
+	if value, ok := _c.mutation.ReverseAccountPriority(); ok {
+		_spec.SetField(group.FieldReverseAccountPriority, field.TypeBool, value)
+		_node.ReverseAccountPriority = value
 	}
 	if value, ok := _c.mutation.ForceOpenaiUltrafast(); ok {
 		_spec.SetField(group.FieldForceOpenaiUltrafast, field.TypeBool, value)
@@ -2848,6 +2873,18 @@ func (u *GroupUpsert) SetForceOpenaiFast(v bool) *GroupUpsert {
 // UpdateForceOpenaiFast sets the "force_openai_fast" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateForceOpenaiFast() *GroupUpsert {
 	u.SetExcluded(group.FieldForceOpenaiFast)
+	return u
+}
+
+// SetReverseAccountPriority sets the "reverse_account_priority" field.
+func (u *GroupUpsert) SetReverseAccountPriority(v bool) *GroupUpsert {
+	u.Set(group.FieldReverseAccountPriority, v)
+	return u
+}
+
+// UpdateReverseAccountPriority sets the "reverse_account_priority" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateReverseAccountPriority() *GroupUpsert {
+	u.SetExcluded(group.FieldReverseAccountPriority)
 	return u
 }
 
@@ -4149,6 +4186,20 @@ func (u *GroupUpsertOne) SetForceOpenaiFast(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateForceOpenaiFast() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateForceOpenaiFast()
+	})
+}
+
+// SetReverseAccountPriority sets the "reverse_account_priority" field.
+func (u *GroupUpsertOne) SetReverseAccountPriority(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetReverseAccountPriority(v)
+	})
+}
+
+// UpdateReverseAccountPriority sets the "reverse_account_priority" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateReverseAccountPriority() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateReverseAccountPriority()
 	})
 }
 
@@ -5651,6 +5702,20 @@ func (u *GroupUpsertBulk) SetForceOpenaiFast(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateForceOpenaiFast() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateForceOpenaiFast()
+	})
+}
+
+// SetReverseAccountPriority sets the "reverse_account_priority" field.
+func (u *GroupUpsertBulk) SetReverseAccountPriority(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetReverseAccountPriority(v)
+	})
+}
+
+// UpdateReverseAccountPriority sets the "reverse_account_priority" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateReverseAccountPriority() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateReverseAccountPriority()
 	})
 }
 

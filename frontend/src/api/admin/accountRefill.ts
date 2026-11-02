@@ -21,7 +21,7 @@ export interface RefillDeliveryConfig {
 export interface RefillConfig {
 	rotation_enabled: boolean
 	rotation: { plan: string; count: number }[]
-  notifications: { refill_started: boolean; low_balance: boolean; low_balance_threshold: number }
+  notifications: { refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
   immediate_failure_retry?: boolean | null
@@ -49,6 +49,7 @@ export interface RefillConfig {
   daily_max_points: number
   max_unit_price: number
   import_concurrency: number
+  plan_import_concurrency?: Record<string, number>
   window_enabled: boolean
   window_start: string
   window_end: string

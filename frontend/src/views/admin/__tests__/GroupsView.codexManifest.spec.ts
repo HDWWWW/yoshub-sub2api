@@ -302,6 +302,54 @@ describe("GroupsView Codex manifest binding", () => {
   });
 
   for (const form of ["create", "edit"] as const) {
+    it(`${form}: saves reverse priority independently of Fast mode`, async () => {
+      const wrapper = mountView();
+      await flushPromises();
+      if (form === "create") {
+        await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
+        const vm = wrapper.vm as unknown as { createForm: { platform: string; name: string } };
+        vm.createForm.platform = "openai";
+        vm.createForm.name = "reverse-priority";
+      } else {
+        await wrapper.findAll("button").find((b) => b.text().includes("common.edit"))!.trigger("click");
+      }
+      await flushPromises();
+      const reverse = wrapper.get(`[data-testid="${form}-reverse-account-priority"]`);
+      expect(reverse.attributes("aria-checked")).toBe("false");
+      await reverse.trigger("click");
+      expect(reverse.attributes("aria-checked")).toBe("true");
+      await wrapper.get("form").trigger("submit");
+      await flushPromises();
+      const call = (form === "create" ? createGroup : updateGroup).mock.calls[0];
+      expect(call[form === "create" ? 0 : 1]).toMatchObject({
+        reverse_account_priority: true,
+        force_openai_fast: false,
+        force_openai_ultrafast: false,
+      });
+      wrapper.unmount();
+    });
+
+    it(`${form}: clears reverse priority when switching to an unsupported platform`, async () => {
+      const wrapper = mountView();
+      await flushPromises();
+      if (form === "create") {
+        await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
+      } else {
+        await wrapper.findAll("button").find((b) => b.text().includes("common.edit"))!.trigger("click");
+      }
+      const vm = wrapper.vm as unknown as Record<"createForm" | "editForm", { platform: string; reverse_account_priority: boolean }>;
+      const state = vm[form === "create" ? "createForm" : "editForm"];
+      state.platform = "openai";
+      await flushPromises();
+      await wrapper.get(`[data-testid="${form}-reverse-account-priority"]`).trigger("click");
+      expect(state.reverse_account_priority).toBe(true);
+      state.platform = "anthropic";
+      await flushPromises();
+      expect(state.reverse_account_priority).toBe(false);
+      expect(wrapper.find(`[data-testid="${form}-reverse-account-priority"]`).exists()).toBe(false);
+      wrapper.unmount();
+    });
+
     it(`${form}: switches modes exclusively and submits free Ultrafast`, async () => {
       const wrapper = mountView();
       await flushPromises();
@@ -346,4 +394,19 @@ describe("GroupsView Codex manifest binding", () => {
       wrapper.unmount();
     });
   }
+
+  it("loads and disables an existing reverse priority setting", async () => {
+    listGroups.mockResolvedValue({ items: [{ ...sourceGroup, reverse_account_priority: true }], total: 1, page: 1, page_size: 20, pages: 1 });
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.findAll("button").find((b) => b.text().includes("common.edit"))!.trigger("click");
+    await flushPromises();
+    const reverse = wrapper.get('[data-testid="edit-reverse-account-priority"]');
+    expect(reverse.attributes("aria-checked")).toBe("true");
+    await reverse.trigger("click");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(updateGroup.mock.calls[0][1]).toMatchObject({ reverse_account_priority: false });
+    wrapper.unmount();
+  });
 });

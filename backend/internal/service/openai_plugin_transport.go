@@ -1,6 +1,9 @@
 package service
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
@@ -8,7 +11,23 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
-func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (response *http.Response, err error) {
+	if account != nil && account.Platform == PlatformOpenAI {
+		if err := request.Context().Err(); err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithCancel(request.Context())
+		request = request.WithContext(ctx)
+		defer func() {
+			if err != nil || response == nil || response.Body == nil {
+				cancel()
+				return
+			}
+			body := &openAICancelReadCloser{ReadCloser: response.Body, ctx: ctx, cancel: cancel}
+			body.stopCancel = context.AfterFunc(ctx, func() { _ = body.close() })
+			response.Body = body
+		}()
+	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {

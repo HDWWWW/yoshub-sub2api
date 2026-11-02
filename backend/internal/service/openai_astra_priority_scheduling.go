@@ -3,7 +3,26 @@ package service
 import (
 	"context"
 	"sort"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
+
+// The original request group owns this policy, including composite routes.
+// A route's supporting group may provide accounts without overriding that policy.
+func (s *OpenAIGatewayService) openAIGroupReversesAccountPriority(ctx context.Context, groupID *int64, platform string) bool {
+	if s == nil || ctx == nil || groupID == nil || NormalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
+		return false
+	}
+	if group, _ := ctx.Value(ctxkey.Group).(*Group); IsGroupContextValid(group) &&
+		groupSupportsOpenAIFast(group.Platform) && (group.ID == *groupID || group.Platform == PlatformComposite) {
+		return group.ReverseAccountPriority
+	}
+	if s.schedulerSnapshot == nil {
+		return false
+	}
+	group, err := s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
+	return err == nil && group != nil && groupSupportsOpenAIFast(group.Platform) && group.ReverseAccountPriority
+}
 
 func (s *OpenAIGatewayService) preferOpenAIAstraPriority(ctx context.Context, platform, model string) bool {
 	if s == nil || NormalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI || !isOpenAIGPT6AstraModel(model) {
@@ -37,6 +56,9 @@ func buildOpenAIPrioritySelectionOrder(
 	}
 	sort.SliceStable(pool, func(i, j int) bool {
 		if pool[i].account.SchedulingPriority() != pool[j].account.SchedulingPriority() {
+			if req.ReversePriority {
+				return pool[i].account.SchedulingPriority() > pool[j].account.SchedulingPriority()
+			}
 			return pool[i].account.SchedulingPriority() < pool[j].account.SchedulingPriority()
 		}
 		if compactTier(pool[i]) != compactTier(pool[j]) {

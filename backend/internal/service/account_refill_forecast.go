@@ -2,7 +2,7 @@ package service
 
 import (
 	"fmt"
-	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -22,11 +22,40 @@ func refillForecastHigh(c AccountRefillConfig, e AccountRefillEvaluation) bool {
 		float64(e.InUse)*100 >= float64(e.ForecastCapacity+e.PendingCapacity)*float64(c.TargetConcurrency)
 }
 
-func refillCapacityGap(c AccountRefillConfig, inUse, capacity int) int {
+// Project future orders without advancing the persisted rotation or consuming
+// failed-order replacements. Existing pending jobs retain their saved capacity.
+func refillPlannedPurchasePlans(state *accountRefillState) []string {
+	projection := *state
+	projection.Jobs = slices.Clone(state.Jobs)
+	plans := make([]string, max(1, state.Config.MaxReady))
+	for i := range plans {
+		plans[i] = nextRefillPurchasePlan(&projection)
+		if replacement := nextRefillFailureReplacement(&projection); replacement >= 0 {
+			projection.Jobs[replacement].ReplacementPending = false
+		} else {
+			advanceRefillRotation(&projection)
+		}
+	}
+	return plans
+}
+
+func refillCapacityGap(c AccountRefillConfig, inUse, capacity int, plannedPlans ...string) int {
 	if inUse <= 0 || float64(inUse)*100 < float64(capacity)*float64(c.TargetConcurrency) {
 		return 0
 	}
-	return refillMax(1, int(math.Ceil((float64(inUse)*100/float64(refillMax(1, c.TargetConcurrency))-float64(capacity))/float64(refillMax(1, c.ImportConcurrency)))))
+	gap := float64(inUse)*100/float64(max(1, c.TargetConcurrency)) - float64(capacity)
+	added := 0
+	for needed := 1; needed <= max(1, c.MaxReady); needed++ {
+		plan := refillNextPlan(c, needed-1)
+		if needed <= len(plannedPlans) {
+			plan = plannedPlans[needed-1]
+		}
+		added += max(1, c.importConcurrencyForPlan(plan))
+		if float64(added) >= gap {
+			return needed
+		}
+	}
+	return max(1, c.MaxReady)
 }
 
 // A different set of departing accounts must earn its own observation window.

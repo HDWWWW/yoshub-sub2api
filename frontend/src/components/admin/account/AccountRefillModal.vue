@@ -90,7 +90,7 @@
               <label><span class="input-label">{{ t('accountRefill.fingerprint_mode') }}</span><select v-model="form.delivery.fingerprint_mode" class="input"><option v-for="mode in ['off', 'session', 'full']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
               <label><span class="input-label">{{ t('accountRefill.proxy_mode') }}</span><select v-model="form.delivery.proxy_mode" class="input" @change="form.delivery.proxy_id = null"><option v-for="mode in ['direct', 'specified', 'random', 'ovh_ipv6']" :key="mode" :value="mode">{{ t(mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${mode}`) }}</option></select></label>
               <div v-if="form.delivery.proxy_mode === 'specified'"><span class="input-label">{{ t('accountRefill.proxy_id') }}</span><ProxySelector :model-value="form.delivery.proxy_id" :proxies="manualProxies" :disabled="busy" @update:model-value="form.delivery.proxy_id = $event; if ($event === null) form.delivery.proxy_mode = 'direct'" /><p class="input-hint">{{ t('ovhIPv6.refillSpecifiedHint') }}</p></div>
-              <label><span class="input-label">{{ t('accountRefill.import_concurrency') }}</span><input v-model.number="form.import_concurrency" type="number" min="1" max="10000" step="1" class="input" /></label>
+              <label v-for="plan in ['pro5x', 'pro20x']" :key="plan"><span class="input-label">{{ plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }} · {{ t('accountRefill.import_concurrency') }}</span><input v-if="form.plan_import_concurrency" v-model.number="form.plan_import_concurrency[plan]" type="number" min="1" max="10000" step="1" class="input" :data-testid="`refill-concurrency-${plan}`" /></label>
               <label v-for="field in deliveryFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form.delivery[field.key]" type="number" min="0" :max="field.max" :step="field.step" class="input" /></label>
               <label><span class="input-label">{{ t('accountRefill.status') }}</span><select v-model="form.delivery.status" class="input"><option value="active">{{ t('accountRefill.active') }}</option><option value="inactive">{{ t('accountRefill.inactive') }}</option></select></label>
               <label><span class="input-label">{{ t('accountRefill.expiry_mode') }}</span><select v-model="form.delivery.expiry_mode" class="input"><option value="rental">{{ t('accountRefill.rental') }}</option><option value="fixed">{{ t('accountRefill.fixedExpiry') }}</option></select></label>
@@ -110,6 +110,8 @@
             <p class="input-hint">{{ t('accountRefill.webhookHint') }}</p>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.refill_started" type="checkbox" data-testid="refill-notify-start" />{{ t('accountRefill.notifyStarted') }}</label>
             <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('accountRefill.notifyStartedHint') }}</p>
+            <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.refill_needed" type="checkbox" data-testid="refill-notify-needed" />{{ t('accountRefill.notifyNeeded') }}</label>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('accountRefill.notifyNeededHint') }}</p>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.low_balance" type="checkbox" data-testid="refill-notify-balance" />{{ t('accountRefill.notifyLowBalance') }}</label>
             <label class="block"><span class="input-label">{{ t('accountRefill.lowBalanceThreshold') }}</span><input v-model.number="form.notifications.low_balance_threshold" type="number" min="0" max="10000000" step="0.01" class="input" data-testid="refill-balance-threshold" /></label>
             <p class="input-hint">{{ t('accountRefill.lowBalanceHint') }}</p>
@@ -128,7 +130,7 @@
           <p class="font-medium">{{ t('accountRefill.manualSavedSettings') }}</p>
           <dl class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div><dt class="text-gray-500">{{ t('accountRefill.deliveryGroups') }}</dt><dd>{{ manualGroups }}</dd></div>
-            <div><dt class="text-gray-500">{{ t('accountRefill.import_concurrency') }}</dt><dd>{{ view.config.import_concurrency }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.import_concurrency') }}</dt><dd data-testid="refill-manual-concurrency">{{ view.config.plan_import_concurrency?.[manualPlan] ?? view.config.import_concurrency }}</dd></div>
             <div><dt class="text-gray-500">{{ t('admin.accounts.privacyProtection') }}</dt><dd>{{ t(view.config.delivery.privacy_enabled !== false ? 'common.enabled' : 'common.disabled') }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.proxy_mode') }}</dt><dd>{{ t(view.config.delivery.proxy_mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${view.config.delivery.proxy_mode}`) }} {{ view.config.delivery.proxy_mode === 'specified' ? `#${view.config.delivery.proxy_id}` : '' }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.import_expiry_grace_minutes') }}</dt><dd>{{ view.config.import_expiry_grace_minutes }}</dd></div>
@@ -349,6 +351,9 @@ function accept(data: RefillView, reset: boolean) {
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}
+  data.config.notifications.refill_needed ??= false
+  data.config.plan_import_concurrency ??= {}
+  for (const plan of ['pro5x', 'pro20x']) data.config.plan_import_concurrency[plan] ??= data.config.import_concurrency
   if (!reset && data.revision < revision) return
   if (!reset && view.value && Date.parse(data.evaluation.checked_at) < Date.parse(view.value.evaluation.checked_at)) data.evaluation = view.value.evaluation
   if (!reset && dirty.value && data.revision !== revision) conflict.value = true

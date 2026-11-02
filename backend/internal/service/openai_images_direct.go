@@ -204,9 +204,17 @@ func codexDirectImagesUsage(body []byte) (OpenAIUsage, bool) {
 	return usage, true
 }
 
-func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp *http.Response, c *gin.Context, parsed *OpenAIImagesRequest) (OpenAIUsage, int, []string, error) {
-	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp *http.Response, c *gin.Context, account *Account, parsed *OpenAIImagesRequest) (OpenAIUsage, int, []string, error) {
+	body, err := s.readOpenAIImagesResponseBody(resp, c, account)
 	if err != nil {
+		if openAIImagesCancellationError(c.Request.Context(), account, err) != nil {
+			if gjson.ValidBytes(body) {
+				usage, _ := codexDirectImagesUsage(body)
+				results, _ := parseCodexDirectImagesResponse(body)
+				return usage, len(results), openAIResponsesImageResultSizes(results), err
+			}
+			return OpenAIUsage{}, 0, nil, err
+		}
 		if shouldClassifyOpenAIUpstreamStreamReadError(err) {
 			err = newOpenAIUpstreamStreamReadError(err)
 		}
@@ -256,6 +264,10 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp 
 			contentType = upstreamType
 		}
 	}
-	c.Data(resp.StatusCode, contentType, body)
+	writeErr := writeOpenAIImagesJSONResponse(c, resp.StatusCode, contentType, body)
+	if writeErr != nil && account != nil && account.Platform == PlatformOpenAI {
+		closeOpenAIUpstreamOnDisconnect(resp, account)
+		return usage, len(results), openAIResponsesImageResultSizes(results), context.Canceled
+	}
 	return usage, len(results), openAIResponsesImageResultSizes(results), nil
 }

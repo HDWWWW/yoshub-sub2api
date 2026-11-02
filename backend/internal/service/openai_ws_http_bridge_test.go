@@ -1438,7 +1438,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver(t *t
 			} else {
 				require.Error(t, err)
 				if tc.readErr != nil {
-					require.ErrorIs(t, err, tc.readErr)
+					require.ErrorIs(t, err, context.Canceled, "downstream disconnect cancels the active upstream read")
 				}
 			}
 		})

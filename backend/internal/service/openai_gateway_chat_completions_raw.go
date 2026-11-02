@@ -222,6 +222,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if err := openAIAccountContextError(ctx, account); err != nil {
+			return nil, err
+		}
 		if account.Platform == PlatformGrok {
 			kind := "http_error"
 			if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
@@ -338,7 +341,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			for _, pending := range pendingLines {
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
 					clientDisconnected = true
-					logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
+					closeOpenAIUpstreamOnDisconnect(resp, account)
+					logger.L().Debug("openai chat_completions raw: client disconnected, returning collected usage",
 						zap.Error(werr),
 						zap.String("request_id", requestID),
 					)
@@ -350,7 +354,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
 			clientDisconnected = true
-			logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
+			closeOpenAIUpstreamOnDisconnect(resp, account)
+			logger.L().Debug("openai chat_completions raw: client disconnected, returning collected usage",
 				zap.Error(werr),
 				zap.String("request_id", requestID),
 			)
@@ -407,6 +412,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			ClientDisconnect:              clientDisconnected || openAIAccountContextError(c.Request.Context(), account) != nil,
 		}
 	}
 
@@ -418,11 +424,16 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		)
 	}
 
-	// 客户端取消/断开后上游读失败与上游截断不可区分（取消会连带取消上游请求），
-	// 沿用既有语义：按已收到的用量正常收尾计费，不判为上游故障。
+	// Keep observed usage, but an aborted OpenAI response without a terminal
+	// marker must not count as a successful scheduler outcome.
 	clientAborted := clientDisconnected ||
 		errors.Is(scanErr, context.Canceled) ||
 		errors.Is(scanErr, context.DeadlineExceeded)
+	if account.Platform == PlatformOpenAI && clientAborted && !terminal.Terminated() {
+		result := resultWithUsage()
+		result.ClientDisconnect = true
+		return result, fmt.Errorf("stream usage incomplete after client disconnect: %w", context.Canceled)
+	}
 
 	// 上游在任何终止信号之前结束：连接被 reset（scanErr != nil）或干净 EOF。
 	// 两者都不能再记成功——此前统一返回 nil error，把上游截断伪装成
@@ -459,6 +470,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			for _, pending := range pendingLines {
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
 					clientDisconnected = true
+					closeOpenAIUpstreamOnDisconnect(resp, account)
 					logger.L().Debug("openai chat_completions raw: client disconnected during final flush",
 						zap.Error(werr),
 						zap.String("request_id", requestID),

@@ -1268,6 +1268,8 @@ export default {
         enableAnyway: '仍然开启'
       },
       openaiFast: {
+        reversePriority: '反转账号优先级',
+        reversePriorityHint: '按账号优先级从大到小选择，当前优先级无空闲容量时再尝试下一档。同级负载均衡和必要的会话归属约束仍然生效。',
         title: 'OpenAI 加速模式',
         force: '强制使用 Fast（priority）',
         hint: '开启后，此分组的 OpenAI 请求会强制写入 service_tier=priority；全局 Fast/Flex 策略仍可过滤或拦截。保存后新请求立即生效，已建立的 WebSocket 会话需重连。',

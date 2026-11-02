@@ -16,6 +16,7 @@ import (
 
 type AccountRefillNotificationConfig struct {
 	RefillStarted       bool    `json:"refill_started"`
+	RefillNeeded        bool    `json:"refill_needed"`
 	LowBalance          bool    `json:"low_balance"`
 	LowBalanceThreshold float64 `json:"low_balance_threshold"`
 }
@@ -23,6 +24,103 @@ type AccountRefillNotificationStatus struct {
 	At      *time.Time `json:"at"`
 	Message string     `json:"message"`
 }
+
+// This local monitor never reserves budget or advances purchase/rotation state.
+// It runs before supplier backoff so unavailable supplier APIs cannot hide a
+// pool shortage while automatic purchases are disabled.
+func (s *AccountRefillService) checkDisabledRefillNotification(ctx context.Context, state *accountRefillState, now time.Time, persist func() error) error {
+	c := state.Config
+	if c.Enabled || !c.MonitorEnabled || !c.Notifications.RefillNeeded || state.EncryptedWebhook == "" || now.Before(state.NextNeededCheckAt) {
+		return nil
+	}
+	state.NextNeededCheckAt = now.Add(time.Duration(max(accountRefillMinIntervalSeconds, c.CheckSeconds)) * time.Second)
+	if !refillInWindow(c, now) {
+		return persist()
+	}
+	if err := c.Validate(); err != nil {
+		state.NotificationStatus = AccountRefillNotificationStatus{At: &now, Message: "补号规则无效，未发送需求提醒"}
+		return persist()
+	}
+	if err := s.evaluate(ctx, state, now); err != nil {
+		state.NotificationStatus = AccountRefillNotificationStatus{At: &now, Message: "本地补号评估失败，未发送需求提醒"}
+		return persist()
+	}
+	e := state.Evaluation
+	s.invalidateCapacityObservations(c, e)
+	if c.Mode == "interval" {
+		if state.NextNeededIntervalAt.IsZero() {
+			state.NextNeededIntervalAt = state.NextIntervalAt
+			if state.NextNeededIntervalAt.IsZero() {
+				state.NextNeededIntervalAt = now.Add(time.Duration(c.IntervalMinutes) * time.Minute)
+			}
+		}
+		retryDue := state.RefillNeededAlerted && !state.RefillNeededRetryAt.IsZero() && !now.Before(state.RefillNeededRetryAt)
+		if now.Before(state.NextNeededIntervalAt) && !retryDue {
+			return persist()
+		}
+		e.Needed = min(c.IntervalQuantity, max(0, c.MaxReady-e.Ready-e.Pending), max(0, c.MaxInFlight-e.Pending))
+		e.Reason = "定时补号"
+		jobs, err := s.evaluationJobs(ctx, state)
+		if err != nil {
+			return persist()
+		}
+		for _, job := range jobs {
+			if refillNeedsAttention(job.Status) {
+				e.Needed = 0
+			}
+		}
+	}
+	if e.Needed <= 0 {
+		state.RefillNeededAlerted = false
+		state.RefillNeededRetryAt = time.Time{}
+		return persist()
+	}
+	if refillNeedsCapacityObservation(e.Reason) {
+		if !s.refillObservationReady(c, state.Revision, e, now) {
+			return persist()
+		}
+	}
+	immediateReplacement := nextRefillFailureReplacement(state) >= 0 && refillImmediateFailureRetryEnabled(c)
+	if !immediateReplacement && now.Sub(state.LastSubmitAt) < time.Duration(c.CooldownSeconds)*time.Second {
+		return persist()
+	}
+	if state.RefillNeededAlerted {
+		if !state.RefillNeededRetryAt.IsZero() {
+			if now.Before(state.RefillNeededRetryAt) {
+				return persist()
+			}
+		} else if c.Mode != "interval" {
+			return persist()
+		}
+	}
+	if c.Mode == "interval" && state.RefillNeededRetryAt.IsZero() {
+		state.NextNeededIntervalAt = now.Add(time.Duration(c.IntervalMinutes) * time.Minute)
+	}
+	state.RefillNeededAlerted = true
+	state.RefillNeededRetryAt = now.Add(5 * time.Minute)
+	// Persist a retry deadline before sending. Failed or interrupted attempts
+	// can retry after a restart, but never on every monitor tick.
+	if err := persist(); err != nil {
+		return err
+	}
+	groupLabel := fmt.Sprintf("#%d", c.GroupID)
+	if group, err := s.groups.GetByID(ctx, c.GroupID); err == nil && group != nil && group.Name != "" {
+		groupLabel = fmt.Sprintf("%s (#%d)", group.Name, c.GroupID)
+	}
+	content := fmt.Sprintf("Sub2API 补号需求提醒\n已触发自动补号规则，但自动补号已关闭，未自动补号。\n监测分组：%s\n触发原因：%s\n规则详情：%s\n当前待补：%d 个\n下次套餐：%s\n请按需手动补号或开启自动补号。\n时间：%s", groupLabel, e.Reason, accountRefillReasonDetail(c, e), e.Needed, nextRefillPurchasePlan(state), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	if s.sendRefillNotification(ctx, state, content) {
+		state.RefillNeededRetryAt = time.Time{}
+		if c.Mode == "interval" {
+			// A delayed successful retry starts a fresh notification interval.
+			// Do not emit another success immediately for an elapsed deadline.
+			state.NextNeededIntervalAt = now.Add(time.Duration(c.IntervalMinutes) * time.Minute)
+		}
+	} else {
+		state.NotificationStatus.Message = strings.TrimSuffix(state.NotificationStatus.Message, "；补号继续处理") + "；自动补号已关闭，未下单；补号需求仍存在时至少 5 分钟后重试"
+	}
+	return persist()
+}
+
 type refillNotifier interface {
 	Send(context.Context, string, string) error
 }
@@ -71,13 +169,13 @@ func (n weComRefillNotifier) Send(ctx context.Context, webhook, content string) 
 	}
 	return nil
 }
-func (s *AccountRefillService) sendRefillNotification(ctx context.Context, state *accountRefillState, content string) {
+func (s *AccountRefillService) sendRefillNotification(ctx context.Context, state *accountRefillState, content string) bool {
 	now := time.Now()
 	state.NotificationStatus.At = &now
 	webhook, err := s.encryptor.Decrypt(state.EncryptedWebhook)
 	if err != nil {
 		state.NotificationStatus.Message = "机器人地址解密失败，请重新保存"
-		return
+		return false
 	}
 	notifier := s.notifier
 	if notifier == nil {
@@ -89,7 +187,9 @@ func (s *AccountRefillService) sendRefillNotification(ctx context.Context, state
 		state.NotificationStatus.Message = "通知发送失败或结果未确认，请检查机器人配置；补号继续处理"
 	} else {
 		state.NotificationStatus.Message = "企业微信通知发送成功"
+		return true
 	}
+	return false
 }
 func (s *AccountRefillService) notifyRefillStarted(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
 	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" || j.StartedNotificationAt != nil || j.Attempts > 0 || j.SupplierID != "" {

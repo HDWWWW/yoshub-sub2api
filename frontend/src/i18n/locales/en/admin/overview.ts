@@ -1270,6 +1270,8 @@ export default {
         enableAnyway: 'Enable anyway'
       },
       openaiFast: {
+        reversePriority: 'Reverse account priority',
+        reversePriorityHint: 'Select higher numeric account priorities first, falling back when capacity is unavailable. Load balancing within a tier and required response ownership still apply.',
         title: 'OpenAI speed mode',
         force: 'Force Fast (priority)',
         hint: 'Forces service_tier=priority on OpenAI requests in this group. The global Fast/Flex policy can still filter or block it. New requests update immediately after saving; existing WebSocket sessions must reconnect.',

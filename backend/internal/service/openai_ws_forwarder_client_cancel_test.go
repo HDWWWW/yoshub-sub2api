@@ -15,10 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure
-// reproduces the HTTP/SSE ingress bug: the client cancels after partial output,
-// while the upstream WS still has a terminal event available for usage billing.
-func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *testing.T) {
+// The next upstream event must remain unread when the client cancels: the
+// active lease is closed immediately, and only usage already received survives.
+func TestForwardOpenAIWSV2_ClientCancellationClosesUpstreamWithoutSyntheticFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -79,12 +78,16 @@ func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *te
 
 	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
 
-	require.NoError(t, err, "client cancellation must not surface as an upstream failure")
+	require.ErrorIs(t, err, context.Canceled)
+	var failover *UpstreamFailoverError
+	require.NotErrorAs(t, err, &failover)
 	require.NotNil(t, result)
 	require.True(t, result.ClientDisconnect)
 	require.Equal(t, "resp_cancel_1", result.RequestID)
-	require.Equal(t, 3, result.Usage.InputTokens)
-	require.Equal(t, 5, result.Usage.OutputTokens)
+	require.Zero(t, result.Usage.InputTokens)
+	require.Zero(t, result.Usage.OutputTokens)
+	require.True(t, captureConn.closed, "the canceled lease must be closed, never returned to the pool")
+	require.Len(t, captureConn.events, 1, "the pending terminal event must not be drained")
 	require.NotContains(t, writer.body.String(), "response.failed")
 }
 

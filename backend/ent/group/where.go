@@ -300,6 +300,11 @@ func ForceOpenaiFast(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldForceOpenaiFast, v))
 }
 
+// ReverseAccountPriority applies equality check predicate on the "reverse_account_priority" field. It's identical to ReverseAccountPriorityEQ.
+func ReverseAccountPriority(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldReverseAccountPriority, v))
+}
+
 // ForceOpenaiUltrafast applies equality check predicate on the "force_openai_ultrafast" field. It's identical to ForceOpenaiUltrafastEQ.
 func ForceOpenaiUltrafast(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldForceOpenaiUltrafast, v))
@@ -2318,6 +2323,16 @@ func ForceOpenaiFastEQ(v bool) predicate.Group {
 // ForceOpenaiFastNEQ applies the NEQ predicate on the "force_openai_fast" field.
 func ForceOpenaiFastNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldForceOpenaiFast, v))
+}
+
+// ReverseAccountPriorityEQ applies the EQ predicate on the "reverse_account_priority" field.
+func ReverseAccountPriorityEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldReverseAccountPriority, v))
+}
+
+// ReverseAccountPriorityNEQ applies the NEQ predicate on the "reverse_account_priority" field.
+func ReverseAccountPriorityNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldReverseAccountPriority, v))
 }
 
 // ForceOpenaiUltrafastEQ applies the EQ predicate on the "force_openai_ultrafast" field.

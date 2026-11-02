@@ -63,7 +63,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	}
 	targetURL := buildOpenAIEmbeddingsURL(validatedURL)
 
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	upstreamCtx, releaseUpstreamCtx := openAIAccountUpstreamContext(ctx, account)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(upstreamBody))
 	releaseUpstreamCtx()
 	if err != nil {
@@ -94,6 +94,9 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
+		if cancelErr := openAIAccountContextError(ctx, account); cancelErr != nil {
+			return nil, cancelErr
+		}
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -114,6 +117,9 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
+		if cancelErr := openAIAccountContextError(ctx, account); cancelErr != nil {
+			return nil, cancelErr
+		}
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
@@ -155,15 +161,18 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if cancelErr := openAIAccountContextError(ctx, account); cancelErr != nil {
+			return nil, cancelErr
+		}
 		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			writeOpenAIEmbeddingsError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
 		}
 		return nil, fmt.Errorf("read upstream body: %w", err)
 	}
 
-	writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
+	writeErr := writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
 
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		RequestID:       firstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id")),
 		UpstreamHeaders: resp.Header,
 		Usage:           extractOpenAIEmbeddingsUsage(respBody),
@@ -172,15 +181,21 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 		UpstreamModel:   upstreamModel,
 		Stream:          false,
 		Duration:        time.Since(startTime),
-	}, nil
+	}
+	if writeErr != nil && account.Platform == PlatformOpenAI {
+		closeOpenAIUpstreamOnDisconnect(resp, account)
+		result.ClientDisconnect = true
+		return result, context.Canceled
+	}
+	return result, nil
 }
 
-func writeOpenAIEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, body []byte, filter *responseheaders.CompiledHeaderFilter) {
+func writeOpenAIEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, body []byte, filter *responseheaders.CompiledHeaderFilter) error {
 	if c == nil || resp == nil {
-		return
+		return nil
 	}
 	if c.Writer.Written() {
-		return
+		return nil
 	}
 	if resp.Header != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, filter)
@@ -191,7 +206,8 @@ func writeOpenAIEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, 
 		c.Writer.Header().Set("Content-Type", "application/json")
 	}
 	c.Writer.WriteHeader(resp.StatusCode)
-	_, _ = c.Writer.Write(body)
+	_, err := c.Writer.Write(body)
+	return err
 }
 
 func writeOpenAIEmbeddingsError(c *gin.Context, statusCode int, errType, message string) {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -17,6 +18,107 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+// One raw reader belongs to the downstream session, including account failover
+// attempts. Reading during generation is necessary to observe close frames/EOF;
+// queued next-turn messages remain owned by the normal admission loop.
+type openAIWSIngressClientReader struct {
+	conn          *coderws.Conn
+	frames        chan openAIWSClientReadResult
+	done          chan struct{}
+	ctx           context.Context
+	err           error
+	serverClosing atomic.Bool
+}
+
+func openAIWSIngressReader(c *gin.Context, conn *coderws.Conn) *openAIWSIngressClientReader {
+	const key = "openai_ws_ingress_client_reader"
+	if existing, ok := c.Get(key); ok {
+		if reader, ok := existing.(*openAIWSIngressClientReader); ok && reader.conn == conn {
+			return reader
+		}
+	}
+	readerCtx, cancel := context.WithCancel(context.Background())
+	r := &openAIWSIngressClientReader{conn: conn, frames: make(chan openAIWSClientReadResult, 16), done: make(chan struct{}), ctx: readerCtx}
+	c.Set(key, r)
+	go func() {
+		defer cancel()
+		defer close(r.done)
+		for {
+			kind, payload, err := conn.Read(context.Background())
+			if err != nil {
+				r.err = err
+				return
+			}
+			select {
+			case r.frames <- openAIWSClientReadResult{messageType: kind, payload: payload}:
+			default:
+				r.err = NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "too many queued websocket requests", nil)
+				_ = conn.CloseNow()
+				return
+			}
+		}
+	}()
+	return r
+}
+
+func (r *openAIWSIngressClientReader) read(ctx context.Context, idleTimeout time.Duration) (coderws.MessageType, []byte, error) {
+	return r.readWithControl(ctx, ctx, idleTimeout, nil, nil)
+}
+
+func (r *openAIWSIngressClientReader) readWithControl(ctx, controlCtx context.Context, idleTimeout time.Duration, timeoutStart <-chan struct{}, idleActive func() bool) (coderws.MessageType, []byte, error) {
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	startTimeout := func() {
+		if idleTimeout <= 0 || (idleActive != nil && !idleActive()) {
+			return
+		}
+		if timer == nil {
+			timer = time.NewTimer(idleTimeout)
+		} else {
+			timer.Reset(idleTimeout)
+		}
+		timeout = timer.C
+	}
+	startTimeout()
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	closeClient := func(status coderws.StatusCode, reason string, cause error) (coderws.MessageType, []byte, error) {
+		r.serverClosing.Store(true)
+		_ = r.conn.Close(status, reason)
+		_ = r.conn.CloseNow()
+		<-r.done
+		return 0, nil, NewOpenAIWSClientCloseError(status, reason, cause)
+	}
+	select {
+	case <-r.done:
+		return 0, nil, r.err
+	default:
+	}
+	for {
+		select {
+		case <-timeoutStart:
+			startTimeout()
+		case frame := <-r.frames:
+			return frame.messageType, frame.payload, nil
+		case <-r.done:
+			return 0, nil, r.err
+		case <-timeout:
+			return closeClient(coderws.StatusNormalClosure, "websocket idle timeout", context.DeadlineExceeded)
+		case <-ctx.Done():
+			if controlCtx.Err() == nil {
+				return 0, nil, ctx.Err()
+			}
+			if errors.Is(context.Cause(controlCtx), ErrOpenAIWSIngressLeaseLost) {
+				return closeClient(coderws.StatusTryAgainLater, "websocket ingress capacity lease lost; please reconnect", context.Cause(controlCtx))
+			}
+			return closeClient(coderws.StatusGoingAway, "websocket request canceled", context.Cause(controlCtx))
+		}
+	}
+}
 
 type openAIWSRejectedFieldRetryError struct {
 	body   []byte
@@ -164,6 +266,22 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 	if !forceHTTPBridge && wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
 		return fmt.Errorf("websocket ingress requires ws_v2 transport, got=%s", wsDecision.Transport)
+	}
+	var clientReader *openAIWSIngressClientReader
+	if account.Platform == PlatformOpenAI {
+		clientReader = openAIWSIngressReader(c, clientConn)
+		var cancelClient context.CancelFunc
+		ctx, cancelClient = context.WithCancel(ctx)
+		stop := context.AfterFunc(clientReader.ctx, func() {
+			if !clientReader.serverClosing.Load() {
+				cancelClient()
+			}
+		})
+		defer stop()
+		defer cancelClient()
+		if clientReader.ctx.Err() != nil && !clientReader.serverClosing.Load() {
+			cancelClient()
+		}
 	}
 	dedicatedMode := modeRouterV2Enabled && ingressMode == OpenAIWSIngressModeDedicated
 
@@ -492,13 +610,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 	readClientMessage := func() ([]byte, error) {
 		idleTimeout := s.openAIWSIngressInterTurnIdleTimeout()
-		msgType, payload, readErr := ReadOpenAIWSClientMessage(
-			ctx,
-			clientConn,
-			idleTimeout,
-			coderws.StatusNormalClosure,
-			"websocket idle timeout",
-		)
+		var msgType coderws.MessageType
+		var payload []byte
+		var readErr error
+		if clientReader != nil {
+			msgType, payload, readErr = clientReader.read(ctx, idleTimeout)
+		} else {
+			msgType, payload, readErr = ReadOpenAIWSClientMessage(ctx, clientConn, idleTimeout, coderws.StatusNormalClosure, "websocket idle timeout")
+		}
 		if readErr != nil {
 			var closeErr *OpenAIWSClientCloseError
 			if errors.As(readErr, &closeErr) && closeErr.StatusCode() == coderws.StatusNormalClosure {
@@ -956,13 +1075,22 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 
 	var rejectedFieldRetryState *openAIResponsesRejectedFieldRetryState
-	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string, requestedReasoningEffort *string) (*OpenAIForwardResult, error) {
+	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string, requestedReasoningEffort *string) (turnResult *OpenAIForwardResult, turnErr error) {
 		responseModelObserver := &upstreamResponseModelObserver{}
 		if lease == nil {
 			return nil, errors.New("upstream websocket lease is nil")
 		}
 		turnStart := time.Now()
 		wroteDownstream := false
+		if account.Platform == PlatformOpenAI {
+			cancelDone := make(chan struct{})
+			stopCancel := context.AfterFunc(ctx, func() { defer close(cancelDone); lease.MarkBroken() })
+			defer func() {
+				if !stopCancel() {
+					<-cancelDone
+				}
+			}()
+		}
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
 				"write_upstream",
@@ -1010,6 +1138,30 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				mappedModelBytes = []byte(mappedModel)
 			}
 		}
+		defer func() {
+			if turnErr == nil || account.Platform != PlatformOpenAI {
+				return
+			}
+			if ctx.Err() != nil {
+				turnErr = ctx.Err()
+			}
+			// Preserve only observed usage. Cancellation must not keep the OAuth
+			// generation alive waiting for a later terminal usage event.
+			if turnResult == nil {
+				turnResult = &OpenAIForwardResult{
+					RequestID: responseID, Usage: usage, Model: originalModel, UpstreamModel: mappedModel,
+					UpstreamResponseModel: responseModelObserver.Model(), UpstreamResponseModelConflict: responseModelObserver.Conflict(),
+					UpstreamResponseServiceTier: responseModelObserver.ServiceTier(),
+					ServiceTier:                 resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(payload)),
+					ReasoningEffort:             ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
+					RequestedReasoningEffort:    requestedReasoningEffort, Stream: reqStream, OpenAIWSMode: true,
+					ResponseHeaders: lease.HandshakeHeaders(), Duration: time.Since(turnStart), FirstTokenMs: firstTokenMs,
+					ImageCount: imageCounter.Count(), ImageSize: imageSizeTier, ImageInputSize: imageInputSize,
+					ImageOutputSizes: imageCounter.Sizes(), BillingModel: imageBillingModel,
+				}
+			}
+			turnResult.ClientDisconnect = errors.Is(turnErr, context.Canceled)
+		}()
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
 			if readErr != nil {
@@ -1186,11 +1338,17 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					}
 				}
 				if err := writeClientMessage(clientMessage); err != nil {
+					if account.Platform == PlatformOpenAI {
+						lease.MarkBroken()
+						if !isTerminalEvent {
+							return nil, context.Canceled
+						}
+					}
 					if isOpenAIWSClientDisconnectError(err) {
 						clientDisconnected = true
 						closeStatus, closeReason := summarizeOpenAIWSReadCloseError(err)
 						logOpenAIWSModeInfo(
-							"ingress_ws_client_disconnected_drain account_id=%d turn=%d conn_id=%s close_status=%s close_reason=%s",
+							"ingress_ws_client_disconnected account_id=%d turn=%d conn_id=%s close_status=%s close_reason=%s",
 							account.ID,
 							turn,
 							truncateOpenAIWSLogValue(lease.ConnID(), openAIWSIDValueMaxLen),
@@ -1815,6 +1973,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				sessionLease.MarkBroken()
 				return errOpenAIWSSessionPreempted
 			}
+			if account.Platform == PlatformOpenAI && (ctx.Err() != nil || errors.Is(relayErr, context.Canceled)) {
+				if hooks != nil && hooks.AfterTurn != nil {
+					hooks.AfterTurn(turn, result, context.Canceled)
+				}
+				sessionLease.MarkBroken()
+				return context.Canceled
+			}
 			var rejectedFieldErr *openAIWSRejectedFieldRetryError
 			if errors.As(relayErr, &rejectedFieldErr) && rejectedFieldErr != nil && len(rejectedFieldErr.body) > 0 {
 				currentPayload = append([]byte(nil), rejectedFieldErr.body...)
@@ -1833,7 +1998,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				finalErr = unwrapped
 			}
 			if hooks != nil && hooks.AfterTurn != nil {
-				hooks.AfterTurn(turn, nil, finalErr)
+				hooks.AfterTurn(turn, result, finalErr)
 			}
 			sessionLease.MarkBroken()
 			return finalErr

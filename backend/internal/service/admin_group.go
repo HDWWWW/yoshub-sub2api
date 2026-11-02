@@ -369,6 +369,7 @@ func sanitizeGroupOpenAIFast(group *Group) {
 	if group == nil || !groupSupportsOpenAIFast(group.Platform) {
 		if group != nil {
 			group.ForceOpenAIFast = false
+			group.ReverseAccountPriority = false
 			group.ForceOpenAIUltrafast = false
 			group.FilterOpenAIServiceTier = false
 			group.FreeOpenAIFast = false
@@ -628,6 +629,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
 		AllowLive:                       input.AllowLive,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
+		ReverseAccountPriority:          input.ReverseAccountPriority,
 		ForceOpenAIUltrafast:            input.ForceOpenAIUltrafast,
 		FilterOpenAIServiceTier:         input.FilterOpenAIServiceTier,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
@@ -1023,6 +1025,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.AllowLive != nil {
 		group.AllowLive = *input.AllowLive
+	}
+	if input.ReverseAccountPriority != nil {
+		group.ReverseAccountPriority = *input.ReverseAccountPriority
 	}
 	if input.ForceOpenAIFast != nil {
 		group.ForceOpenAIFast = *input.ForceOpenAIFast

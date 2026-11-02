@@ -21,6 +21,7 @@ import (
 
 type openAIWSClientFrameConn struct {
 	conn                 *coderws.Conn
+	reader               *openAIWSIngressClientReader
 	controlCtx           context.Context
 	interTurnIdleTimeout time.Duration
 	interTurnStarted     chan struct{}
@@ -604,6 +605,9 @@ func (c *openAIWSClientFrameConn) ReadFrame(ctx context.Context) (coderws.Messag
 	if c.controlCtx != nil {
 		controlCtx = c.controlCtx
 	}
+	if c.reader != nil {
+		return c.reader.readWithControl(ctx, controlCtx, c.interTurnIdleTimeout, c.interTurnStarted, func() bool { return c.waitingForNextTurn.Load() })
+	}
 	msgType, payload, err := readOpenAIWSClientMessageWithTimeoutStart(
 		controlCtx,
 		c.conn,
@@ -658,6 +662,9 @@ func (c *openAIWSClientFrameConn) Close() error {
 	if c == nil || c.conn == nil {
 		return nil
 	}
+	if c.reader != nil {
+		c.reader.serverClosing.Store(true)
+	}
 	_ = c.conn.Close(coderws.StatusNormalClosure, "")
 	_ = c.conn.CloseNow()
 	return nil
@@ -673,6 +680,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	hooks *OpenAIWSIngressHooks,
 	wsDecision OpenAIWSProtocolDecision,
 ) error {
+	controlCtx := ctx
 	// The same request context survives scheduler failover attempts. Clear any
 	// reverse mapping installed by the prior account before processing frames.
 	setCodexToolNameReverse(c, nil)
@@ -687,6 +695,22 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
+	}
+	var clientReader *openAIWSIngressClientReader
+	if account.Platform == PlatformOpenAI {
+		clientReader = openAIWSIngressReader(c, clientConn)
+		var cancelClient context.CancelFunc
+		ctx, cancelClient = context.WithCancel(ctx)
+		stop := context.AfterFunc(clientReader.ctx, func() {
+			if !clientReader.serverClosing.Load() {
+				cancelClient()
+			}
+		})
+		defer stop()
+		defer cancelClient()
+		if clientReader.ctx.Err() != nil && !clientReader.serverClosing.Load() {
+			cancelClient()
+		}
 	}
 	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
 		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(firstClientMessage, account)
@@ -955,6 +979,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	var acceptedTurnStartedAt atomic.Pointer[time.Time]
 	clientFrameConn := &openAIWSClientFrameConn{
 		conn:                 clientConn,
+		reader:               clientReader,
 		controlCtx:           ctx,
 		interTurnIdleTimeout: s.openAIWSIngressInterTurnIdleTimeout(),
 		interTurnStarted:     make(chan struct{}, 1),
@@ -1189,6 +1214,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			FirstMessageType:                coderws.MessageText,
 			FirstMessageSent:                upstreamFirstMessageSent,
 			StartClientAfterFirstDownstream: true,
+			CancelOnClientDisconnect:        account.Platform == PlatformOpenAI,
 			ReadClientFrame:                 readNextClientFrame,
 			OnUsageParseFailure: func(eventType string, usageRaw string) {
 				logOpenAIWSV2Passthrough(
@@ -1272,6 +1298,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				// frame limit; an oversized reason makes coder/websocket skip the
 				// close frame, leaving the client with EOF instead of the status code.
 				reason = truncateString(reason, 120)
+				if clientReader != nil {
+					clientReader.serverClosing.Store(true)
+				}
 				_ = clientConn.Close(status, reason)
 				_ = clientConn.CloseNow()
 			},
@@ -1329,7 +1358,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			},
 		},
 	})
-	if cause := context.Cause(ctx); cause != nil {
+	var controlCloseErr error
+	if cause := context.Cause(controlCtx); cause != nil {
 		if isOpenAIWSSessionPreempted(ctx) {
 			return errOpenAIWSSessionPreempted
 		}
@@ -1341,7 +1371,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		}
 		_ = clientConn.Close(status, reason)
 		_ = clientConn.CloseNow()
-		return NewOpenAIWSClientCloseError(status, reason, cause)
+		controlCloseErr = NewOpenAIWSClientCloseError(status, reason, cause)
+		if relayExit == nil {
+			return controlCloseErr
+		}
 	}
 
 	resultRequestModel, resultUpstreamModel := usageMeta.turnModels(relayResult.RequestModel)
@@ -1407,6 +1440,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	)
 
 	relayErr := relayExit.Err
+	if controlCloseErr != nil {
+		relayErr = controlCloseErr
+	}
 	var firstOutputTimeoutErr *openAIWSPassthroughFirstOutputTimeoutError
 	if errors.As(relayErr, &firstOutputTimeoutErr) {
 		deadline := firstOutputTimeoutErr.deadline
@@ -1463,7 +1499,25 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		if hooks.TurnStarted != nil {
 			hooks.TurnStarted(turnCount+1, time.Now().Add(-result.Duration))
 		}
-		hooks.AfterTurn(turnCount+1, nil, turnErr)
+		var partialResult *OpenAIForwardResult
+		if partial := relayResult.UnfinishedTurn; partial != nil {
+			copy := *result
+			copy.ClientDisconnect = errors.Is(relayErr, context.Canceled)
+			copy.RequestID = partial.RequestID
+			copy.UpstreamTerminalEvent = ""
+			copy.Usage = OpenAIUsage{
+				InputTokens: partial.Usage.InputTokens, OutputTokens: partial.Usage.OutputTokens,
+				ImageInputTokens: partial.Usage.ImageInputTokens, ImageOutputTokens: partial.Usage.ImageOutputTokens,
+				CacheCreationInputTokens: partial.Usage.CacheCreationInputTokens, CacheReadInputTokens: partial.Usage.CacheReadInputTokens,
+			}
+			copy.UpstreamResponseModel = partial.ResponseModel
+			copy.UpstreamResponseModelConflict = partial.ResponseModelConflict
+			copy.UpstreamResponseServiceTier = normalizeObservedOpenAIServiceTier(partial.ResponseServiceTier)
+			copy.Duration = partial.Duration
+			copy.FirstTokenMs = partial.FirstTokenMs
+			partialResult = &copy
+		}
+		hooks.AfterTurn(turnCount+1, partialResult, turnErr)
 	}
 	return turnErr
 }

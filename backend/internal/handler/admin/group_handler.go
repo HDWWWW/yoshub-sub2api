@@ -239,6 +239,7 @@ type CreateGroupRequest struct {
 	AllowMessagesDispatch       bool                                      `json:"allow_messages_dispatch"`
 	AllowLive                   bool                                      `json:"allow_live"`
 	ForceOpenAIFast             bool                                      `json:"force_openai_fast"`
+	ReverseAccountPriority      bool                                      `json:"reverse_account_priority"`
 	ForceOpenAIUltrafast        bool                                      `json:"force_openai_ultrafast"`
 	FilterOpenAIServiceTier     bool                                      `json:"filter_openai_service_tier"`
 	FreeOpenAIFast              bool                                      `json:"free_openai_fast"`
@@ -318,6 +319,7 @@ type UpdateGroupRequest struct {
 	AllowMessagesDispatch       *bool                                      `json:"allow_messages_dispatch"`
 	AllowLive                   *bool                                      `json:"allow_live"`
 	ForceOpenAIFast             *bool                                      `json:"force_openai_fast"`
+	ReverseAccountPriority      *bool                                      `json:"reverse_account_priority"`
 	ForceOpenAIUltrafast        *bool                                      `json:"force_openai_ultrafast"`
 	FilterOpenAIServiceTier     *bool                                      `json:"filter_openai_service_tier"`
 	FreeOpenAIFast              *bool                                      `json:"free_openai_fast"`
@@ -723,6 +725,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
+		ReverseAccountPriority:          req.ReverseAccountPriority,
 		ForceOpenAIUltrafast:            req.ForceOpenAIUltrafast,
 		FilterOpenAIServiceTier:         req.FilterOpenAIServiceTier,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,
@@ -873,6 +876,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
+		ReverseAccountPriority:          req.ReverseAccountPriority,
 		ForceOpenAIUltrafast:            req.ForceOpenAIUltrafast,
 		FilterOpenAIServiceTier:         req.FilterOpenAIServiceTier,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,

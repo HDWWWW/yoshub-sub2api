@@ -253,7 +253,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			}
 			state.EncryptedWebhook = cipher
 		}
-		if (c.Notifications.RefillStarted || c.Notifications.LowBalance) && state.EncryptedWebhook == "" {
+		if (c.Notifications.RefillStarted || c.Notifications.RefillNeeded || c.Notifications.LowBalance) && state.EncryptedWebhook == "" {
 			return errors.New("启用通知前请配置企业微信群机器人 Webhook")
 		}
 		if webhook != "" || c.Notifications != state.Config.Notifications {
@@ -261,6 +261,15 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			state.LowBalanceRequired = 0
 			state.NextBalanceCheckAt = time.Time{}
 		}
+		if c.Enabled != state.Config.Enabled || c.Notifications.RefillNeeded != state.Config.Notifications.RefillNeeded || c.Mode != state.Config.Mode {
+			state.RefillNeededAlerted = false
+			state.RefillNeededRetryAt = time.Time{}
+			state.NextNeededIntervalAt = time.Time{}
+		}
+		if c.IntervalMinutes != state.Config.IntervalMinutes || c.IntervalQuantity != state.Config.IntervalQuantity {
+			state.NextNeededIntervalAt = time.Time{}
+		}
+		state.NextNeededCheckAt = time.Time{}
 		if c.GroupID != state.Config.GroupID {
 			for _, j := range state.Jobs {
 				if j.pending() {
@@ -367,7 +376,7 @@ func (s *AccountRefillService) evaluate(ctx context.Context, state *accountRefil
 	if err != nil {
 		return err
 	}
-	state.Evaluation = evaluateAccountRefill(state.Config, accounts, loads, jobs, now)
+	state.Evaluation = evaluateAccountRefill(state.Config, accounts, loads, jobs, now, refillPlannedPurchasePlans(state)...)
 	return nil
 }
 
@@ -383,6 +392,9 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		now := time.Now()
 		persist := func() error { return saveRefillState(&state, save) }
 		if !preview {
+			if err := s.checkDisabledRefillNotification(ctx, &state, now, persist); err != nil {
+				return err
+			}
 			// Local delivery deadlines must still alert while provider requests are
 			// backed off or automatic purchasing/monitoring is paused.
 			if err := s.notifyRefillDelayed(ctx, &state, now, persist); err != nil {
@@ -588,7 +600,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			Mode:               state.Config.Mode,
 			ReasonDetail:       accountRefillReasonDetail(state.Config, state.Evaluation),
 			ExpiryGraceMinutes: &graceMinutes,
-			GroupID:            state.Config.GroupID, Concurrency: state.Config.ImportConcurrency, DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
+			GroupID:            state.Config.GroupID, Concurrency: state.Config.importConcurrencyForPlan(plan), DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
 		if replacement >= 0 {
 			linkRefillFailureReplacement(&state, replacement, &job)

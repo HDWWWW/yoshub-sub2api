@@ -28,6 +28,24 @@ func TestRefillConfigPlanQuotaReplacementAndLegacyClient(t *testing.T) {
 	require.Empty(t, cleared.PlanQuotaThresholds)
 }
 
+func TestRefillConfigPlanConcurrencyReplacementAndLegacyClient(t *testing.T) {
+	current := service.DefaultAccountRefillConfig()
+	current.PlanImportConcurrency = map[string]int{"pro5x": 50, "pro20x": 60}
+	legacy, err := decodeAccountRefillConfig(current, json.RawMessage(`{"import_concurrency":77}`))
+	require.NoError(t, err)
+	require.Equal(t, current.PlanImportConcurrency, legacy.PlanImportConcurrency)
+	require.Equal(t, 77, legacy.ImportConcurrency)
+	updated, err := decodeAccountRefillConfig(current, json.RawMessage(`{"plan_import_concurrency":{"pro20x":65}}`))
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"pro20x": 65}, updated.PlanImportConcurrency)
+	require.Equal(t, map[string]int{"pro5x": 50, "pro20x": 60}, current.PlanImportConcurrency)
+	for _, raw := range []string{`{"plan_import_concurrency":{}}`, `{"plan_import_concurrency":null}`} {
+		cleared, err := decodeAccountRefillConfig(current, json.RawMessage(raw))
+		require.NoError(t, err)
+		require.Empty(t, cleared.PlanImportConcurrency)
+	}
+}
+
 func TestExternalAccountImportExpiryScope(t *testing.T) {
 	for _, auth := range []string{"jwt", "admin_api_key"} {
 		t.Run(auth, func(t *testing.T) {

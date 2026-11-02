@@ -1023,6 +1023,20 @@ func (_u *GroupUpdate) SetNillableForceOpenaiFast(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetReverseAccountPriority sets the "reverse_account_priority" field.
+func (_u *GroupUpdate) SetReverseAccountPriority(v bool) *GroupUpdate {
+	_u.mutation.SetReverseAccountPriority(v)
+	return _u
+}
+
+// SetNillableReverseAccountPriority sets the "reverse_account_priority" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableReverseAccountPriority(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetReverseAccountPriority(*v)
+	}
+	return _u
+}
+
 // SetForceOpenaiUltrafast sets the "force_openai_ultrafast" field.
 func (_u *GroupUpdate) SetForceOpenaiUltrafast(v bool) *GroupUpdate {
 	_u.mutation.SetForceOpenaiUltrafast(v)
@@ -1914,6 +1928,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ReverseAccountPriority(); ok {
+		_spec.SetField(group.FieldReverseAccountPriority, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.ForceOpenaiUltrafast(); ok {
 		_spec.SetField(group.FieldForceOpenaiUltrafast, field.TypeBool, value)
@@ -3277,6 +3294,20 @@ func (_u *GroupUpdateOne) SetNillableForceOpenaiFast(v *bool) *GroupUpdateOne {
 	return _u
 }
 
+// SetReverseAccountPriority sets the "reverse_account_priority" field.
+func (_u *GroupUpdateOne) SetReverseAccountPriority(v bool) *GroupUpdateOne {
+	_u.mutation.SetReverseAccountPriority(v)
+	return _u
+}
+
+// SetNillableReverseAccountPriority sets the "reverse_account_priority" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableReverseAccountPriority(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetReverseAccountPriority(*v)
+	}
+	return _u
+}
+
 // SetForceOpenaiUltrafast sets the "force_openai_ultrafast" field.
 func (_u *GroupUpdateOne) SetForceOpenaiUltrafast(v bool) *GroupUpdateOne {
 	_u.mutation.SetForceOpenaiUltrafast(v)
@@ -4198,6 +4229,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ReverseAccountPriority(); ok {
+		_spec.SetField(group.FieldReverseAccountPriority, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.ForceOpenaiUltrafast(); ok {
 		_spec.SetField(group.FieldForceOpenaiUltrafast, field.TypeBool, value)

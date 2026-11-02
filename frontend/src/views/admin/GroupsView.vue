@@ -1595,6 +1595,19 @@
           </p>
           <div class="flex items-center justify-between gap-4 mt-4">
             <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.reversePriority") }}
+            </label>
+            <Toggle
+              data-testid="create-reverse-account-priority"
+              :aria-label="t('admin.groups.openaiFast.reversePriority')"
+              v-model="createForm.reverse_account_priority"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiFast.reversePriorityHint") }}
+          </p>
+          <div class="flex items-center justify-between gap-4 mt-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.forceUltrafast") }}
             </label>
             <Toggle
@@ -3285,6 +3298,19 @@
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiFast.hint") }}
+          </p>
+          <div class="flex items-center justify-between gap-4 mt-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.openaiFast.reversePriority") }}
+            </label>
+            <Toggle
+              data-testid="edit-reverse-account-priority"
+              :aria-label="t('admin.groups.openaiFast.reversePriority')"
+              v-model="editForm.reverse_account_priority"
+            />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiFast.reversePriorityHint") }}
           </p>
           <div class="flex items-center justify-between gap-4 mt-4">
             <label class="text-sm text-gray-600 dark:text-gray-400">
@@ -5039,6 +5065,7 @@ const createForm = reactive({
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
+  reverse_account_priority: false,
   force_openai_fast: false,
   force_openai_ultrafast: false,
   filter_openai_service_tier: false,
@@ -5408,6 +5435,7 @@ const editForm = reactive({
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
+  reverse_account_priority: false,
   force_openai_fast: false,
   force_openai_ultrafast: false,
   filter_openai_service_tier: false,
@@ -5902,6 +5930,7 @@ const closeCreateModal = () => {
   createForm.video_price_1080p = null;
   createForm.video_model_prices = createVideoModelPricesForm();
   createForm.long_context_pricing_enabled = true;
+  createForm.reverse_account_priority = false;
   createForm.force_openai_fast = false;
   createForm.force_openai_ultrafast = false;
   createForm.filter_openai_service_tier = false;
@@ -6027,6 +6056,7 @@ const handleCreateGroup = async () => {
     // 构建请求数据，包含模型路由配置
     const requestData = {
       ...createGroupForm,
+      reverse_account_priority: supportsGroupOpenAIFast(createForm.platform) && createForm.reverse_account_priority,
       force_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
         createForm.force_openai_fast,
@@ -6189,6 +6219,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.long_context_pricing_enabled ?? true;
   editForm.filter_openai_service_tier = group.filter_openai_service_tier ?? false;
   editForm.force_openai_ultrafast = !editForm.filter_openai_service_tier && (group.force_openai_ultrafast ?? false);
+  editForm.reverse_account_priority = group.reverse_account_priority ?? false;
   editForm.force_openai_fast = !editForm.filter_openai_service_tier && !editForm.force_openai_ultrafast && (group.force_openai_fast ?? false);
   editForm.free_openai_fast = group.free_openai_fast ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
@@ -6324,6 +6355,7 @@ const closeEditModal = () => {
   editForm.video_price_1080p = null;
   editForm.video_model_prices = createVideoModelPricesForm();
   editForm.long_context_pricing_enabled = true;
+  editForm.reverse_account_priority = false;
   editForm.force_openai_fast = false;
   editForm.force_openai_ultrafast = false;
   editForm.filter_openai_service_tier = false;
@@ -6383,6 +6415,7 @@ const handleUpdateGroup = async () => {
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
       ...editForm,
+      reverse_account_priority: supportsGroupOpenAIFast(editForm.platform) && editForm.reverse_account_priority,
       force_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,
         editForm.force_openai_fast,
@@ -6830,6 +6863,9 @@ watch(
     if (!supportsLivePlatform(newVal)) {
       createForm.allow_live = false;
     }
+    if (!supportsGroupOpenAIFast(newVal)) {
+      createForm.reverse_account_priority = false;
+    }
     if (!isProfitControlPlatform(newVal)) {
       createForm.profit_control_enabled = false;
       createForm.profit_min_margin_percent = 0;
@@ -6887,6 +6923,9 @@ watch(
     }
     if (!supportsLivePlatform(newVal)) {
       editForm.allow_live = false;
+    }
+    if (!supportsGroupOpenAIFast(newVal)) {
+      editForm.reverse_account_priority = false;
     }
     if (!isProfitControlPlatform(newVal)) {
       editForm.profit_control_enabled = false;

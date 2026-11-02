@@ -37,6 +37,8 @@ export default {
   "webhookPlaceholder": "Paste the WeCom group robot webhook URL",
   "webhookHint": "Leave blank to keep the saved address. It is encrypted and never displayed. Replacing it changes the destination group.",
   "notifyStarted": "Refill progress notifications",
+  "notifyNeeded": "Notify when refill is needed with automation off",
+  "notifyNeededHint": "With monitoring enabled, notify when saved refill rules, time windows, and sustained observation conditions are met while automatic purchasing is off. Deliver once per continuous shortage, then rearm after recovery; interval mode delivers at most once per interval. Failed sends retry after at least 5 minutes. Pausing monitoring stops these alerts. This switch never places orders.",
   "notifyStartedHint": "Notify on automatic or manual refill starts and confirmed failures. For automatic refills, also notify after import and once per order if it is still not imported after 5 minutes.",
   "notifyLowBalance": "Insufficient credit / low balance alerts",
   "lowBalanceThreshold": "Notify when available credits are at or below",

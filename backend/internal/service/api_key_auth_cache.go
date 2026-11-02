@@ -105,6 +105,7 @@ type APIKeyAuthGroupSnapshot struct {
 	AllowMessagesDispatch       bool                              `json:"allow_messages_dispatch"`
 	AllowLive                   bool                              `json:"allow_live"`
 	ForceOpenAIFast             bool                              `json:"force_openai_fast"`
+	ReverseAccountPriority      bool                              `json:"reverse_account_priority"`
 	ForceOpenAIUltrafast        bool                              `json:"force_openai_ultrafast"`
 	FilterOpenAIServiceTier     bool                              `json:"filter_openai_service_tier"`
 	FreeOpenAIFast              bool                              `json:"free_openai_fast"`

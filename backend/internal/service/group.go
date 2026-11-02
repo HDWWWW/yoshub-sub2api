@@ -103,6 +103,7 @@ type Group struct {
 	AllowMessagesDispatch       bool
 	AllowLive                   bool
 	ForceOpenAIFast             bool // 强制 OpenAI 网关请求使用 service_tier=priority
+	ReverseAccountPriority      bool // 按账号优先级从大到小调度
 	ForceOpenAIUltrafast        bool // 强制 OpenAI 网关请求使用 service_tier=ultrafast
 	FilterOpenAIServiceTier     bool // 移除 OpenAI 请求中的 service_tier
 	FreeOpenAIFast              bool // OpenAI Fast 请求按 Standard 价格向用户计费

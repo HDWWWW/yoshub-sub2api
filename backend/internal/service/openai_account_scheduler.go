@@ -79,6 +79,7 @@ type OpenAIAccountScheduleRequest struct {
 	SubscriptionPriority    bool
 	// PriorityFirst confines scoring and soft affinity to each numeric priority tier.
 	PriorityFirst         bool
+	ReversePriority       bool
 	PreserveStickyBinding bool
 	// DisableStickyEscape keeps task-owner lookups on their account even when
 	// generic sticky health or concurrency heuristics would prefer another.
@@ -999,6 +1000,9 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		priorityFactor := 1.0
 		if maxPriority > minPriority {
 			priorityFactor = 1 - float64(item.priority-minPriority)/float64(maxPriority-minPriority)
+			if req.ReversePriority {
+				priorityFactor = 1 - priorityFactor
+			}
 		}
 		loadFactor := 1 - clamp01(float64(item.loadInfo.LoadRate)/100.0)
 		queueFactor := 1 - clamp01(float64(item.loadInfo.WaitingCount)/float64(maxWaiting))
@@ -1115,7 +1119,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	if req.PriorityFirst {
 		order := buildOpenAIPrioritySelectionOrder(req, plan.candidates, buildSelectionOrder)
 		if req.RequireCompact && len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
-			order = append(order, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
+			order = append(order, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry, req.ReversePriority)...)
 		}
 		return order
 	}
@@ -1143,7 +1147,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 	return buildSelectionOrder(plan.candidates)
 }
 
-func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore, reversePriority ...bool) []openAIAccountCandidateScore {
 	if len(pool) == 0 {
 		return nil
 	}
@@ -1151,6 +1155,9 @@ func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []open
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
 		if a.account.SchedulingPriority() != b.account.SchedulingPriority() {
+			if len(reversePriority) > 0 && reversePriority[0] {
+				return a.account.SchedulingPriority() > b.account.SchedulingPriority()
+			}
 			return a.account.SchedulingPriority() < b.account.SchedulingPriority()
 		}
 		if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
@@ -2348,7 +2355,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		guardianParentAccountID = s.resolveOpenAIGuardianParentAccountID(ctx, groupID)
 	}
 	scheduler := s.getOpenAIAccountScheduler(ctx)
-	priorityFirst := s.preferOpenAIAstraPriority(ctx, platform, requestedModel)
+	reversePriority := s.openAIGroupReversesAccountPriority(ctx, groupID, platform)
+	priorityFirst := reversePriority || s.preferOpenAIAstraPriority(ctx, platform, requestedModel)
 	if scheduler == nil && priorityFirst {
 		// Share eligibility, capacity fallback and final DB checks with the advanced
 		// scheduler without enabling its policy for other models.
@@ -2483,6 +2491,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		StickyWeighted:          stickyWeighted,
 		SubscriptionPriority:    subscriptionPriority,
 		PriorityFirst:           priorityFirst,
+		ReversePriority:         reversePriority,
 		PreserveStickyBinding:   preserveGuardianParentBinding,
 		RequirePrivacySet:       s.openAIGroupRequiresPrivacySet(ctx, groupID),
 		PreviousResponseID:      previousResponseID,
@@ -2540,6 +2549,10 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Account, model string, success bool, firstTokenMs *int, observedErr ...error) bool {
 	if account == nil {
+		return false
+	}
+	if !success && len(observedErr) > 0 && errors.Is(observedErr[0], context.Canceled) {
+		// A caller cancellation says nothing about account health or reliability.
 		return false
 	}
 	accountID := account.ID

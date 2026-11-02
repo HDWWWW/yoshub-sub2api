@@ -54,24 +54,28 @@ func (w *lifecycleDisconnectedWriter) Write([]byte) (int, error) {
 }
 
 // Exercise the real forwarding and RecordUsage services with the real HTTP
-// upstream. Only the persistence boundary is replaced: closing an attempt must
-// not cancel the detached stream before its final usage reaches billing.
-func TestHTTPUpstreamForwardDrainsUsageAfterClientDisconnect(t *testing.T) {
+// upstream. A downstream disconnect must cancel generation while the usage
+// already observed remains billable through an independent persistence context.
+func TestHTTPUpstreamForwardCancelsAndPersistsObservedUsageAfterClientDisconnect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	clientCtx, disconnect := context.WithCancel(t.Context())
 	defer disconnect()
 	releaseUsage := make(chan struct{})
+	upstreamCanceled := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseUsage) }) }
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Request-Id", "lifecycle-billing")
-		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
+		// Compatible Responses upstreams can report partial usage before the
+		// terminal event. These are the only tokens available after cancellation.
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\",\"usage\":{\"input_tokens\":17,\"output_tokens\":8,\"total_tokens\":25}}\n\n")
 		_ = http.NewResponseController(w).Flush()
 		select {
 		case <-releaseUsage:
 		case <-r.Context().Done():
+			close(upstreamCanceled)
 			return
 		}
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_lifecycle\",\"status\":\"completed\",\"usage\":{\"input_tokens\":17,\"output_tokens\":8,\"total_tokens\":25}}}\n\n")
@@ -119,11 +123,16 @@ func TestHTTPUpstreamForwardDrainsUsageAfterClientDisconnect(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("downstream did not receive the first event")
 	}
-	release()
+	select {
+	case <-upstreamCanceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("downstream disconnect did not cancel upstream generation")
+	}
 	select {
 	case got := <-done:
-		require.NoError(t, got.err)
+		require.ErrorIs(t, got.err, context.Canceled)
 		require.NotNil(t, got.result)
+		require.True(t, got.result.ClientDisconnect)
 		require.Equal(t, 17, got.result.Usage.InputTokens)
 		require.Equal(t, 8, got.result.Usage.OutputTokens)
 		// RecordUsage must still work with the cancelled downstream context.
@@ -132,7 +141,7 @@ func TestHTTPUpstreamForwardDrainsUsageAfterClientDisconnect(t *testing.T) {
 			User: &service.User{ID: 3}, Account: account,
 		}))
 	case <-time.After(5 * time.Second):
-		t.Fatal("forward did not finish draining usage")
+		t.Fatal("forward did not return after cancellation")
 	}
 	require.Len(t, billingRepo.commands, 1)
 	require.Len(t, usageRepo.logs, 1)

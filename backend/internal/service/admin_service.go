@@ -290,6 +290,7 @@ type CreateGroupInput struct {
 	AllowMessagesDispatch       bool
 	AllowLive                   bool
 	ForceOpenAIFast             bool
+	ReverseAccountPriority      bool
 	ForceOpenAIUltrafast        bool
 	FilterOpenAIServiceTier     bool
 	FreeOpenAIFast              bool
@@ -375,6 +376,7 @@ type UpdateGroupInput struct {
 	AllowMessagesDispatch       *bool
 	AllowLive                   *bool
 	ForceOpenAIFast             *bool
+	ReverseAccountPriority      *bool
 	ForceOpenAIUltrafast        *bool
 	FilterOpenAIServiceTier     *bool
 	FreeOpenAIFast              *bool

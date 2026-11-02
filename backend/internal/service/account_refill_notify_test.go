@@ -17,6 +17,227 @@ import (
 
 const fixtureRefillWebhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fixture-only"
 
+func TestRefillNeededNotificationWithAutomationOffIsDurableAndNeverOrders(t *testing.T) {
+	s, store, provider, accounts := refillHarness(t)
+	ctx := context.Background()
+	n := &refillNoticeStub{}
+	s.notifier = n
+	c := refillTestConfig()
+	c.Enabled = false
+	c.Notifications.RefillNeeded = true
+	require.Error(t, s.Configure(ctx, c, "", 1), "this notification also requires a robot")
+	require.NoError(t, s.Configure(ctx, c, "", 1, fixtureRefillWebhook))
+	store.mutate(t, func(state *accountRefillState) {
+		state.EncryptedToken = ""
+		state.ProviderRetryAt = time.Now().Add(time.Hour)
+	})
+	require.NoError(t, s.run(ctx, false))
+	require.Len(t, n.messages, 1)
+	require.Contains(t, n.messages[0], "自动补号已关闭，未自动补号")
+	require.Contains(t, n.messages[0], "监测分组：#2")
+	require.Contains(t, n.messages[0], "健康储备不足")
+	require.Contains(t, n.messages[0], "当前待补：1 个")
+	require.NotContains(t, n.messages[0], "开始补号")
+	// A new service instance still sees the successful persisted notification.
+	s = &AccountRefillService{store: store, provider: provider, notifier: n, encryptor: s.encryptor, accounts: accounts, groups: s.groups, loads: s.loads}
+	for i := 0; i < 2; i++ {
+		store.mutate(t, func(state *accountRefillState) { state.NextNeededCheckAt = time.Time{} })
+		require.NoError(t, s.run(ctx, false))
+	}
+	require.Len(t, n.messages, 1)
+	accounts.accounts = []Account{refillTestAccount(time.Now().Add(4 * time.Hour))}
+	store.mutate(t, func(state *accountRefillState) { state.NextNeededCheckAt = time.Time{} })
+	require.NoError(t, s.run(ctx, false))
+	accounts.accounts = nil
+	store.mutate(t, func(state *accountRefillState) { state.NextNeededCheckAt = time.Time{} })
+	require.NoError(t, s.run(ctx, false))
+	require.Len(t, n.messages, 2, "recovered demand rearms the alert")
+	require.Empty(t, provider.submitted)
+	state, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	require.Empty(t, state.Jobs)
+	require.Empty(t, state.Usage)
+	require.Zero(t, state.RotationCursor)
+}
+
+func TestRefillNeededNotificationRequiresMonitorTriggerAndNonPreview(t *testing.T) {
+	for _, scenario := range []string{"switch_off", "automation_on", "monitor_off", "out_of_window", "pending", "attention", "preview", "get", "persist_failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, store, p, _ := refillHarness(t)
+			n := &refillNoticeStub{}
+			s.notifier = n
+			store.mutate(t, func(state *accountRefillState) {
+				state.Config.Enabled = false
+				state.Config.Notifications.RefillNeeded = true
+				state.EncryptedWebhook = "encrypted-fixture"
+				state.EncryptedToken = ""
+				state.ProviderRetryAt = time.Now().Add(time.Hour)
+				switch scenario {
+				case "switch_off":
+					state.Config.Notifications.RefillNeeded = false
+				case "automation_on":
+					state.Config.Enabled = true
+				case "monitor_off":
+					state.Config.MonitorEnabled = false
+				case "out_of_window":
+					state.Config.WindowEnabled = true
+					state.Config.WindowStart = time.Now().In(refillTimezone).Add(2 * time.Hour).Format("15:04")
+					state.Config.WindowEnd = time.Now().In(refillTimezone).Add(3 * time.Hour).Format("15:04")
+				case "pending":
+					state.Jobs = []AccountRefillJob{{Status: "queued", Concurrency: 60}}
+				case "attention":
+					state.Jobs = []AccountRefillJob{{Status: "review"}}
+				}
+			})
+			store.failSave = scenario == "persist_failure"
+			var err error
+			if scenario == "get" {
+				_, err = s.View(context.Background())
+			} else {
+				err = s.run(context.Background(), scenario == "preview")
+			}
+			if scenario == "persist_failure" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Empty(t, n.messages)
+			require.Empty(t, p.submitted)
+		})
+	}
+}
+
+func TestRefillNeededNotificationWaitsForCapacityAndForecastObservation(t *testing.T) {
+	for _, forecast := range []bool{false, true} {
+		t.Run(map[bool]string{false: "capacity", true: "forecast"}[forecast], func(t *testing.T) {
+			s, store, p, accounts := refillHarness(t)
+			n := &refillNoticeStub{}
+			s.notifier = n
+			accounts.accounts = []Account{refillTestAccount(time.Now().Add(4 * time.Hour))}
+			s.loads = refillTestLoads{map[int64]*AccountLoadInfo{1: {CurrentConcurrency: 60}}}
+			if forecast {
+				accounts.accounts = refillForecastAccounts(time.Now())
+				s.loads = refillTestLoads{refillForecastLoads()}
+			}
+			store.mutate(t, func(state *accountRefillState) {
+				state.Config.Enabled = false
+				state.Config.Notifications.RefillNeeded = true
+				state.EncryptedWebhook = "encrypted-fixture"
+				state.ProviderRetryAt = time.Now().Add(time.Hour)
+			})
+			require.NoError(t, s.run(context.Background(), false))
+			require.Empty(t, n.messages)
+			state, err := decodeAccountRefillState(store.raw)
+			require.NoError(t, err)
+			feedRefillForecast(s, state.Config, state.Revision, state.Evaluation, time.Now(), state.Config.ConcurrencySustainSeconds)
+			store.mutate(t, func(state *accountRefillState) { state.NextNeededCheckAt = time.Time{} })
+			require.NoError(t, s.run(context.Background(), false))
+			require.Len(t, n.messages, 1)
+			require.Contains(t, n.messages[0], "持续观察已满 30 秒")
+			require.Empty(t, p.submitted)
+		})
+	}
+}
+
+func TestRefillNeededNotificationRetriesWithPersistentCooldown(t *testing.T) {
+	s, store, p, accounts := refillHarness(t)
+	n := &refillNoticeStub{err: errors.New("robot offline")}
+	s.notifier = n
+	store.mutate(t, func(state *accountRefillState) {
+		state.Config.Enabled = false
+		state.Config.Notifications.RefillNeeded = true
+		state.EncryptedWebhook = "encrypted-fixture"
+		state.ProviderRetryAt = time.Now().Add(time.Hour)
+	})
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 1)
+	state, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	require.True(t, state.RefillNeededRetryAt.After(time.Now().Add(4*time.Minute)))
+	require.Contains(t, state.NotificationStatus.Message, "自动补号已关闭，未下单")
+	require.NotContains(t, state.NotificationStatus.Message, "补号继续处理")
+	s = &AccountRefillService{store: store, provider: p, notifier: n, encryptor: s.encryptor, accounts: accounts, groups: s.groups, loads: s.loads}
+	store.mutate(t, func(state *accountRefillState) { state.NextNeededCheckAt = time.Time{} })
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 1, "do not retry on every monitor tick")
+	n.err = nil
+	store.mutate(t, func(state *accountRefillState) {
+		state.NextNeededCheckAt = time.Time{}
+		state.RefillNeededRetryAt = time.Now().Add(-time.Second)
+	})
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 2)
+	state, err = decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	require.True(t, state.RefillNeededRetryAt.IsZero())
+	require.Empty(t, p.submitted)
+}
+
+func TestRefillNeededIntervalRetryDoesNotImmediatelyRepeatSuccessfulAlert(t *testing.T) {
+	s, store, p, _ := refillHarness(t)
+	n := &refillNoticeStub{err: errors.New("robot offline")}
+	s.notifier = n
+	store.mutate(t, func(state *accountRefillState) {
+		state.Config.Enabled = false
+		state.Config.Mode = "interval"
+		state.Config.Notifications.RefillNeeded = true
+		state.EncryptedWebhook = "encrypted-fixture"
+		state.ProviderRetryAt = time.Now().Add(time.Hour)
+		state.NextIntervalAt = time.Now().Add(-time.Minute)
+	})
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 1)
+	n.err = nil
+	store.mutate(t, func(state *accountRefillState) {
+		state.NextNeededCheckAt = time.Time{}
+		state.NextNeededIntervalAt = time.Now().Add(-time.Minute)
+		state.RefillNeededRetryAt = time.Now().Add(-time.Minute)
+	})
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 2)
+	state, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	require.True(t, state.NextNeededIntervalAt.After(time.Now().Add(time.Duration(state.Config.IntervalMinutes-1)*time.Minute)))
+	store.mutate(t, func(state *accountRefillState) { state.NextNeededCheckAt = time.Time{} })
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 2, "a successful retry must not be followed by another alert on the next tick")
+	require.Empty(t, p.submitted)
+}
+
+func TestRefillNeededIntervalNotificationDoesNotAccumulatePurchases(t *testing.T) {
+	s, store, p, _ := refillHarness(t)
+	n := &refillNoticeStub{}
+	s.notifier = n
+	purchaseDeadline := time.Now().Add(-time.Minute)
+	store.mutate(t, func(state *accountRefillState) {
+		state.Config.Enabled = false
+		state.Config.Mode = "interval"
+		state.Config.Notifications.RefillNeeded = true
+		state.EncryptedWebhook = "encrypted-fixture"
+		state.ProviderRetryAt = time.Now().Add(time.Hour)
+		state.NextIntervalAt = purchaseDeadline
+	})
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 1)
+	require.Contains(t, n.messages[0], "定时补号")
+	store.mutate(t, func(state *accountRefillState) { state.NextNeededCheckAt = time.Time{} })
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 1)
+	store.mutate(t, func(state *accountRefillState) {
+		state.NextNeededCheckAt = time.Time{}
+		state.NextNeededIntervalAt = time.Now().Add(-time.Minute)
+	})
+	require.NoError(t, s.run(context.Background(), false))
+	require.Len(t, n.messages, 2)
+	state, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	require.True(t, state.NextIntervalAt.Equal(purchaseDeadline))
+	require.Zero(t, state.IntervalRemaining)
+	require.Empty(t, state.Jobs)
+	require.Empty(t, state.Usage)
+	require.Empty(t, p.submitted)
+}
+
 type refillNoticeStub struct {
 	messages []string
 	err      error
