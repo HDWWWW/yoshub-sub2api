@@ -272,6 +272,7 @@ const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
 const webhook = ref('')
 const manualPlan = ref('pro5x'), manualPending = ref<ManualRefillRequest | null>(null)
 const manualStorageKey = 'yoshub:manual-refill:pending'
+const notifiedManualImports = new Set<string>()
 const loading = ref(false), busy = ref(false), conflict = ref(false), now = ref(Date.now())
 let revision = 0, generation = 0, fetching = false
 let timer: ReturnType<typeof setInterval> | undefined
@@ -355,6 +356,19 @@ function accept(data: RefillView, reset: boolean) {
   data.config.plan_import_concurrency ??= {}
   for (const plan of ['pro5x', 'pro20x']) data.config.plan_import_concurrency[plan] ??= data.config.import_concurrency
   if (!reset && data.revision < revision) return
+  const previousJobs = view.value?.config.group_id === data.config.group_id
+    ? new Map(view.value.jobs.map(job => [job.id, job])) : null
+  for (const job of data.jobs) {
+    if ((!job.manual_request_id && job.reason !== '手动补号') || job.status !== 'imported' || !job.account_id) continue
+    const key = `${data.config.group_id}:${job.id}`
+    if (notifiedManualImports.has(key)) continue
+    notifiedManualImports.add(key)
+    const previous = previousJobs?.get(job.id)
+    const pendingRequest = manualPending.value?.request_id === job.manual_request_id && !!job.manual_request_id
+    if ((previous && (previous.status !== 'imported' || !previous.account_id)) || pendingRequest) {
+      app.showSuccess(t('accountRefill.manualImported', { plan: job.plan, account: job.account_id }))
+    }
+  }
   if (!reset && view.value && Date.parse(data.evaluation.checked_at) < Date.parse(view.value.evaluation.checked_at)) data.evaluation = view.value.evaluation
   if (!reset && dirty.value && data.revision !== revision) conflict.value = true
   if (reset || !dirty.value) {
@@ -427,7 +441,9 @@ async function submitManual() {
   try {
     const data = await accountRefillAPI.manual(request)
     accept(data, false); clearManualRequest(); activeTab.value = 'progress'; jobsPage.value = 1
-    app.showSuccess(t('accountRefill.manualAccepted'))
+    if (!data.jobs.some(job => job.manual_request_id === request.request_id && job.status === 'imported' && job.account_id)) {
+      app.showSuccess(t('accountRefill.manualAccepted'))
+    }
   } catch (e) {
     const status = (e as { response?: { status?: number } }).response?.status
     if (status === 400 || status === 401 || status === 403) clearManualRequest()

@@ -234,7 +234,7 @@ func (s *AccountRefillService) notifyRefillBalance(ctx context.Context, state *a
 }
 
 // The existing refill lifecycle switch covers starts, confirmed failures,
-// automatic imports and delivery delays. Persist attempts before contacting
+// completed imports and automatic delivery delays. Persist attempts before contacting
 // WeCom, whose API has no idempotency key.
 func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
 	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
@@ -269,7 +269,7 @@ func automaticRefillJob(j *AccountRefillJob) bool {
 
 func (s *AccountRefillService) notifyRefillImported(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
 	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
-		!automaticRefillJob(j) || j.Status != "imported" || j.AccountID == 0 || j.ImportedNotificationAt != nil {
+		j.Status != "imported" || j.AccountID == 0 || j.ImportedNotificationAt != nil {
 		return nil
 	}
 	now := time.Now()
@@ -279,8 +279,12 @@ func (s *AccountRefillService) notifyRefillImported(ctx context.Context, state *
 	if err := persist(); err != nil {
 		return err
 	}
-	content := fmt.Sprintf("Sub2API 自动补号成功\n结果：账号已导入并绑定分组\n套餐：%s\n积分：%g\n账号 ID：%d\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n耗时：%s\n时间：%s",
-		j.Plan, j.Price, j.AccountID, j.DeliveryGroupIDs, j.ID, j.SupplierID, now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	mode := "自动补号"
+	if !automaticRefillJob(j) {
+		mode = "手动补号"
+	}
+	content := fmt.Sprintf("Sub2API %s成功\n结果：账号已导入并绑定分组\n套餐：%s\n积分：%g\n账号 ID：%d\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n耗时：%s\n时间：%s",
+		mode, j.Plan, j.Price, j.AccountID, j.DeliveryGroupIDs, j.ID, j.SupplierID, now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	s.sendRefillNotification(ctx, state, content)
 	return persist()
 }

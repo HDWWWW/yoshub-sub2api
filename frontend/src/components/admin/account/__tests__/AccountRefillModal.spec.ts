@@ -3,13 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountRefillModal from '../AccountRefillModal.vue'
 import type { Proxy } from '@/types'
 
-const { get, save, check, retry, manual, download, saveAs } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn() }))
+const { get, save, check, retry, manual, download, saveAs, showSuccess } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn() }))
 vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, save, check, retry, manual, download } }))
 vi.mock('file-saver', () => ({ saveAs }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { name: 'TotpStepUpDialog', props: ['controller'], template: '<div />' } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [{ id: 2, name: 'OpenAI', platform: 'openai', status: 'active' }, { id: 3, name: 'Second group', platform: 'openai', status: 'active' }] }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn() }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
 const config = {
  notifications: { refill_started: false, low_balance: false, low_balance_threshold: 100 },
@@ -45,6 +45,48 @@ async function openProgress() {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it.each([true, false])('announces completed manual pool imports once (request id: %s)', async withRequestID => {
+  const job = { ...responseWithJobs(1).jobs[0]!, reason: '手动补号', status: 'processing', ...(withRequestID ? { manual_request_id: 'manual-1' } : {}) }
+  get.mockResolvedValue({ ...response(), jobs: [job] })
+  const w = await openProgress()
+  expect(showSuccess).not.toHaveBeenCalled()
+  get.mockResolvedValue({ ...response(), jobs: [{ ...job, status: 'awaiting_delivery', supplier_status: 'succeeded' }] })
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(showSuccess).not.toHaveBeenCalled()
+  const complete = { ...response(), jobs: [{ ...job, status: 'imported', account_id: 42 }] }
+  get.mockResolvedValue(complete)
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(showSuccess).toHaveBeenCalledTimes(1)
+  expect(showSuccess).toHaveBeenCalledWith('accountRefill.manualImported')
+  await vi.advanceTimersByTimeAsync(30000); await flushPromises()
+  expect(showSuccess).toHaveBeenCalledTimes(1)
+  w.unmount()
+  const reopened = await openProgress()
+  expect(showSuccess).toHaveBeenCalledTimes(1)
+  reopened.unmount()
+ })
+ it('does not announce imports without an account or replay a historical completion', async () => {
+  const job = { ...responseWithJobs(1).jobs[0]!, reason: '手动补号', manual_request_id: 'manual-1' }
+  get.mockResolvedValue({ ...response(), jobs: [job] })
+  const w = await openProgress()
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(showSuccess).not.toHaveBeenCalled()
+  get.mockResolvedValue({ ...response(), jobs: [{ ...job, account_id: 42 }] })
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(showSuccess).toHaveBeenCalledTimes(1)
+  expect(showSuccess).toHaveBeenCalledWith('accountRefill.manualImported')
+  w.unmount()
+ })
+ it('shows completion instead of acceptance when the manual response is already imported', async () => {
+  const job = { ...responseWithJobs(1).jobs[0]!, reason: '手动补号', account_id: 42 }
+  manual.mockImplementation(async request => ({ ...response(), jobs: [{ ...job, manual_request_id: request.request_id }] }))
+  const w = await open()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.manual')!.trigger('click')
+  await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+  expect(showSuccess).toHaveBeenCalledTimes(1)
+  expect(showSuccess).toHaveBeenCalledWith('accountRefill.manualImported')
+  w.unmount()
+ })
  it('saves demand notifications with automation off without starting a refill', async () => {
   const w = await open()
   await w.findAll('nav button').find(b => b.text() === 'accountRefill.notifications')!.trigger('click')

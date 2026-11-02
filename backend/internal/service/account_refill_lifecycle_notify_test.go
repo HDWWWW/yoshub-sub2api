@@ -148,16 +148,14 @@ func TestRefillDelayedNotificationThresholdAndStates(t *testing.T) {
 	}
 }
 
-func TestRefillImportedNotificationRequiresDurableAutomaticImport(t *testing.T) {
-	for _, scenario := range []string{"manual", "disabled", "no_webhook", "not_imported", "no_account", "persist_failure"} {
+func TestRefillImportedNotificationRequiresDurableImport(t *testing.T) {
+	for _, scenario := range []string{"disabled", "no_webhook", "not_imported", "no_account", "persist_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			n := &refillNoticeStub{}
 			s := &AccountRefillService{notifier: n, encryptor: refillTestEncryptor{}}
 			state := accountRefillState{Config: AccountRefillConfig{Notifications: AccountRefillNotificationConfig{RefillStarted: true}}, EncryptedWebhook: "encrypted-fixture"}
 			j := AccountRefillJob{Status: "imported", AccountID: 7, CreatedAt: time.Now()}
 			switch scenario {
-			case "manual":
-				j.Reason = "手动补号"
 			case "disabled":
 				state.Config.Notifications.RefillStarted = false
 			case "no_webhook":
@@ -176,4 +174,56 @@ func TestRefillImportedNotificationRequiresDurableAutomaticImport(t *testing.T) 
 			require.Empty(t, n.messages)
 		})
 	}
+}
+
+func TestManualRefillImportedNotificationWithAutomationOffAndRestart(t *testing.T) {
+	s, store, provider, accounts := refillHarness(t)
+	s.provider = &manualRefillProvider{provider, 500}
+	n := &refillNoticeStub{}
+	s.notifier = n
+	ctx := context.Background()
+	store.mutate(t, func(state *accountRefillState) {
+		state.Config.Enabled, state.Config.MonitorEnabled = false, false
+		state.Config.Notifications.RefillStarted = true
+		state.EncryptedWebhook = "encrypted-fixture"
+	})
+	require.NoError(t, s.Manual(ctx, manualRequest()))
+	require.NoError(t, s.run(ctx, false))
+	require.Len(t, n.messages, 1)
+	provider.status = "succeeded"
+	refillDue(t, store)
+	require.NoError(t, s.run(ctx, false))
+	require.Len(t, n.messages, 1, "supplier success is not a completed pool import")
+	refillDue(t, store)
+	require.NoError(t, s.run(ctx, false))
+	require.Equal(t, 1, accounts.creates)
+	require.Len(t, n.messages, 2)
+	require.Contains(t, n.messages[1], "手动补号成功")
+	require.Contains(t, n.messages[1], "账号已导入并绑定分组")
+	require.Contains(t, n.messages[1], "账号 ID：")
+	require.NotContains(t, n.messages[1], "自动补号成功")
+	state, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	require.NotNil(t, state.Jobs[0].ImportedNotificationAt)
+	require.Equal(t, "imported", state.Jobs[0].Status)
+	s = &AccountRefillService{store: store, provider: s.provider, notifier: n, encryptor: s.encryptor, accounts: accounts, admin: accounts, groups: s.groups, loads: s.loads}
+	for i := 0; i < 3; i++ {
+		refillDue(t, store)
+		require.NoError(t, s.run(ctx, false))
+	}
+	require.Len(t, n.messages, 2, "restart must not replay a completion notification")
+	require.Equal(t, 1, accounts.creates)
+	require.Len(t, provider.submitted, 1)
+}
+
+func TestRefillImportedNotificationRecognizesLegacyManualJobs(t *testing.T) {
+	n := &refillNoticeStub{}
+	s := &AccountRefillService{notifier: n, encryptor: refillTestEncryptor{}}
+	state := accountRefillState{Config: AccountRefillConfig{Notifications: AccountRefillNotificationConfig{RefillStarted: true}}, EncryptedWebhook: "encrypted-fixture"}
+	j := AccountRefillJob{Status: "imported", AccountID: 7, Reason: "手动补号", CreatedAt: time.Now()}
+	require.NoError(t, s.notifyRefillImported(context.Background(), &state, &j, func() error { return nil }))
+	require.Len(t, n.messages, 1)
+	require.Contains(t, n.messages[0], "手动补号成功")
+	require.NoError(t, s.notifyRefillImported(context.Background(), &state, &j, func() error { return nil }))
+	require.Len(t, n.messages, 1)
 }
