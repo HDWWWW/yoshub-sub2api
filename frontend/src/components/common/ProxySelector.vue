@@ -237,7 +237,9 @@ const selectedProxy = computed(() => {
 const selectedLabel = computed(() => {
   if (props.proxyMode && props.proxyMode !== 'specified' && props.proxyMode !== 'direct') return t(`ovhIPv6.mode.${props.proxyMode}`)
   if (!selectedProxy.value) {
-    return t('admin.accounts.noProxy')
+    return props.modelValue == null
+      ? t('admin.accounts.noProxy')
+      : t('ovhIPv6.currentProxyUnavailable', { id: props.modelValue })
   }
   const proxy = selectedProxy.value
   return `${proxy.name} (${proxy.managed_ipv6 || `${proxy.protocol}://${proxy.host}:${proxy.port}`})`

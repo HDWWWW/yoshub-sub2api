@@ -53,7 +53,16 @@ func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx co
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
-	return s.accountRepo.GetByID(ctx, id)
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if account != nil && account.Proxy != nil {
+		if err := s.attachManagedIPv6(ctx, account.Proxy); err != nil {
+			return nil, fmt.Errorf("load account proxy IPv6 binding: %w", err)
+		}
+	}
+	return account, nil
 }
 
 func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error) {

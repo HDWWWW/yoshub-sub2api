@@ -312,7 +312,7 @@ function buildOpenAIOAuthParentAccount() {
   } as any
 }
 
-function mountModal(account = buildAccount(), renderGroupSelector = false) {
+function mountModal(account = buildAccount(), renderGroupSelector = false, renderProxySelector = false) {
   return mount(EditAccountModal, {
     props: {
       show: true,
@@ -325,7 +325,7 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
         BaseDialog: BaseDialogStub,
         Select: SelectStub,
         Icon: true,
-        ProxySelector: true,
+        ProxySelector: !renderProxySelector,
         GroupSelector: renderGroupSelector ? false : GroupSelectorStub,
         ModelWhitelistSelector: ModelWhitelistSelectorStub
       }
@@ -2094,6 +2094,62 @@ describe('EditAccountModal temp-unschedulable rule scope', () => {
 
 describe('account proxy ownership and privacy preference', () => {
   beforeEach(() => { authIsSimpleMode.value = true; updateAccountMock.mockReset().mockResolvedValue(buildOpenAIOAuthParentAccount()); checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false }) })
+
+  const assignedProxy = {
+    id: 91, name: 'newly allocated proxy', protocol: 'socks5', host: 'egress.internal', port: 1080,
+    status: 'active', managed_ipv6: '2001:db8::91', managed_ipv6_state: 'bound', created_at: '', updated_at: ''
+  } as const
+
+  it('shows the newly assigned IPv6 with an empty cached proxy list and keeps it on save', async () => {
+    const account = { ...buildOpenAIOAuthParentAccount(), proxy_id: 91, proxy: assignedProxy }
+    const wrapper = mountModal(account, false, true)
+    expect(wrapper.get('.select-trigger').text()).toContain('2001:db8::91')
+    expect(wrapper.get('.select-trigger').text()).not.toContain('admin.accounts.noProxy')
+    expect(wrapper.get('[data-testid="account-managed-ipv6"]').exists()).toBe(true)
+    await wrapper.get('.select-trigger').trigger('click')
+    const selected = wrapper.get('.select-option-selected')
+    expect(selected.text()).toContain('2001:db8::91')
+    expect(selected.text()).toContain('ovhIPv6.source')
+    await selected.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    const payload = updateAccountMock.mock.calls[0]![1]
+    expect(payload).not.toHaveProperty('proxy_mode')
+    expect(payload).not.toHaveProperty('proxy_id')
+    wrapper.unmount()
+  })
+
+  it('prefers fresh binding details, deduplicates the current proxy, and hides other bound addresses', async () => {
+    const wrapper = mountModal({ ...buildOpenAIOAuthParentAccount(), proxy_id: 91, proxy: assignedProxy }, false, true)
+    await wrapper.setProps({ proxies: [
+      { ...assignedProxy, name: 'stale proxy', managed_ipv6: '2001:db8::old' },
+      { ...assignedProxy, id: 92, name: 'another bound proxy', managed_ipv6: '2001:db8::92' }
+    ] })
+    expect(wrapper.get('.select-trigger').text()).toContain('2001:db8::91')
+    await wrapper.get('.select-trigger').trigger('click')
+    expect(wrapper.findAll('.test-btn')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('stale proxy')
+    expect(wrapper.text()).not.toContain('another bound proxy')
+    await wrapper.get('[data-proxy-mode="ovh_ipv6"]').trigger('click')
+    expect(wrapper.find('[data-testid="account-managed-ipv6"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]![1]).toMatchObject({ proxy_mode: 'ovh_ipv6', proxy_id: null })
+    wrapper.unmount()
+  })
+
+  it('updates the displayed IPv6 when opening another account and ignores mismatched detail proxies', async () => {
+    const wrapper = mountModal({ ...buildOpenAIOAuthParentAccount(), proxy_id: 91, proxy: assignedProxy }, false, true)
+    await wrapper.setProps({ account: {
+      ...buildOpenAIOAuthParentAccount(), id: 8, proxy_id: 92,
+      proxy: { ...assignedProxy, id: 92, managed_ipv6: '2001:db8::92' }
+    } })
+    expect(wrapper.get('.select-trigger').text()).toContain('2001:db8::92')
+    expect(wrapper.text()).not.toContain('2001:db8::91')
+    await wrapper.setProps({ account: { ...buildOpenAIOAuthParentAccount(), proxy_id: null, proxy: assignedProxy } })
+    expect(wrapper.get('.select-trigger').text()).toContain('admin.accounts.noProxy')
+    expect(wrapper.getComponent(ProxySelector).props('proxies')).toEqual([])
+    expect(wrapper.find('[data-testid="account-managed-ipv6"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
 
   it('does not submit proxy changes or allocate when an existing account is saved unchanged', async () => {
     const account = { ...buildOpenAIOAuthParentAccount(), proxy_id: 91 }

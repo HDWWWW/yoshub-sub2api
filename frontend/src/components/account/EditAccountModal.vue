@@ -1887,8 +1887,9 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" v-model:proxy-mode="proxyMode" :proxies="proxies" allow-automatic allow-reserved />
+        <ProxySelector v-model="form.proxy_id" v-model:proxy-mode="proxyMode" :proxies="editProxies" allow-automatic allow-reserved />
         <p v-if="proxyMode === 'ovh_ipv6'" class="input-hint">{{ t('ovhIPv6.allocateOnSave') }}</p>
+        <p v-else-if="currentManagedIPv6" data-testid="account-managed-ipv6" class="input-hint break-all">{{ t('ovhIPv6.currentBinding', { address: currentManagedIPv6 }) }}</p>
       </div>
 
       <OpenAIPrivacyControl v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" v-model="privacyEnabled" />
@@ -3501,6 +3502,22 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const appStore = useAppStore()
 const browserTimeZone = getBrowserTimeZone()
+
+// Imports and automatic refills can create proxies after the page loaded its list.
+// Account details carry the current binding; displaying it must not request reallocation.
+const editProxies = computed(() => {
+  const proxies = new Map(props.proxies.map(proxy => [proxy.id, proxy]))
+  const current = props.account?.proxy
+  if (current && current.id === props.account?.proxy_id) {
+    proxies.set(current.id, { ...proxies.get(current.id), ...current })
+  }
+  return Array.from(proxies.values())
+})
+
+const currentManagedIPv6 = computed(() => {
+  if (proxyMode.value || form.proxy_id == null || form.proxy_id !== props.account?.proxy_id) return ''
+  return editProxies.value.find(proxy => proxy.id === form.proxy_id)?.managed_ipv6 ?? ''
+})
 
 const selectableGroups = computed(() => {
   const groups = new Map<number, Group>(props.groups.map(group => [group.id, group]))

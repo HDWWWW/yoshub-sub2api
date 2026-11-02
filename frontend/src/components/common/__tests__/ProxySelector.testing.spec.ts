@@ -62,6 +62,16 @@ describe('managed IPv6 proxy selection', () => {
     { id: 3, name: 'another-ipv6', host: 'egress.internal', port: 1080, protocol: 'socks5', managed_ipv6: '2001:db8::3' }
   ] as Proxy[]
 
+  it('does not describe an assigned proxy missing from the list as direct routing', async () => {
+    const wrapper = mount(ProxySelector, { props: { modelValue: 99, proxies }, global: { stubs: { Icon: true } } })
+    expect(wrapper.get('.select-trigger').text()).toBe('ovhIPv6.currentProxyUnavailable')
+    await wrapper.get('.select-trigger').trigger('click')
+    expect(wrapper.find('.select-option-selected').exists()).toBe(false)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    await wrapper.setProps({ modelValue: null })
+    expect(wrapper.get('.select-trigger').text()).toBe('admin.accounts.noProxy')
+  })
+
   it('keeps the current IPv6 visible and hides other accounts IPv6 addresses', async () => {
     const wrapper = mount(ProxySelector, { props: { modelValue: 2, proxies }, global: { stubs: { Icon: true } } })
     expect(wrapper.get('.select-trigger').text()).toContain('2001:db8::2')

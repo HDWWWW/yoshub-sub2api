@@ -15,6 +15,8 @@ export default {
   prefix: '地址段',
   bound: '已绑定 {count} 个',
   source: 'OVH IPv6',
+  currentBinding: '已分配 OVH IPv6：{address}。不更改代理选项，保存后仍使用这个 IP。',
+  currentProxyUnavailable: '当前代理 #{id}（详情未加载）',
   exclusive: '账号独占',
   managedHint: '此 IPv6 随账号自动管理，删除账号或更换代理后永久停用。',
   fixedBindingLimit: '绑定上限：1（固定）',

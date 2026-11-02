@@ -15,6 +15,8 @@ export default {
   prefix: 'Prefix',
   bound: '{count} assigned',
   source: 'OVH IPv6',
+  currentBinding: 'Assigned OVH IPv6: {address}. Saving without changing the proxy keeps this IP.',
+  currentProxyUnavailable: 'Current proxy #{id} (details unavailable)',
   exclusive: 'Dedicated to one account',
   managedHint: 'This IPv6 is managed with its account and permanently retired when the account is deleted or its proxy is changed.',
   fixedBindingLimit: 'Account limit: 1 (fixed)',
