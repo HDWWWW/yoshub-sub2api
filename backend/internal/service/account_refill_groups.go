@@ -265,14 +265,20 @@ func (s *AccountRefillService) unsubmittedPoints(ctx context.Context, state *acc
 // Delivery groups can overlap. An order from another rule that will arrive in
 // this pool also covers its shortage, even though its budget belongs elsewhere.
 func (s *AccountRefillService) evaluationJobs(ctx context.Context, state *accountRefillState) ([]AccountRefillJob, error) {
+	jobs, _, err := s.evaluationInputs(ctx, state)
+	return jobs, err
+}
+
+func (s *AccountRefillService) evaluationInputs(ctx context.Context, state *accountRefillState) ([]AccountRefillJob, []accountRefillExpiryDemand, error) {
 	jobs := slices.Clone(state.Jobs)
+	var claims []accountRefillExpiryDemand
 	store, ok := s.rootService().store.(AccountRefillGroupStore)
 	if !ok {
-		return jobs, nil
+		return jobs, claims, nil
 	}
 	rows, err := store.ListRules(ctx)
 	if err != nil {
-		return nil, errors.New("无法核对分组在途任务，暂停新增补号")
+		return nil, nil, errors.New("无法核对分组在途任务，暂停新增补号")
 	}
 	for key, raw := range rows {
 		if key == s.ruleGroupID {
@@ -280,13 +286,18 @@ func (s *AccountRefillService) evaluationJobs(ctx context.Context, state *accoun
 		}
 		other, err := decodeAccountRefillState(raw)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, job := range other.Jobs {
-			if job.pending() && slices.Contains(job.DeliveryGroupIDs, state.Config.GroupID) {
+			if (job.pending() || job.Status == "imported" || job.ReplacementPending) && slices.Contains(job.DeliveryGroupIDs, state.Config.GroupID) {
 				jobs = append(jobs, job)
 			}
 		}
+		for _, demand := range other.ExpiryDemands {
+			if demand.JobID != "" && slices.Contains(demand.DeliveryGroupIDs, state.Config.GroupID) {
+				claims = append(claims, demand)
+			}
+		}
 	}
-	return jobs, nil
+	return jobs, claims, nil
 }

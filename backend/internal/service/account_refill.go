@@ -185,6 +185,8 @@ func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {
 }
 
 type AccountRefillJob struct {
+	RotationGeneration     int64                       `json:"rotation_generation,omitempty"`
+	ExpiryTarget           *AccountRefillExpiryTarget  `json:"expiry_target,omitempty"`
 	Mode                   string                      `json:"mode,omitempty"`
 	ReplacementPending     bool                        `json:"replacement_pending,omitempty"`
 	ReplacesJobID          string                      `json:"replaces_job_id,omitempty"`
@@ -245,24 +247,28 @@ type AccountRefillAccount struct {
 }
 
 type AccountRefillEvaluation struct {
-	Error            string                 `json:"error,omitempty"`
-	CheckedAt        time.Time              `json:"checked_at"`
-	Ready            int                    `json:"ready"`
-	Healthy          int                    `json:"healthy"`
-	Expiring         int                    `json:"expiring"`
-	Pending          int                    `json:"pending"`
-	InUse            int                    `json:"in_use"`
-	Capacity         int                    `json:"capacity"`
-	PendingCapacity  int                    `json:"pending_capacity"`
-	ForecastAccounts int                    `json:"forecast_accounts"`
-	ForecastCapacity int                    `json:"forecast_capacity"`
-	ForecastReady    int                    `json:"forecast_ready"`
-	Needed           int                    `json:"needed"`
-	Reason           string                 `json:"reason"`
-	Accounts         []AccountRefillAccount `json:"accounts"`
+	ExpiryTargets    []AccountRefillExpiryTarget `json:"expiry_targets,omitempty"`
+	Error            string                      `json:"error,omitempty"`
+	CheckedAt        time.Time                   `json:"checked_at"`
+	Ready            int                         `json:"ready"`
+	Healthy          int                         `json:"healthy"`
+	Expiring         int                         `json:"expiring"`
+	Pending          int                         `json:"pending"`
+	InUse            int                         `json:"in_use"`
+	Capacity         int                         `json:"capacity"`
+	PendingCapacity  int                         `json:"pending_capacity"`
+	ForecastAccounts int                         `json:"forecast_accounts"`
+	ForecastCapacity int                         `json:"forecast_capacity"`
+	ForecastReady    int                         `json:"forecast_ready"`
+	Needed           int                         `json:"needed"`
+	Reason           string                      `json:"reason"`
+	Accounts         []AccountRefillAccount      `json:"accounts"`
 }
 
 type accountRefillState struct {
+	RotationGeneration   int64                              `json:"rotation_generation,omitempty"`
+	ExpiryDemands        []accountRefillExpiryDemand        `json:"expiry_demands,omitempty"`
+	ExpiryCheckedAt      time.Time                          `json:"expiry_checked_at,omitempty"`
 	RotationCursor       int                                `json:"rotation_cursor"`
 	EncryptedWebhook     string                             `json:"encrypted_webhook,omitempty"`
 	NotificationStatus   AccountRefillNotificationStatus    `json:"notification_status"`
@@ -478,6 +484,12 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 	} else {
 		e.Reason = "储备充足"
 	}
+	limitAccountRefillEvaluation(c, &e, jobs)
+	return e
+}
+
+// Apply the same hard limits after adding durable expiry replacement demand.
+func limitAccountRefillEvaluation(c AccountRefillConfig, e *AccountRefillEvaluation, jobs []AccountRefillJob) {
 	for _, j := range jobs {
 		if refillNeedsAttention(j.Status) {
 			e.Needed = 0
@@ -503,7 +515,6 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		e.Needed = 0
 		e.Reason = "等待下一轮定时补号"
 	}
-	return e
 }
 
 // Named helpers avoid package-level min/max helpers in legacy unit tests.

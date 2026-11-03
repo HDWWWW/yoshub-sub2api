@@ -57,6 +57,8 @@ export interface RefillConfig {
   delivery: RefillDeliveryConfig
 }
 export interface RefillJob {
+  rotation_generation?: number
+  expiry_target?: { account_id: number; source_expires_at: number }
   manual_request_id?: string
   id: string
   supplier_id?: string
@@ -109,6 +111,7 @@ export interface RefillView {
   identity_at: string | null
   jobs: RefillJob[]
   evaluation: {
+    expiry_targets?: { account_id: number; source_expires_at: number }[]
     error?: string
     checked_at: string; ready: number; healthy: number; expiring: number; pending: number
     in_use: number; capacity: number; needed: number; reason: string

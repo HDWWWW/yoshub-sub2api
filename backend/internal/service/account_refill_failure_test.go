@@ -208,7 +208,7 @@ func TestRefillFailureReplacementUsesExistingGuards(t *testing.T) {
 	}
 }
 
-func TestRefillFailureReplacementCancelsWhenDemandRecovers(t *testing.T) {
+func TestRefillFailureReplacementPausesWithoutLosingPlanWhenDemandRecovers(t *testing.T) {
 	for _, slowCatalog := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before-check", true: "during-provider-call"}[slowCatalog], func(t *testing.T) {
 			s, store, p, accounts := failureRefillHarness(t)
@@ -226,11 +226,13 @@ func TestRefillFailureReplacementCancelsWhenDemandRecovers(t *testing.T) {
 			require.Len(t, p.orders, 1)
 			v, err := s.View(ctx)
 			require.NoError(t, err)
-			require.False(t, v.Jobs[0].ReplacementPending)
+			require.True(t, v.Jobs[0].ReplacementPending)
+			require.Equal(t, "pro20x", v.NextPlan)
 			p.afterCatalog, accounts.accounts = nil, nil
 			refillDue(t, store)
 			require.NoError(t, s.run(ctx, false))
-			require.Equal(t, "pro5x", p.orders[1].Plan, "a later shortage is a new rotation slot")
+			require.Equal(t, "pro20x", p.orders[1].Plan, "a later shortage must finish the unsuccessful slot")
+			require.Equal(t, p.orders[0].ID, p.orders[1].ReplacesJobID)
 		})
 	}
 }

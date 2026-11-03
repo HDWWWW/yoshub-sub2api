@@ -16,6 +16,10 @@ func markRefillFailureReplacement(state *accountRefillState, job *AccountRefillJ
 	if job.ManualRequestID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
 		return
 	}
+	if job.RotationGeneration != state.RotationGeneration {
+		job.Error += "；轮转规则已重设，取消原轮次重补"
+		return
+	}
 	if job.Mode == "" { // Orders accepted before this field existed.
 		job.Mode = state.Config.Mode
 		if job.Reason == "定时补号" {
@@ -42,7 +46,8 @@ func nextRefillFailureReplacement(state *accountRefillState) int {
 		if !j.ReplacementPending || j.ReplacementJobID != "" || j.Status != "failed" ||
 			j.SupplierStatus != "failed" || j.SupplierID == "" || !j.BudgetReleased ||
 			j.ManualRequestID != "" || j.Reason == "手动补号" || j.AccountID != 0 ||
-			j.GroupID != state.Config.GroupID || j.Mode != state.Config.Mode {
+			j.GroupID != state.Config.GroupID || j.Mode != state.Config.Mode ||
+			j.RotationGeneration != state.RotationGeneration {
 			continue
 		}
 		if selected < 0 || j.CreatedAt.Before(state.Jobs[selected].CreatedAt) {
@@ -59,18 +64,14 @@ func nextRefillPurchasePlan(state *accountRefillState) string {
 	return refillNextPlan(state.Config, state.RotationCursor)
 }
 
-// Once the pool has recovered, stale failures must not commandeer the plan of
-// an unrelated future refill. Pending deliveries and other blocking conditions
-// are not proof that demand has resolved.
+// A load dip pauses purchasing, but cannot complete an unsuccessful rotation
+// slot. Only an explicit rule reset cancels the original-plan replacement.
 func reconcileRefillFailureReplacements(state *accountRefillState) {
-	e := state.Evaluation
-	resolved := state.Config.Mode != "interval" && e.Error == "" && e.Needed == 0 && e.Pending == 0 &&
-		(e.Reason == "储备充足" || e.Reason == "已达健康账号上限")
 	for i := range state.Jobs {
 		j := &state.Jobs[i]
-		if j.ReplacementPending && (resolved || j.GroupID != state.Config.GroupID || j.Mode != state.Config.Mode) {
+		if j.ReplacementPending && (j.GroupID != state.Config.GroupID || j.Mode != state.Config.Mode || j.RotationGeneration != state.RotationGeneration) {
 			j.ReplacementPending = false
-			j.Error = "号商确认补号失败，预算预占已释放；当前需求已消失或规则已切换，取消原套餐重补"
+			j.Error = "号商确认补号失败，预算预占已释放；规则已切换或轮转已重设，取消原套餐重补"
 		}
 	}
 }

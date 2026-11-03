@@ -16,6 +16,7 @@ import (
 
 type accountRefillAccounts interface {
 	ListByGroup(context.Context, int64) ([]Account, error)
+	GetByIDs(context.Context, []int64) ([]*Account, error)
 	FindByExtraField(context.Context, string, any) ([]Account, error)
 	BindGroups(context.Context, int64, []int64) error
 	SetSchedulable(context.Context, int64, bool) error
@@ -328,6 +329,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		}
 		if c.RotationEnabled != state.Config.RotationEnabled || !slices.Equal(c.Rotation, state.Config.Rotation) {
 			state.RotationCursor = 0
+			state.RotationGeneration++
 		}
 		// An older client omitting this optional switch must not re-enable a
 		// forecast that an administrator explicitly disabled.
@@ -344,6 +346,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			c.Delivery.SameAccountRetryCount = &count
 		}
 		state.Config = c
+		reconcileRefillFailureReplacements(&state)
 		state.Revision++
 		state.NextCheckAt = time.Time{}
 		state.ProviderRetryAt = time.Time{}
@@ -366,6 +369,31 @@ func (s *AccountRefillService) evaluate(ctx context.Context, state *accountRefil
 	if err != nil {
 		return errors.New("账号快照读取失败，暂停新增补号")
 	}
+	// ListByGroup contains only active accounts. Recheck tracked leases by ID
+	// so a temporary error cannot erase a replacement or its completion receipt.
+	// Deleted accounts, group removals and renewed leases are reconciled below.
+	seen := make(map[int64]bool, len(accounts))
+	for _, a := range accounts {
+		seen[a.ID] = true
+	}
+	var missing []int64
+	for _, demand := range state.ExpiryDemands {
+		if !seen[demand.AccountID] {
+			missing = append(missing, demand.AccountID)
+			seen[demand.AccountID] = true
+		}
+	}
+	if len(missing) > 0 {
+		tracked, err := s.accounts.GetByIDs(ctx, missing)
+		if err != nil {
+			return errors.New("临期账号快照读取失败，暂停新增补号")
+		}
+		for _, a := range tracked {
+			if a != nil {
+				accounts = append(accounts, *a)
+			}
+		}
+	}
 	loadInput := make([]AccountWithConcurrency, 0, len(accounts))
 	for _, a := range accounts {
 		if a.IsOpenAIOAuth() && !a.IsShadow() {
@@ -376,11 +404,13 @@ func (s *AccountRefillService) evaluate(ctx context.Context, state *accountRefil
 	if err != nil {
 		return errors.New("并发数据读取失败，暂停新增补号")
 	}
-	jobs, err := s.evaluationJobs(ctx, state)
+	jobs, claims, err := s.evaluationInputs(ctx, state)
 	if err != nil {
 		return err
 	}
 	state.Evaluation = evaluateAccountRefill(state.Config, accounts, loads, jobs, now, refillPlannedPurchasePlans(state)...)
+	evaluateRefillExpiryDemands(state, jobs, claims, now)
+	limitAccountRefillEvaluation(state.Config, &state.Evaluation, jobs)
 	return nil
 }
 
@@ -601,6 +631,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return persist()
 		}
 		job := AccountRefillJob{ID: uuid.NewString(), Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+			RotationGeneration: state.RotationGeneration,
 			Mode:               state.Config.Mode,
 			ReasonDetail:       accountRefillReasonDetail(state.Config, state.Evaluation),
 			ExpiryGraceMinutes: &graceMinutes,
@@ -609,6 +640,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		if replacement >= 0 {
 			linkRefillFailureReplacement(&state, replacement, &job)
 		}
+		claimRefillExpiryDemand(&state, &job, replacement)
 		state.Jobs = append([]AccountRefillJob{job}, state.Jobs...)
 		state.Jobs = trimAccountRefillJobs(state.Jobs, now)
 		usage.Count++
@@ -694,6 +726,7 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 			j.Status = "imported"
 			j.Error = ""
 			j.FinishedAt = &now
+			completeRefillExpiryDemand(state, *j)
 			state.Message = "新账号已导入并绑定分组"
 			if err := s.notifyRefillImported(ctx, state, j, persist); err != nil {
 				return err

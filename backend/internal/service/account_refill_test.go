@@ -181,6 +181,18 @@ func (a *refillTestAccounts) ListByGroup(context.Context, int64) ([]Account, err
 	}
 	return out, nil
 }
+func (a *refillTestAccounts) GetByIDs(_ context.Context, ids []int64) ([]*Account, error) {
+	var out []*Account
+	for i := range a.accounts {
+		for _, id := range ids {
+			if a.accounts[i].ID == id {
+				out = append(out, &a.accounts[i])
+				break
+			}
+		}
+	}
+	return out, nil
+}
 func (a *refillTestAccounts) FindByExtraField(_ context.Context, k string, v any) ([]Account, error) {
 	var out []Account
 	for _, x := range a.accounts {
@@ -331,8 +343,9 @@ func TestAccountRefillDurableReservationRetryAndRestart(t *testing.T) {
 	require.NoError(t, s.run(ctx, false))
 	require.Len(t, p.submitted, 1)
 	first := p.submitted[0]
-	require.Equal(t, "账号临期，提前补充储备", first.Reason)
-	require.Contains(t, first.ReasonDetail, "1 个将在 30 分钟内到期")
+	require.Equal(t, refillExpiryReason, first.Reason)
+	require.Contains(t, first.ReasonDetail, "提前 30 分钟")
+	require.Contains(t, first.ReasonDetail, "接替账号 #1")
 	accounts.accounts = nil
 	store.mutate(t, func(v *accountRefillState) { v.Config.MinReady = 4 })
 	v, err := s.View(ctx)
