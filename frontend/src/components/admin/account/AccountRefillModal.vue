@@ -186,7 +186,7 @@
                 <tr v-for="job in pagedJobs" :key="job.id" class="border-b border-gray-100 align-top dark:border-dark-800">
                   <td class="p-2">
                     <span class="font-medium">{{ job.plan }}</span>
-                    <div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || job.id }}</div>
+                    <div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || t('accountRefill.supplierIDPending') }}</div>
                     <div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div>
                   </td>
                   <td class="min-w-56 max-w-80 break-words p-2" data-testid="refill-job-reason">
@@ -315,14 +315,14 @@ function downloadReason(job: RefillJob) {
   return ''
 }
 async function download(job: RefillJob) {
-  if (downloadReason(job) || downloading.value.has(job.id)) return
+  if (!job.supplier_id || downloadReason(job) || downloading.value.has(job.id)) return
   const groupID = selectedGroup.value
   const current = generation
   downloading.value.add(job.id)
   try {
     const data = await downloadStepUp.run(() => accountRefillAPI.download(job.id, groupID))
     if (current !== generation) return
-    saveAs(new Blob([data], { type: 'application/json;charset=utf-8' }), `sub2api-refill-${job.id.replace(/[^a-zA-Z0-9._-]/g, '_')}.json`)
+    saveAs(new Blob([data], { type: 'application/json;charset=utf-8' }), `sub2api-refill-${job.supplier_id.replace(/[^a-zA-Z0-9._-]/g, '_')}.json`)
     app.showSuccess(t('accountRefill.downloaded'))
   } catch (e) {
     if (current !== generation || isStepUpCancelled(e)) return

@@ -78,8 +78,8 @@ func reconcileRefillFailureReplacements(state *accountRefillState) {
 func linkRefillFailureReplacement(state *accountRefillState, index int, job *AccountRefillJob) {
 	failed := &state.Jobs[index]
 	job.ReplacesJobID = failed.ID
-	job.ReasonDetail = fmt.Sprintf("号商已确认原任务 %s 失败，沿用 %s 套餐自动重补，不推进套餐轮转。本次需求：%s", failed.ID, failed.Plan, job.ReasonDetail)
+	job.ReasonDetail = fmt.Sprintf("号商已确认原任务 %s 失败，沿用 %s 套餐自动重补，不推进套餐轮转。本次需求：%s", refillSupplierTaskID(*failed), failed.Plan, job.ReasonDetail)
 	failed.ReplacementPending = false
 	failed.ReplacementJobID = job.ID
-	failed.Error = "号商确认补号失败，预算预占已释放；已创建同套餐替补任务 " + job.ID
+	failed.Error = refillReplacementCreatedMessage + " " + refillSupplierTaskID(*job)
 }

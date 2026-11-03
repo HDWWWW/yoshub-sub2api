@@ -172,7 +172,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		return nil, err
 	}
 	return &AccountRefillView{WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
-		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: state.Jobs, Evaluation: state.Evaluation,
+		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state),
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),

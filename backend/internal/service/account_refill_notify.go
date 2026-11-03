@@ -206,7 +206,7 @@ func (s *AccountRefillService) notifyRefillStarted(ctx context.Context, state *a
 	if j.ManualRequestID != "" {
 		mode = "手动补号"
 	}
-	content := fmt.Sprintf("Sub2API 开始补号\n方式：%s\n套餐：%s\n积分：%g\n导入并发：%d\n投递分组 ID：%v\n任务：%s\n时间：%s", mode, j.Plan, j.Price, j.Concurrency, j.DeliveryGroupIDs, j.ID, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	content := fmt.Sprintf("Sub2API 开始补号\n方式：%s\n套餐：%s\n积分：%g\n导入并发：%d\n投递分组 ID：%v\n号商任务：%s\n时间：%s", mode, j.Plan, j.Price, j.Concurrency, j.DeliveryGroupIDs, refillSupplierTaskID(*j), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	s.sendRefillNotification(ctx, state, content)
 	return persist()
 }
@@ -258,7 +258,7 @@ func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *ac
 			next = "当前自动购买、监测或推送已暂停；恢复后重新检查缺口再决定是否重补原套餐。"
 		}
 	}
-	content := fmt.Sprintf("Sub2API 补号失败\n方式：%s\n套餐：%s\n结果：号商已确认失败，本地预算预占已释放\n积分：%g\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n后续：%s\n时间：%s", mode, j.Plan, j.Price, j.DeliveryGroupIDs, j.ID, j.SupplierID, next, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	content := fmt.Sprintf("Sub2API 补号失败\n方式：%s\n套餐：%s\n结果：号商已确认失败，本地预算预占已释放\n积分：%g\n投递分组 ID：%v\n号商任务：%s\n后续：%s\n时间：%s", mode, j.Plan, j.Price, j.DeliveryGroupIDs, refillSupplierTaskID(*j), next, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	s.sendRefillNotification(ctx, state, content)
 	return persist()
 }
@@ -283,8 +283,8 @@ func (s *AccountRefillService) notifyRefillImported(ctx context.Context, state *
 	if !automaticRefillJob(j) {
 		mode = "手动补号"
 	}
-	content := fmt.Sprintf("Sub2API %s成功\n结果：账号已导入并绑定分组\n套餐：%s\n积分：%g\n账号 ID：%d\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n耗时：%s\n时间：%s",
-		mode, j.Plan, j.Price, j.AccountID, j.DeliveryGroupIDs, j.ID, j.SupplierID, now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	content := fmt.Sprintf("Sub2API %s成功\n结果：账号已导入并绑定分组\n套餐：%s\n积分：%g\n账号 ID：%d\n投递分组 ID：%v\n号商任务：%s\n耗时：%s\n时间：%s",
+		mode, j.Plan, j.Price, j.AccountID, j.DeliveryGroupIDs, refillSupplierTaskID(*j), now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	s.sendRefillNotification(ctx, state, content)
 	return persist()
 }
@@ -305,8 +305,8 @@ func (s *AccountRefillService) notifyRefillDelayed(ctx context.Context, state *a
 		if err := persist(); err != nil {
 			return err
 		}
-		content := fmt.Sprintf("Sub2API 自动补号超时提醒\n结果：下单已满 5 分钟，账号仍未成功导入\n套餐：%s\n当前状态：%s\n投递分组 ID：%v\n任务：%s\n号商任务：%s\n已等待：%s\n请检查号商进度和交付导入状态；继续处理原任务，不因超时另下新单。每个任务只提醒一次。\n时间：%s",
-			j.Plan, j.Status, j.DeliveryGroupIDs, j.ID, j.SupplierID, now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+		content := fmt.Sprintf("Sub2API 自动补号超时提醒\n结果：下单已满 5 分钟，账号仍未成功导入\n套餐：%s\n当前状态：%s\n投递分组 ID：%v\n号商任务：%s\n已等待：%s\n请检查号商进度和交付导入状态；继续处理原任务，不因超时另下新单。每个任务只提醒一次。\n时间：%s",
+			j.Plan, j.Status, j.DeliveryGroupIDs, refillSupplierTaskID(*j), now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 		s.sendRefillNotification(ctx, state, content)
 		if err := persist(); err != nil {
 			return err

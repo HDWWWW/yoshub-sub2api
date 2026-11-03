@@ -25,7 +25,7 @@ function response(revision = 1) { return { config: structuredClone(config), revi
 async function open() { const wrapper = mount(AccountRefillModal, { props: { show: true }, global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' } } } }); await flushPromises(); return wrapper }
 function responseWithJobs(count: number) {
  return { ...response(), jobs: Array.from({ length: count }, (_, i) => ({
-  id: `order-${i + 1}`, plan: 'pro5x', price: 60, status: 'imported', reason: '账号临期，提前补充储备',
+  id: `order-${i + 1}`, supplier_id: `supplier-${i + 1}`, plan: 'pro5x', price: 60, status: 'imported', reason: '账号临期，提前补充储备',
   reason_detail: '未来健康储备 0 个 + 在途 0 个，低于最低储备 1 个。未计入储备：1 个将在 30 分钟内到期。',
   created_at: '2026-11-01T04:00:00Z', updated_at: '2026-11-01T04:01:00Z', finished_at: '2026-11-01T04:01:00Z',
   attempts: 1, next_attempt_at: '2026-11-01T04:00:00Z'
@@ -204,7 +204,7 @@ describe('AccountRefillModal', () => {
   const raw = '{ "type":"sub2api-data", "version":1, "future_number":1234567890123456789, "accounts":[] }'
   finish(raw); await flushPromises()
   expect(saveAs).toHaveBeenCalledTimes(1)
-  expect(saveAs.mock.calls[0]![1]).toBe('sub2api-refill-order-1.json')
+  expect(saveAs.mock.calls[0]![1]).toBe('sub2api-refill-supplier-1.json')
   const blob = saveAs.mock.calls[0]![0] as Blob
   const text = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsText(blob) })
   expect(text).toBe(raw)
@@ -354,6 +354,24 @@ describe('AccountRefillModal', () => {
   expect(w.get('[data-testid="refill-current-observation"]').text()).toContain('accountRefill.observation_ready')
   w.unmount()
  })
+ it('shows only supplier IDs and keeps internal IDs for retry actions', async () => {
+  const data = responseWithJobs(2)
+  data.jobs[1]!.supplier_id = ''
+  data.jobs[1]!.status = 'blocked'
+  get.mockResolvedValue(data)
+  retry.mockResolvedValue(data)
+  const w = await openProgress()
+  const rows = w.findAll('[data-testid="refill-jobs"] tbody tr')
+  expect(rows[0]!.text()).toContain('supplier-1')
+  expect(rows[1]!.text()).toContain('accountRefill.supplierIDPending')
+  expect(w.text()).not.toContain('order-1')
+  expect(w.text()).not.toContain('order-2')
+  await rows[1]!.findAll('button').find(button => button.text() === 'accountRefill.retry')!.trigger('click')
+  await flushPromises()
+  expect(retry).toHaveBeenCalledWith('order-2', 2)
+  expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it('shows saved trigger notes and handles historical records without inventing a reason', async () => {
   const data = responseWithJobs(3)
   data.jobs[1]!.reason = '并发利用率超过目标'; data.jobs[1]!.reason_detail = ''
@@ -374,21 +392,21 @@ describe('AccountRefillModal', () => {
   await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
   const rows = () => w.findAll('[data-testid="refill-jobs"] tbody tr')
   expect(rows()).toHaveLength(10)
-  expect(rows()[0]!.text()).toContain('order-1')
+  expect(rows()[0]!.text()).toContain('supplier-1')
   expect(w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.previous"]').attributes('disabled')).toBeDefined()
   await w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').trigger('click')
   expect(rows()).toHaveLength(10)
-  expect(rows()[0]!.text()).toContain('order-11')
+  expect(rows()[0]!.text()).toContain('supplier-11')
   await vi.advanceTimersByTimeAsync(15000); await flushPromises()
-  expect(rows()[0]!.text()).toContain('order-11')
+  expect(rows()[0]!.text()).toContain('supplier-11')
   await w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').trigger('click')
   expect(rows()).toHaveLength(3)
-  expect(rows()[0]!.text()).toContain('order-21')
+  expect(rows()[0]!.text()).toContain('supplier-21')
   expect(w.get('[data-testid="refill-jobs-pagination"] [aria-label="pagination.next"]').attributes('disabled')).toBeDefined()
   get.mockResolvedValue(responseWithJobs(12))
   await vi.advanceTimersByTimeAsync(15000); await flushPromises()
   expect(rows()).toHaveLength(2)
-  expect(rows()[0]!.text()).toContain('order-11')
+  expect(rows()[0]!.text()).toContain('supplier-11')
   get.mockResolvedValue(responseWithJobs(0))
   await vi.advanceTimersByTimeAsync(15000); await flushPromises()
   expect(rows()).toHaveLength(0)
