@@ -10,8 +10,6 @@ import (
 // and retries must not rewrite why this particular order was reserved.
 func accountRefillReasonDetail(c AccountRefillConfig, e AccountRefillEvaluation) string {
 	switch e.Reason {
-	case refillExpiryReason:
-		return fmt.Sprintf("%d 个账号已进入提前 %d 分钟的号商回收窗口，保留未完成的接替需求；不受瞬时并发回落影响，本次补入 1 个。", len(e.ExpiryTargets), c.LeadMinutes)
 	case "定时补号":
 		return fmt.Sprintf("定时周期已到：每 %d 分钟补 %d 个，本次提交 1 个。", c.IntervalMinutes, c.IntervalQuantity)
 	case "并发利用率超过目标":

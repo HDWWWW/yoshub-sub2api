@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-const refillExpiryReason = "账号临期，补充接替账号"
-
 // The supplier deadline distinguishes a renewed lease from an already covered
 // one. Receipts survive job-history pruning and do not depend on live load.
 type AccountRefillExpiryTarget struct {
@@ -128,10 +126,9 @@ func evaluateRefillExpiryDemands(state *accountRefillState, jobs []AccountRefill
 			e.ExpiryTargets = append(e.ExpiryTargets, demand.AccountRefillExpiryTarget)
 		}
 	}
-	if len(e.ExpiryTargets) > 0 {
-		e.Needed = max(e.Needed, len(e.ExpiryTargets))
-		e.Reason = refillExpiryReason
-	}
+	// Receipts describe which lease an otherwise authorized purchase can cover.
+	// They must not add demand or replace the reserve/concurrency reason: doing
+	// so bypasses both the actual capacity gap and its observation window.
 }
 
 func claimRefillExpiryDemand(state *accountRefillState, job *AccountRefillJob, replacement int) {

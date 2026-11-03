@@ -552,7 +552,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.DemandSince = nil
 			return persist()
 		}
-		// Minimum/expiry gaps act immediately. Capacity-only bursts must persist.
+		// Minimum-reserve gaps act immediately. Capacity-only bursts must persist.
 		if state.Evaluation.Reason == "并发利用率超过目标" {
 			observation := s.capacityObservation(state.Config, state.Revision, time.Now())
 			if !observation.Ready {

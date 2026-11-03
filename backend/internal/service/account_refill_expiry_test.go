@@ -41,20 +41,22 @@ func finishExpiryRefill(t *testing.T, s *AccountRefillService, store *refillTest
 	}
 }
 
-func TestRefillExpiryFailureRetainsFiveXWithNoConcurrency(t *testing.T) {
+func TestRefillExpiryFailureRetainsFiveXForReserveShortage(t *testing.T) {
 	s, store, p, accounts := expiryRefillHarness(t)
+	store.mutate(t, func(state *accountRefillState) { state.Config.MinReady = 2 })
 	ctx := context.Background()
 	require.NoError(t, s.run(ctx, false))
-	require.Len(t, p.orders, 1, "supplier expiry must trigger even with a healthy reserve and zero load")
+	require.Len(t, p.orders, 1, "a real minimum-reserve shortage can replenish without concurrency demand")
 	first := p.orders[0]
 	require.Equal(t, "pro5x", first.Plan)
-	require.Equal(t, refillExpiryReason, first.Reason)
+	require.Equal(t, "账号临期，提前补充储备", first.Reason)
+	require.Contains(t, first.ReasonDetail, "低于最低储备 2 个")
 	require.Equal(t, int64(1), first.ExpiryTarget.AccountID)
 	require.Contains(t, first.ReasonDetail, "接替账号 #1")
 	p.states[first.ID] = "failed"
 	store.mutate(t, func(state *accountRefillState) { state.Jobs[0].NextAttemptAt = time.Time{} })
 	require.NoError(t, s.run(ctx, false))
-	require.Len(t, p.orders, 2, "confirmed expiry failure immediately replaces the same lease despite cooldown and zero load")
+	require.Len(t, p.orders, 2, "confirmed failure retries the same lease while the reserve shortage remains")
 	replacement := p.orders[1]
 	require.Equal(t, "pro5x", replacement.Plan)
 	require.Equal(t, first.ID, replacement.ReplacesJobID)
@@ -82,7 +84,7 @@ func TestRefillExpiryFailureRetainsFiveXWithNoConcurrency(t *testing.T) {
 	require.Equal(t, int64(2), p.orders[2].ExpiryTarget.AccountID)
 }
 
-func TestRefillExpiryRemainsIndependentOfForecastAndQuotaState(t *testing.T) {
+func TestRefillExpiryDoesNotAddDemandWhenReserveIsSufficient(t *testing.T) {
 	for _, mode := range []string{"capacity", "fixed"} {
 		t.Run(mode, func(t *testing.T) {
 			s, store, p, accounts := expiryRefillHarness(t)
@@ -94,8 +96,11 @@ func TestRefillExpiryRemainsIndependentOfForecastAndQuotaState(t *testing.T) {
 			accounts.accounts[0].Extra["codex_5h_used_percent"] = 99.0
 			accounts.accounts[0].Extra["codex_5h_reset_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
 			require.NoError(t, s.run(context.Background(), false))
-			require.Len(t, p.orders, 1, "low quota classification must not hide the supplier deadline")
-			require.Equal(t, refillExpiryReason, p.orders[0].Reason)
+			require.Empty(t, p.orders, "a low-quota expiring account does not require replacement when the reserve is sufficient")
+			state, err := decodeAccountRefillState(store.raw)
+			require.NoError(t, err)
+			require.Len(t, state.ExpiryDemands, 1, "retain the supplier deadline for a future authorized purchase")
+			require.Zero(t, state.Evaluation.Needed)
 		})
 	}
 }
@@ -105,6 +110,7 @@ func TestRefillExpiryHonorsPurchaseGuards(t *testing.T) {
 		t.Run(guard, func(t *testing.T) {
 			s, store, p, _ := expiryRefillHarness(t)
 			store.mutate(t, func(state *accountRefillState) {
+				state.Config.MinReady = 2
 				switch guard {
 				case "disabled":
 					state.Config.Enabled = false
@@ -119,7 +125,7 @@ func TestRefillExpiryHonorsPurchaseGuards(t *testing.T) {
 				case "cooldown":
 					state.LastSubmitAt = time.Now()
 				case "healthy_limit":
-					state.Config.MaxReady = 1
+					state.Config.MinReady, state.Config.MaxReady = 1, 1
 				case "budget":
 					state.Config.DailyMaxPoints = 59
 				case "wallet":
@@ -137,16 +143,23 @@ func TestRefillExpiryHonorsPurchaseGuards(t *testing.T) {
 func TestRefillExpiryKeepsUnfilledDemandAfterDeadlineAndRenewsIdentity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, store, p, accounts := expiryRefillHarness(t)
-		store.mutate(t, func(state *accountRefillState) { state.Config.DailyMaxPoints = 59 })
+		store.mutate(t, func(state *accountRefillState) {
+			state.Config.MinReady = 2
+			state.Config.DailyMaxPoints = 59
+		})
 		require.NoError(t, s.run(context.Background(), false))
 		require.Empty(t, p.orders)
 		time.Sleep(11 * time.Minute)
 		store.mutate(t, func(state *accountRefillState) { state.Config.DailyMaxPoints = 3000 })
 		require.NoError(t, s.run(context.Background(), false))
-		require.Len(t, p.orders, 1, "a deadline crossing cannot erase a persisted unfilled lease")
+		require.Len(t, p.orders, 1, "the reserve shortage remains after the deadline")
 		finishExpiryRefill(t, s, store, p, p.orders[0].ID)
 		// Renewed service on the same account is a different lease.
 		accounts.accounts[0].Extra[AccountSourceExpiryExtraKey] = time.Now().Add(10 * time.Minute).Unix()
+		refillDue(t, store)
+		require.NoError(t, s.run(context.Background(), false))
+		require.Len(t, p.orders, 1, "a renewed lease cannot buy while the reserve is sufficient")
+		store.mutate(t, func(state *accountRefillState) { state.Config.MinReady = 3 })
 		refillDue(t, store)
 		require.NoError(t, s.run(context.Background(), false))
 		require.Len(t, p.orders, 2)
@@ -164,7 +177,10 @@ func TestRefillExpiryDoesNotBackfillHistoricalExpiredAccounts(t *testing.T) {
 func TestRefillExpiryRetainsDemandAndCompletionAcrossAccountErrors(t *testing.T) {
 	s, store, p, accounts := expiryRefillHarness(t)
 	ctx := context.Background()
-	store.mutate(t, func(state *accountRefillState) { state.Config.Enabled = false })
+	store.mutate(t, func(state *accountRefillState) {
+		state.Config.MinReady = 2
+		state.Config.Enabled = false
+	})
 	require.NoError(t, s.run(ctx, false))
 	accounts.accounts[0].Status = StatusError
 	store.mutate(t, func(state *accountRefillState) { state.Config.Enabled = true })
@@ -213,6 +229,7 @@ func TestRefillExpiryExistingDeliveriesCoverOnlyOneLeaseEach(t *testing.T) {
 	second.ID = 3
 	accounts.accounts = append(accounts.accounts, second)
 	store.mutate(t, func(state *accountRefillState) {
+		state.Config.MinReady = 3
 		state.Config.MaxInFlight = 3
 		// Even a delivery placed before the lead window covers one upcoming exit.
 		state.Jobs = []AccountRefillJob{{ID: "legacy-delivery", GroupID: 2, Status: "queued", Plan: "pro20x", CreatedAt: time.Now().Add(-time.Hour), NextAttemptAt: time.Now().Add(time.Hour), DeliveryGroupIDs: []int64{2}}}
@@ -238,7 +255,10 @@ func TestRefillExpiryOverlappingGroupsShareFailureAndSuccess(t *testing.T) {
 	for i := range accounts.accounts {
 		accounts.accounts[i].GroupIDs = []int64{2, 3}
 	}
-	base.mutate(t, func(state *accountRefillState) { state.Config.DeliveryGroupIDs = []int64{2, 3} })
+	base.mutate(t, func(state *accountRefillState) {
+		state.Config.MinReady = 2
+		state.Config.DeliveryGroupIDs = []int64{2, 3}
+	})
 	grouped := &refillGroupedTestStore{refillTestStore: base, children: map[int64]*refillTestStore{}}
 	s.store = grouped
 	child, err := s.ForGroup(ctx, 3)
@@ -273,6 +293,7 @@ func TestRefillExpiryOverlappingGroupsShareFailureAndSuccess(t *testing.T) {
 func TestRefillExpiryLegacyFailureRetainsItsLeaseWhenEarlierExitAppears(t *testing.T) {
 	s, store, p, accounts := expiryRefillHarness(t)
 	store.mutate(t, func(state *accountRefillState) {
+		state.Config.MinReady = 2
 		state.RotationCursor = 1
 		state.Jobs = []AccountRefillJob{{ID: "legacy-five", SupplierID: "legacy-five", GroupID: 2, Mode: state.Config.Mode,
 			Status: "queued", Plan: "pro5x", CreatedAt: time.Now().Add(-time.Hour), NextAttemptAt: time.Now().Add(time.Hour), DeliveryGroupIDs: []int64{2}}}
@@ -293,6 +314,7 @@ func TestRefillExpiryLegacyFailureRetainsItsLeaseWhenEarlierExitAppears(t *testi
 
 func TestRefillExpiryReservationAndReceiptAreAtomic(t *testing.T) {
 	s, store, p, _ := expiryRefillHarness(t)
+	store.mutate(t, func(state *accountRefillState) { state.Config.MinReady = 2 })
 	store.failSave = true
 	require.Error(t, s.run(context.Background(), false))
 	require.Empty(t, p.orders)

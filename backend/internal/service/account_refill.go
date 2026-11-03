@@ -488,7 +488,7 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 	return e
 }
 
-// Apply the same hard limits after adding durable expiry replacement demand.
+// Apply hard limits without treating expiry receipts as additional demand.
 func limitAccountRefillEvaluation(c AccountRefillConfig, e *AccountRefillEvaluation, jobs []AccountRefillJob) {
 	for _, j := range jobs {
 		if refillNeedsAttention(j.Status) {

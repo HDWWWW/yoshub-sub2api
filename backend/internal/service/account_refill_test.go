@@ -343,8 +343,8 @@ func TestAccountRefillDurableReservationRetryAndRestart(t *testing.T) {
 	require.NoError(t, s.run(ctx, false))
 	require.Len(t, p.submitted, 1)
 	first := p.submitted[0]
-	require.Equal(t, refillExpiryReason, first.Reason)
-	require.Contains(t, first.ReasonDetail, "提前 30 分钟")
+	require.Equal(t, "账号临期，提前补充储备", first.Reason)
+	require.Contains(t, first.ReasonDetail, "低于最低储备 1 个")
 	require.Contains(t, first.ReasonDetail, "接替账号 #1")
 	accounts.accounts = nil
 	store.mutate(t, func(v *accountRefillState) { v.Config.MinReady = 4 })

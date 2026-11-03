@@ -1270,6 +1270,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		return nil
 	}
 	keys := []string{
+		// Candidate ranking runs before full account hydration. Preserve explicit
+		// overrides (including zero) so cached selection agrees with admin preview.
+		service.AccountManualPriorityExtraKey,
 		// Native deadlines and legacy retention must agree across both cache paths.
 		service.AccountNativeExpiryExtraKey,
 		service.AccountImportExpiryGraceExtraKey,
