@@ -45,6 +45,30 @@ async function openProgress() {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it.each([
+  ['off', 'admin.accounts.openai.codexFingerprintOff'],
+  ['device', 'admin.accounts.openai.codexFingerprintDevice'],
+  ['session', 'admin.accounts.openai.codexFingerprintSession'],
+  ['full', 'admin.accounts.openai.codexFingerprintFull']
+ ])('saves and reopens fingerprint mode %s with the account editor label', async (mode, label) => {
+  const initial = response()
+  initial.config.delivery.fingerprint_mode = mode === 'full' ? 'session' : 'full'
+  get.mockResolvedValue(initial)
+  let w = await open()
+  const select = w.get<HTMLSelectElement>('[data-testid="refill-fingerprint-mode"]')
+  expect(select.element.value).toBe(initial.config.delivery.fingerprint_mode)
+  expect(select.get(`option[value="${mode}"]`).text()).toBe(label)
+  await select.setValue(mode)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ fingerprint_mode: mode }) }), '', 1, '')
+  expect(select.element.value).toBe(mode)
+  get.mockResolvedValue({ ...response(2), config: save.mock.calls[0]![0] })
+  w.unmount()
+  w = await open()
+  expect(w.get<HTMLSelectElement>('[data-testid="refill-fingerprint-mode"]').element.value).toBe(mode)
+  expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it.each([0, 3, 10])('saves and reloads %s same-account retries', async count => {
   const w = await open()
   const input = w.get<HTMLInputElement>('[data-testid="refill-same-account-retries"]')

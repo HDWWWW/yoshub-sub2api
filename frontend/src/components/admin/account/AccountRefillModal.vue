@@ -88,7 +88,7 @@
             <label class="flex items-center gap-2 text-sm"><input v-model="form.push_enabled" type="checkbox" />{{ t('accountRefill.push_enabled') }}</label><p class="input-hint">{{ t('accountRefill.pushHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.ws_mode') }}</span><select v-model="form.delivery.ws_mode" class="input"><option v-for="mode in ['off', 'ctx_pool', 'http_bridge', 'passthrough']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
-              <label><span class="input-label">{{ t('accountRefill.fingerprint_mode') }}</span><select v-model="form.delivery.fingerprint_mode" class="input"><option v-for="mode in ['off', 'session', 'full']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
+              <label><span class="input-label">{{ t('accountRefill.fingerprint_mode') }}</span><select v-model="form.delivery.fingerprint_mode" class="input" data-testid="refill-fingerprint-mode"><option v-for="option in codexFingerprintModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
               <label><span class="input-label">{{ t('accountRefill.proxy_mode') }}</span><select v-model="form.delivery.proxy_mode" class="input" @change="form.delivery.proxy_id = null"><option v-for="mode in ['direct', 'specified', 'random', 'ovh_ipv6']" :key="mode" :value="mode">{{ t(mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${mode}`) }}</option></select></label>
               <div v-if="form.delivery.proxy_mode === 'specified'"><span class="input-label">{{ t('accountRefill.proxy_id') }}</span><ProxySelector :model-value="form.delivery.proxy_id" :proxies="manualProxies" :disabled="busy" @update:model-value="form.delivery.proxy_id = $event; if ($event === null) form.delivery.proxy_mode = 'direct'" /><p class="input-hint">{{ t('ovhIPv6.refillSpecifiedHint') }}</p></div>
               <label v-for="plan in ['pro5x', 'pro20x']" :key="plan"><span class="input-label">{{ plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }} · {{ t('accountRefill.import_concurrency') }}</span><input v-if="form.plan_import_concurrency" v-model.number="form.plan_import_concurrency[plan]" type="number" min="1" max="10000" step="1" class="input" :data-testid="`refill-concurrency-${plan}`" /></label>
@@ -239,6 +239,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getCodexFingerprintModeOptions } from '@/utils/codexFingerprintMode'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT } from '@/components/account/sameAccountRetry'
@@ -255,6 +256,7 @@ import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual'; proxies?: Proxy[] }>()
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
+const codexFingerprintModeOptions = computed(() => getCodexFingerprintModeOptions(t))
 const app = useAppStore()
 const tabs = ['connection', 'rules', 'delivery', 'manual', 'notifications', 'progress'] as const
 const activeTab = ref<typeof tabs[number]>('connection')

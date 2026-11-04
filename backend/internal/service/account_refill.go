@@ -145,7 +145,8 @@ func (c AccountRefillConfig) Validate() error {
 	if d.SameAccountRetryCount != nil && (*d.SameAccountRetryCount < 0 || *d.SameAccountRetryCount > maxPoolModeRetryCount) {
 		return errors.New("同账号重试次数须为 0–10")
 	}
-	if !slices.Contains([]string{"off", "ctx_pool", "http_bridge", "passthrough"}, d.WSMode) || !slices.Contains([]string{"off", "session", "full"}, d.FingerprintMode) ||
+	if !slices.Contains([]string{"off", "ctx_pool", "http_bridge", "passthrough"}, d.WSMode) ||
+		!slices.Contains([]codexFingerprintMode{codexFingerprintOff, codexFingerprintDevice, codexFingerprintSession, codexFingerprintFull}, codexFingerprintMode(d.FingerprintMode)) ||
 		!slices.Contains([]string{StatusActive, "inactive"}, d.Status) || d.Priority < 0 || d.LoadFactor < 0 || d.LoadFactor > 10000 ||
 		math.IsNaN(d.RateMultiplier) || math.IsInf(d.RateMultiplier, 0) || d.RateMultiplier < 0 || d.RateMultiplier > 1000 || len(d.NameTemplate) > 256 || len(d.NotesTemplate) > 2000 || len(d.ModelMapping) > 200 {
 		return errors.New("账号推送参数无效")
