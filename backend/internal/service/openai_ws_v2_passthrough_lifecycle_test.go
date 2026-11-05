@@ -211,7 +211,7 @@ func startPassthroughLifecycleServerWithHooks(
 	return server, serverErr
 }
 
-func TestPassthroughLifecycle_LaterTurnPreOutputRateLimitRequestsReconnect(t *testing.T) {
+func TestPassthroughLifecycle_LaterTurnRateLimitPreservesErrorWithoutReplay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	defer cancelControl(context.Canceled)
@@ -243,22 +243,22 @@ func TestPassthroughLifecycle_LaterTurnPreOutputRateLimitRequestsReconnect(t *te
 
 	resetAt := time.Now().Add(90 * time.Minute).Unix()
 	upstream.Send(fmt.Sprintf(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":%d}}`, resetAt))
-	_, err = readPassthroughLifecycleFrame(t, clientConn, time.Second)
-	var websocketCloseErr coderws.CloseError
-	require.ErrorAs(t, err, &websocketCloseErr)
-	require.Equal(t, coderws.StatusTryAgainLater, websocketCloseErr.Code)
-	require.Equal(t, "upstream rate limit exceeded; please reconnect", websocketCloseErr.Reason)
+	event, err := readPassthroughLifecycleFrame(t, clientConn, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(event, "type").String())
+	require.Equal(t, "rate_limit_exceeded", gjson.GetBytes(event, "error.code").String())
+	require.Equal(t, resetAt, gjson.GetBytes(event, "error.resets_at").Int())
+
 	require.Len(t, repo.rateLimitCalls, 1)
 	require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
 
+	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
 	select {
-	case err := <-serverErr:
-		var closeErr *OpenAIWSClientCloseError
-		require.ErrorAs(t, err, &closeErr)
-		require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
-	case <-time.After(time.Second):
-		t.Fatal("later-turn rate limit did not terminate passthrough")
+	case <-serverErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough did not release the closed session")
 	}
+
 	select {
 	case replay := <-upstream.writes:
 		t.Fatalf("later-turn reconnect must not replay the retained first request: %s", replay)
@@ -285,8 +285,19 @@ func TestPassthroughLifecycle_CyberTerminalEventsMarkBeforeAfterTurn(t *testing.
 			},
 			wantBody:    `"type":"error"`,
 			wantMessage: "blocked by error event",
-			wantInput:   5,
-			wantOutput:  1,
+			wantInput:   9,
+			wantOutput:  2,
+		},
+		{
+			name: "usage_only_in_failed_tail",
+			events: []string{
+				`{"type":"error","error":{"code":"cyber_policy","message":"blocked by error event"}}`,
+				`{"type":"response.failed","response":{"id":"resp_error","error":{"code":"cyber_policy","message":"blocked by paired failed event"},"usage":{"input_tokens":9,"output_tokens":2}}}`,
+			},
+			wantBody:    `"type":"error"`,
+			wantMessage: "blocked by error event",
+			wantInput:   9,
+			wantOutput:  2,
 		},
 		{
 			name: "response_failed",

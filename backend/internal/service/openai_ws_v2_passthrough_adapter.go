@@ -679,7 +679,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	firstClientMessage []byte,
 	hooks *OpenAIWSIngressHooks,
 	wsDecision OpenAIWSProtocolDecision,
-) error {
+) (returnErr error) {
 	controlCtx := ctx
 	// The same request context survives scheduler failover attempts. Clear any
 	// reverse mapping installed by the prior account before processing frames.
@@ -900,7 +900,26 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return fmt.Errorf("refresh ws authentication headers: %w", err)
 		}
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
+		pool := s.getOpenAIWSConnPool()
+		releaseConn, finishDial, capacityErr := pool.reserveSmartWSDial(dialCtx, openAIWSAcquireRequest{Account: account, WSURL: wsURL, Headers: headers, ProxyURL: proxyURL})
+		if capacityErr != nil {
+			cancelDial()
+			return capacityErr
+		}
+		pool.smartMetrics.handshakes.Add(1)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
+		finishDial()
+		if err == nil && upstreamConn == nil {
+			err = errors.New("upstream websocket dial returned no connection")
+		}
+		if err != nil {
+			releaseConn()
+			pool.smartMetrics.recordHandshakeFailure(statusCode)
+		} else {
+			defer releaseConn()
+			pool.smartMetrics.nativeConnections.Add(1)
+			defer pool.smartMetrics.nativeConnections.Add(-1)
+		}
 		cancelDial()
 		if err == nil {
 			break
@@ -934,6 +953,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	defer func() {
 		_ = upstreamConn.Close()
 	}()
+	if limited, ok := upstreamConn.(interface{ SetReadLimit(int64) }); ok {
+		limited.SetReadLimit(s.getOpenAIWSConnPool().upstreamFrameLimit())
+	}
 	logOpenAIWSV2Passthrough(
 		"relay_dial_ok account_id=%d status_code=%d upstream_request_id=%s",
 		account.ID,
@@ -1159,9 +1181,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			cancel()
 		},
 	}
+	nativeObserver := &smartWSNativeObserver{FrameConn: relayUpstreamFrameConn, s: s, dispatch: beginSmartWSDispatch(c)}
+	defer func() { nativeObserver.finish(ctx, returnErr); returnErr = stopSmartWSReplay(c, returnErr) }()
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
-	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
+	firstWriteErr := nativeObserver.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
 	cancelFirstWrite()
 	if firstWriteErr != nil {
 		return wrapOpenAIWSIngressTurnError(
@@ -1195,7 +1219,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	relayResult, relayExit := openaiwsv2.RunEntry(openaiwsv2.EntryInput{
 		Ctx:                ctx,
 		ClientConn:         policyClientConn,
-		UpstreamConn:       relayUpstreamFrameConn,
+		UpstreamConn:       nativeObserver,
 		FirstClientMessage: firstClientMessage,
 		Options: openaiwsv2.RelayOptions{
 			WriteTimeout:       s.openAIWSWriteTimeout(),
@@ -1269,6 +1293,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					turnResult.Usage.CacheReadInputTokens,
 				)
 				if hooks != nil && hooks.AfterTurn != nil {
+					mergeSmartWSCyberPolicyUsage(c, &turnResult.Usage)
 					hooks.AfterTurn(turnNo, turnResult, nil)
 				}
 			},
@@ -1278,6 +1303,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 			},
 			AfterClientWrite: func(msgType coderws.MessageType, payload []byte, writeErr error) {
+				nativeObserver.delivered(ctx, payload, writeErr)
 				if msgType == coderws.MessageText && writeErr == nil {
 					eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
 					markOpenAIWSClientVisibleFailure(c, eventType, payload)
@@ -1311,6 +1337,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
+				}
+				// An error frame is the outcome of an already dispatched turn.
+				// Preserve it for the client; do not convert it to a hidden retry.
+				if account.Platform == PlatformOpenAI && (eventType == "error" || eventType == "response.failed") {
+					if !failureAccountSideEffectsApplied {
+						failureAccountSideEffectsApplied = s.handleSmartWSFailureSideEffects(ctx, c, account, capturedSessionModel, handshakeHeaders, payload)
+					}
+					return nil
 				}
 				if (eventType == "error" || eventType == "response.failed") && markOpenAIWSV2PassthroughCyberPolicy(c, payload) {
 					return nil

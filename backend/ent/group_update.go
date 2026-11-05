@@ -1009,6 +1009,20 @@ func (_u *GroupUpdate) SetNillableAllowLive(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetSmartWsMode sets the "smart_ws_mode" field.
+func (_u *GroupUpdate) SetSmartWsMode(v string) *GroupUpdate {
+	_u.mutation.SetSmartWsMode(v)
+	return _u
+}
+
+// SetNillableSmartWsMode sets the "smart_ws_mode" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableSmartWsMode(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetSmartWsMode(*v)
+	}
+	return _u
+}
+
 // SetForceOpenaiFast sets the "force_openai_fast" field.
 func (_u *GroupUpdate) SetForceOpenaiFast(v bool) *GroupUpdate {
 	_u.mutation.SetForceOpenaiFast(v)
@@ -1595,6 +1609,11 @@ func (_u *GroupUpdate) check() error {
 			return &ValidationError{Name: "audio_stt_price_per_hour", err: fmt.Errorf(`ent: validator failed for field "Group.audio_stt_price_per_hour": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.SmartWsMode(); ok {
+		if err := group.SmartWsModeValidator(v); err != nil {
+			return &ValidationError{Name: "smart_ws_mode", err: fmt.Errorf(`ent: validator failed for field "Group.smart_ws_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DefaultMappedModel(); ok {
 		if err := group.DefaultMappedModelValidator(v); err != nil {
 			return &ValidationError{Name: "default_mapped_model", err: fmt.Errorf(`ent: validator failed for field "Group.default_mapped_model": %w`, err)}
@@ -1925,6 +1944,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SmartWsMode(); ok {
+		_spec.SetField(group.FieldSmartWsMode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
@@ -3280,6 +3302,20 @@ func (_u *GroupUpdateOne) SetNillableAllowLive(v *bool) *GroupUpdateOne {
 	return _u
 }
 
+// SetSmartWsMode sets the "smart_ws_mode" field.
+func (_u *GroupUpdateOne) SetSmartWsMode(v string) *GroupUpdateOne {
+	_u.mutation.SetSmartWsMode(v)
+	return _u
+}
+
+// SetNillableSmartWsMode sets the "smart_ws_mode" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableSmartWsMode(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetSmartWsMode(*v)
+	}
+	return _u
+}
+
 // SetForceOpenaiFast sets the "force_openai_fast" field.
 func (_u *GroupUpdateOne) SetForceOpenaiFast(v bool) *GroupUpdateOne {
 	_u.mutation.SetForceOpenaiFast(v)
@@ -3879,6 +3915,11 @@ func (_u *GroupUpdateOne) check() error {
 			return &ValidationError{Name: "audio_stt_price_per_hour", err: fmt.Errorf(`ent: validator failed for field "Group.audio_stt_price_per_hour": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.SmartWsMode(); ok {
+		if err := group.SmartWsModeValidator(v); err != nil {
+			return &ValidationError{Name: "smart_ws_mode", err: fmt.Errorf(`ent: validator failed for field "Group.smart_ws_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DefaultMappedModel(); ok {
 		if err := group.DefaultMappedModelValidator(v); err != nil {
 			return &ValidationError{Name: "default_mapped_model", err: fmt.Errorf(`ent: validator failed for field "Group.default_mapped_model": %w`, err)}
@@ -4226,6 +4267,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SmartWsMode(); ok {
+		_spec.SetField(group.FieldSmartWsMode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)

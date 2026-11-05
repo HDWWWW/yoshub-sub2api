@@ -148,6 +148,7 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 	}
 	out := &AdminGroup{
 		Group:                       groupFromServiceBase(g),
+		SmartWSMode:                 g.SmartWSMode,
 		ForceOpenAIFast:             g.ForceOpenAIFast,
 		ReverseAccountPriority:      g.ReverseAccountPriority,
 		ForceOpenAIUltrafast:        g.ForceOpenAIUltrafast,

@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
@@ -11,7 +14,7 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
-func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (response *http.Response, err error) {
+func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account, responseContext ...*gin.Context) (response *http.Response, err error) {
 	if account != nil && account.Platform == PlatformOpenAI {
 		if err := request.Context().Err(); err != nil {
 			return nil, err
@@ -33,6 +36,11 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		if handled {
 			return response, err
 		}
+	}
+	if len(responseContext) > 0 && responseContext[0] != nil && request.Method == http.MethodPost &&
+		strings.HasSuffix(strings.TrimRight(request.URL.Path, "/"), "/responses") &&
+		s.smartWSDecision(responseContext[0], account).Transport == OpenAIUpstreamTransportResponsesWebsocketV2 {
+		return s.doOpenAIHTTPOverWS(responseContext[0], request, proxyURL, account)
 	}
 	return s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
 }

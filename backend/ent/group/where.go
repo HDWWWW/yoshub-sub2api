@@ -295,6 +295,11 @@ func AllowLive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowLive, v))
 }
 
+// SmartWsMode applies equality check predicate on the "smart_ws_mode" field. It's identical to SmartWsModeEQ.
+func SmartWsMode(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSmartWsMode, v))
+}
+
 // ForceOpenaiFast applies equality check predicate on the "force_openai_fast" field. It's identical to ForceOpenaiFastEQ.
 func ForceOpenaiFast(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldForceOpenaiFast, v))
@@ -2313,6 +2318,71 @@ func AllowLiveEQ(v bool) predicate.Group {
 // AllowLiveNEQ applies the NEQ predicate on the "allow_live" field.
 func AllowLiveNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldAllowLive, v))
+}
+
+// SmartWsModeEQ applies the EQ predicate on the "smart_ws_mode" field.
+func SmartWsModeEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSmartWsMode, v))
+}
+
+// SmartWsModeNEQ applies the NEQ predicate on the "smart_ws_mode" field.
+func SmartWsModeNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldSmartWsMode, v))
+}
+
+// SmartWsModeIn applies the In predicate on the "smart_ws_mode" field.
+func SmartWsModeIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldSmartWsMode, vs...))
+}
+
+// SmartWsModeNotIn applies the NotIn predicate on the "smart_ws_mode" field.
+func SmartWsModeNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldSmartWsMode, vs...))
+}
+
+// SmartWsModeGT applies the GT predicate on the "smart_ws_mode" field.
+func SmartWsModeGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldSmartWsMode, v))
+}
+
+// SmartWsModeGTE applies the GTE predicate on the "smart_ws_mode" field.
+func SmartWsModeGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldSmartWsMode, v))
+}
+
+// SmartWsModeLT applies the LT predicate on the "smart_ws_mode" field.
+func SmartWsModeLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldSmartWsMode, v))
+}
+
+// SmartWsModeLTE applies the LTE predicate on the "smart_ws_mode" field.
+func SmartWsModeLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldSmartWsMode, v))
+}
+
+// SmartWsModeContains applies the Contains predicate on the "smart_ws_mode" field.
+func SmartWsModeContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldSmartWsMode, v))
+}
+
+// SmartWsModeHasPrefix applies the HasPrefix predicate on the "smart_ws_mode" field.
+func SmartWsModeHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldSmartWsMode, v))
+}
+
+// SmartWsModeHasSuffix applies the HasSuffix predicate on the "smart_ws_mode" field.
+func SmartWsModeHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldSmartWsMode, v))
+}
+
+// SmartWsModeEqualFold applies the EqualFold predicate on the "smart_ws_mode" field.
+func SmartWsModeEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldSmartWsMode, v))
+}
+
+// SmartWsModeContainsFold applies the ContainsFold predicate on the "smart_ws_mode" field.
+func SmartWsModeContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldSmartWsMode, v))
 }
 
 // ForceOpenaiFastEQ applies the EQ predicate on the "force_openai_fast" field.

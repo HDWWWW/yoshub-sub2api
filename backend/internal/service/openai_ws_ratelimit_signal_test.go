@@ -161,7 +161,12 @@ func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(
 	body := []byte(`{"model":"gpt-5.1","stream":false,"input":[{"type":"input_text","text":"hello"}]}`)
 	result, err := svc.Forward(context.Background(), c, &account, body)
 	require.Error(t, err)
-	require.Nil(t, result)
+	require.NotNil(t, result)
+	require.False(t, result.SucceededForScheduling())
+	var stopped *UpstreamFailoverError
+	require.ErrorAs(t, err, &stopped)
+	require.Equal(t, NextAccountStop, stopped.NextAccountAction)
+	require.False(t, stopped.RetryableOnSameAccount)
 	require.Equal(t, http.StatusTooManyRequests, rec.Code)
 	require.Nil(t, upstream.lastReq, "WS 限流 error event 不应回退到同账号 HTTP")
 	require.Len(t, repo.rateLimitCalls, 1)

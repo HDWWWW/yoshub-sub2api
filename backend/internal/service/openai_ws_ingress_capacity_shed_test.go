@@ -31,14 +31,8 @@ func (r *openAIWSIngressCapacityShedRepo) UpdateExtra(context.Context, int64, ma
 	return nil
 }
 
-// ctx_pool 的 ingress 直写路径把 error / response.failed 交给 WS 客户端前，必须和
-// HTTP/SSE（openai_gateway_response_handling.go）与 http_bridge
-// （openai_ws_http_bridge.go）两条路径一样，把容量降载码改写为可重试的
-// server_error：Codex 按闭集判定，server_is_overloaded / slow_down 属致命集，
-// 客户端会打印 "Selected model is at capacity" 并直接终止会话而不是退避重试。
-//
-// 第二个用例锁住改写范围：非容量类错误码必须原样下发，客户端依赖原码各自处理。
-func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *testing.T) {
+// SmartWS preserves upstream business errors and does not rewrite them to encourage replay.
+func TestProxyResponsesWebSocketFromClient_PreservesCapacityShedCodeForClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -48,16 +42,16 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 		wantAbsent     []string
 	}{
 		{
-			name: "capacity_shed_error_and_failed_are_rewritten",
+			name: "capacity_shed_code_is_preserved",
 			upstreamEvents: [][]byte{
 				[]byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`),
 				[]byte(`{"type":"response.failed","response":{"id":"resp_shed","status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`),
 			},
 			wantContains: []string{
-				`"code":"server_error"`,
+				`"code":"server_is_overloaded"`,
 				"Our servers are currently overloaded",
 			},
-			wantAbsent: []string{"server_is_overloaded"},
+			wantAbsent: []string{`"code":"server_error"`},
 		},
 		{
 			name: "non_capacity_error_code_is_passed_through",
@@ -167,7 +161,7 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 			// 本轮已终止，主动断开客户端让 ingress 退出 turn 循环。
 			_ = clientConn.CloseNow()
 
-			require.NotEmpty(t, frames, "客户端应至少收到一个下发事件")
+			require.Len(t, frames, len(tt.upstreamEvents), "the original error and its authoritative failed event must both reach the client")
 			joined := strings.Join(frames, "\n")
 			for _, want := range tt.wantContains {
 				require.Contains(t, joined, want, "客户端收到的事件:\n%s", joined)
@@ -302,7 +296,8 @@ func TestProxyResponsesWebSocketFromClient_MarksCyberPolicyBeforeEarlyReturn(t *
 			select {
 			case serverErr := <-serverErrCh:
 				var failoverErr *UpstreamFailoverError
-				require.Equal(t, tt.wantFailover, errors.As(serverErr, &failoverErr))
+				require.True(t, errors.As(serverErr, &failoverErr))
+				require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
 			case <-time.After(5 * time.Second):
 				t.Fatal("waiting for ingress websocket shutdown timed out")
 			}

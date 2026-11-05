@@ -125,11 +125,16 @@ func TestOpenAIGatewayService_Forward_WSv2_ExecutionScopeUsesOriginalIdentity(t 
 	completed := func(id string) []byte {
 		return []byte(`{"type":"response.completed","response":{"id":"` + id + `","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
 	}
-	captureConn := &openAIWSCaptureConn{events: [][]byte{completed("resp_a"), completed("resp_b"), completed("resp_c")}}
+	connections := []*openAIWSCaptureConn{
+		{events: [][]byte{completed("resp_a")}},
+		{events: [][]byte{completed("resp_b")}},
+		{events: [][]byte{completed("resp_c")}},
+	}
 	handshake := http.Header{}
 	handshake.Set(openAIWSTurnStateHeader, "turn-state-from-upstream")
 	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn, handshake: handshake})
+	dialer := &openAIWSQueueDialer{conns: []openAIWSClientConn{connections[0], connections[1], connections[2]}, handshake: handshake}
+	pool.setClientDialerForTest(dialer)
 	defer pool.Close()
 
 	stateStore := NewOpenAIWSStateStore(nil)
@@ -198,4 +203,9 @@ func TestOpenAIGatewayService_Forward_WSv2_ExecutionScopeUsesOriginalIdentity(t 
 	require.Equal(t, "child-thread", threadC)
 	_, boundC := stateStore.GetSessionTurnState(groupID, scopeC)
 	require.True(t, boundC, "客户端自带线程标识时，键必须与按原始报文算出的一致，不受账号 namespace 改写影响")
+	require.Equal(t, 3, dialer.DialCount(), "distinct execution scopes must not share connections")
+	for _, connection := range connections {
+		require.Len(t, connection.writes, 1)
+	}
+
 }

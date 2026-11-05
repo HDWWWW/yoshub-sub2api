@@ -1571,6 +1571,15 @@
             </div>
           </div>
         </div>
+        <div v-if="supportsGroupOpenAIFast(createForm.platform)" class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4">
+          <label class="input-label" for="create-smart-ws">{{ t('admin.groups.smartWS.title') }}</label>
+          <select id="create-smart-ws" v-model="createForm.smart_ws_mode" class="input" data-testid="create-smart-ws">
+            <option value="inherit">{{ t('admin.groups.smartWS.inherit') }}</option>
+            <option value="enabled">{{ t('admin.groups.smartWS.enabled') }}</option>
+            <option value="disabled">{{ t('admin.groups.smartWS.disabled') }}</option>
+          </select>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('admin.groups.smartWS.hint') }}</p>
+        </div>
         <!-- OpenAI Fast 开关（OpenAI 与 Composite 平台） -->
         <div
           v-if="supportsGroupOpenAIFast(createForm.platform)"
@@ -3276,6 +3285,15 @@
               />
             </div>
           </div>
+        </div>
+        <div v-if="supportsGroupOpenAIFast(editForm.platform)" class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4">
+          <label class="input-label" for="edit-smart-ws">{{ t('admin.groups.smartWS.title') }}</label>
+          <select id="edit-smart-ws" v-model="editForm.smart_ws_mode" class="input" data-testid="edit-smart-ws">
+            <option value="inherit">{{ t('admin.groups.smartWS.inherit') }}</option>
+            <option value="enabled">{{ t('admin.groups.smartWS.enabled') }}</option>
+            <option value="disabled">{{ t('admin.groups.smartWS.disabled') }}</option>
+          </select>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('admin.groups.smartWS.hint') }}</p>
         </div>
         <!-- OpenAI Fast 开关（OpenAI 与 Composite 平台） -->
         <div
@@ -5066,6 +5084,7 @@ const createForm = reactive({
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   reverse_account_priority: false,
+  smart_ws_mode: "inherit" as "inherit" | "enabled" | "disabled",
   force_openai_fast: false,
   force_openai_ultrafast: false,
   filter_openai_service_tier: false,
@@ -5436,6 +5455,7 @@ const editForm = reactive({
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   reverse_account_priority: false,
+  smart_ws_mode: "inherit" as "inherit" | "enabled" | "disabled",
   force_openai_fast: false,
   force_openai_ultrafast: false,
   filter_openai_service_tier: false,
@@ -5931,6 +5951,7 @@ const closeCreateModal = () => {
   createForm.video_model_prices = createVideoModelPricesForm();
   createForm.long_context_pricing_enabled = true;
   createForm.reverse_account_priority = false;
+  createForm.smart_ws_mode = "inherit";
   createForm.force_openai_fast = false;
   createForm.force_openai_ultrafast = false;
   createForm.filter_openai_service_tier = false;
@@ -6056,6 +6077,7 @@ const handleCreateGroup = async () => {
     // 构建请求数据，包含模型路由配置
     const requestData = {
       ...createGroupForm,
+      smart_ws_mode: supportsGroupOpenAIFast(createForm.platform) ? createForm.smart_ws_mode : "inherit" as const,
       reverse_account_priority: supportsGroupOpenAIFast(createForm.platform) && createForm.reverse_account_priority,
       force_openai_fast: normalizeGroupOpenAIFast(
         createForm.platform,
@@ -6217,6 +6239,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.monthly_limit_usd = group.monthly_limit_usd;
   editForm.long_context_pricing_enabled =
     group.long_context_pricing_enabled ?? true;
+  editForm.smart_ws_mode = group.smart_ws_mode ?? "inherit";
   editForm.filter_openai_service_tier = group.filter_openai_service_tier ?? false;
   editForm.force_openai_ultrafast = !editForm.filter_openai_service_tier && (group.force_openai_ultrafast ?? false);
   editForm.reverse_account_priority = group.reverse_account_priority ?? false;
@@ -6356,6 +6379,7 @@ const closeEditModal = () => {
   editForm.video_model_prices = createVideoModelPricesForm();
   editForm.long_context_pricing_enabled = true;
   editForm.reverse_account_priority = false;
+  editForm.smart_ws_mode = "inherit";
   editForm.force_openai_fast = false;
   editForm.force_openai_ultrafast = false;
   editForm.filter_openai_service_tier = false;
@@ -6415,6 +6439,7 @@ const handleUpdateGroup = async () => {
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
       ...editForm,
+      smart_ws_mode: supportsGroupOpenAIFast(editForm.platform) ? editForm.smart_ws_mode : "inherit" as const,
       reverse_account_priority: supportsGroupOpenAIFast(editForm.platform) && editForm.reverse_account_priority,
       force_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,

@@ -641,6 +641,7 @@ export interface AdminGroup extends Group {
   // 管理端的 name / description 始终是原字段，各语言译文另放在 i18n 里
   i18n?: GroupI18n
   reverse_account_priority?: boolean
+  smart_ws_mode?: 'inherit' | 'enabled' | 'disabled'
   force_openai_fast: boolean
   force_openai_ultrafast: boolean
   filter_openai_service_tier: boolean
@@ -819,6 +820,7 @@ export interface CreateGroupRequest {
   monthly_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   reverse_account_priority?: boolean
+  smart_ws_mode?: 'inherit' | 'enabled' | 'disabled'
   force_openai_fast?: boolean
   force_openai_ultrafast?: boolean
   filter_openai_service_tier?: boolean
@@ -890,6 +892,7 @@ export interface UpdateGroupRequest {
   monthly_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   reverse_account_priority?: boolean
+  smart_ws_mode?: 'inherit' | 'enabled' | 'disabled'
   force_openai_fast?: boolean
   force_openai_ultrafast?: boolean
   filter_openai_service_tier?: boolean

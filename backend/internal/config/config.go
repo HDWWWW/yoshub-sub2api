@@ -1268,6 +1268,20 @@ const DefaultOpenAIWSClientFirstMessageTimeoutSeconds = 30
 // GatewayOpenAIWSConfig OpenAI Responses WebSocket 配置。
 // 注意：默认全局开启；如需回滚可使用 force_http 或关闭 enabled。
 type GatewayOpenAIWSConfig struct {
+	MaxRequestBytes       int64 `mapstructure:"max_request_bytes"`
+	MaxUpstreamFrameBytes int64 `mapstructure:"max_upstream_frame_bytes"`
+	// SmartWS limits apply per process; leases remain serial. Age/idle eviction never interrupts a live lease.
+	MaxConnsGlobal                     int `mapstructure:"max_conns_global"`
+	MaxConnsPerIdentity                int `mapstructure:"max_conns_per_identity"`
+	MaxQueuedGlobal                    int `mapstructure:"max_queued_global"`
+	MaxQueuedPerIdentity               int `mapstructure:"max_queued_per_identity"`
+	MaxConcurrentHandshakes            int `mapstructure:"max_concurrent_handshakes"`
+	MaxConcurrentHandshakesPerIdentity int `mapstructure:"max_concurrent_handshakes_per_identity"`
+	HandshakesPerSecond                int `mapstructure:"handshakes_per_second"`
+	HandshakesPerSecondPerIdentity     int `mapstructure:"handshakes_per_second_per_identity"`
+	IdleTimeoutSeconds                 int `mapstructure:"idle_timeout_seconds"`
+	MaxConnAgeSeconds                  int `mapstructure:"max_conn_age_seconds"`
+
 	// ModeRouterV2Enabled: 新版 WS mode 路由开关（默认 false；关闭时保持 legacy 行为）
 	ModeRouterV2Enabled bool `mapstructure:"mode_router_v2_enabled"`
 	// IngressModeDefault: ingress 默认模式（off/ctx_pool/passthrough/http_bridge）
@@ -2474,6 +2488,18 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.http_bridge_threshold_bytes", 15*1024*1024)
 	viper.SetDefault("gateway.openai_ws.responses_websockets", false)
 	viper.SetDefault("gateway.openai_ws.responses_websockets_v2", true)
+	viper.SetDefault("gateway.openai_ws.max_conns_global", 512)
+	viper.SetDefault("gateway.openai_ws.max_request_bytes", 16*1024*1024)
+	viper.SetDefault("gateway.openai_ws.max_upstream_frame_bytes", 16*1024*1024)
+	viper.SetDefault("gateway.openai_ws.max_conns_per_identity", 32)
+	viper.SetDefault("gateway.openai_ws.max_queued_global", 128)
+	viper.SetDefault("gateway.openai_ws.max_queued_per_identity", 16)
+	viper.SetDefault("gateway.openai_ws.max_concurrent_handshakes", 8)
+	viper.SetDefault("gateway.openai_ws.max_concurrent_handshakes_per_identity", 2)
+	viper.SetDefault("gateway.openai_ws.handshakes_per_second", 8)
+	viper.SetDefault("gateway.openai_ws.handshakes_per_second_per_identity", 2)
+	viper.SetDefault("gateway.openai_ws.idle_timeout_seconds", 300)
+	viper.SetDefault("gateway.openai_ws.max_conn_age_seconds", 3000)
 	viper.SetDefault("gateway.openai_ws.max_conns_per_account", 128)
 	viper.SetDefault("gateway.openai_ws.min_idle_per_account", 4)
 	viper.SetDefault("gateway.openai_ws.max_idle_per_account", 12)
@@ -3486,6 +3512,42 @@ func (c *Config) Validate() error {
 	// 兼容旧键 sticky_previous_response_ttl_seconds
 	if c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 && c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds > 0 {
 		c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds
+	}
+	if c.Gateway.OpenAIWS.MaxRequestBytes < 1024 || c.Gateway.OpenAIWS.MaxRequestBytes > 128*1024*1024 {
+		return fmt.Errorf("gateway.openai_ws.max_request_bytes must be between 1024 and 134217728")
+	}
+	if c.Gateway.OpenAIWS.MaxUpstreamFrameBytes < 1024 || c.Gateway.OpenAIWS.MaxUpstreamFrameBytes > 128*1024*1024 {
+		return fmt.Errorf("gateway.openai_ws.max_upstream_frame_bytes must be between 1024 and 134217728")
+	}
+	if c.Gateway.OpenAIWS.MaxConnsGlobal <= 0 {
+		return fmt.Errorf("gateway.openai_ws.max_conns_global must be positive")
+	}
+	if c.Gateway.OpenAIWS.MaxConnsPerIdentity <= 0 {
+		return fmt.Errorf("gateway.openai_ws.max_conns_per_identity must be positive")
+	}
+	if c.Gateway.OpenAIWS.MaxQueuedGlobal <= 0 {
+		return fmt.Errorf("gateway.openai_ws.max_queued_global must be positive")
+	}
+	if c.Gateway.OpenAIWS.MaxQueuedPerIdentity <= 0 {
+		return fmt.Errorf("gateway.openai_ws.max_queued_per_identity must be positive")
+	}
+	if c.Gateway.OpenAIWS.MaxConcurrentHandshakes <= 0 {
+		return fmt.Errorf("gateway.openai_ws.max_concurrent_handshakes must be positive")
+	}
+	if c.Gateway.OpenAIWS.MaxConcurrentHandshakesPerIdentity <= 0 {
+		return fmt.Errorf("gateway.openai_ws.max_concurrent_handshakes_per_identity must be positive")
+	}
+	if c.Gateway.OpenAIWS.HandshakesPerSecond <= 0 {
+		return fmt.Errorf("gateway.openai_ws.handshakes_per_second must be positive")
+	}
+	if c.Gateway.OpenAIWS.HandshakesPerSecondPerIdentity <= 0 {
+		return fmt.Errorf("gateway.openai_ws.handshakes_per_second_per_identity must be positive")
+	}
+	if c.Gateway.OpenAIWS.IdleTimeoutSeconds <= 0 {
+		return fmt.Errorf("gateway.openai_ws.idle_timeout_seconds must be positive")
+	}
+	if c.Gateway.OpenAIWS.MaxConnAgeSeconds <= 0 {
+		return fmt.Errorf("gateway.openai_ws.max_conn_age_seconds must be positive")
 	}
 	if c.Gateway.OpenAIWS.MaxConnsPerAccount <= 0 {
 		return fmt.Errorf("gateway.openai_ws.max_conns_per_account must be positive")

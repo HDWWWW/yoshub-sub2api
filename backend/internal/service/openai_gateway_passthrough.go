@@ -178,7 +178,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if normalized {
 			body = normalizedBody
 		}
-		reqStream = gjson.GetBytes(body, "stream").Bool()
+		// Codex requires an upstream stream; the HTTP adapter still honors the
+		// original client's JSON/SSE choice.
+		if s.smartWSDecision(c, account).Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
+			reqStream = gjson.GetBytes(body, "stream").Bool()
+		}
 
 		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 		if scopeErr != nil {
@@ -380,12 +384,17 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		upstreamStart := time.Now()
-		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account, c)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account.
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
+		}
+		if resp.StatusCode >= 400 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
+			payload := s.readUpstreamErrorBody(resp)
+			_ = resp.Body.Close()
+			return smartWSHTTPFailureResult(resp, payload, body, reqModel, upstreamPassthroughModel, reqStream, startTime), s.writeSmartWSHTTPError(c, account, resp, payload, upstreamPassthroughModel)
 		}
 		if resp.StatusCode >= 400 {
 			// Peek only to identify an invalid task. Restore the body so the existing
@@ -545,7 +554,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 		ReasoningEffort:               reasoningEffort,
 		Stream:                        reqStream,
-		OpenAIWSMode:                  false,
+		OpenAIWSMode:                  isOpenAIHTTPWSResponse(resp),
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnected,
@@ -2485,6 +2494,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		// The converted representation owns its MIME type; Gin does not
+		// overwrite the upstream SSE header copied above on its own.
+		c.Header("Content-Type", contentType)
 		c.Data(resp.StatusCode, contentType, body)
 	}
 

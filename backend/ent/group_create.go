@@ -724,6 +724,20 @@ func (_c *GroupCreate) SetNillableAllowLive(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetSmartWsMode sets the "smart_ws_mode" field.
+func (_c *GroupCreate) SetSmartWsMode(v string) *GroupCreate {
+	_c.mutation.SetSmartWsMode(v)
+	return _c
+}
+
+// SetNillableSmartWsMode sets the "smart_ws_mode" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSmartWsMode(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetSmartWsMode(*v)
+	}
+	return _c
+}
+
 // SetForceOpenaiFast sets the "force_openai_fast" field.
 func (_c *GroupCreate) SetForceOpenaiFast(v bool) *GroupCreate {
 	_c.mutation.SetForceOpenaiFast(v)
@@ -1221,6 +1235,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultAllowLive
 		_c.mutation.SetAllowLive(v)
 	}
+	if _, ok := _c.mutation.SmartWsMode(); !ok {
+		v := group.DefaultSmartWsMode
+		_c.mutation.SetSmartWsMode(v)
+	}
 	if _, ok := _c.mutation.ForceOpenaiFast(); !ok {
 		v := group.DefaultForceOpenaiFast
 		_c.mutation.SetForceOpenaiFast(v)
@@ -1445,6 +1463,14 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
+	}
+	if _, ok := _c.mutation.SmartWsMode(); !ok {
+		return &ValidationError{Name: "smart_ws_mode", err: errors.New(`ent: missing required field "Group.smart_ws_mode"`)}
+	}
+	if v, ok := _c.mutation.SmartWsMode(); ok {
+		if err := group.SmartWsModeValidator(v); err != nil {
+			return &ValidationError{Name: "smart_ws_mode", err: fmt.Errorf(`ent: validator failed for field "Group.smart_ws_mode": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.ForceOpenaiFast(); !ok {
 		return &ValidationError{Name: "force_openai_fast", err: errors.New(`ent: missing required field "Group.force_openai_fast"`)}
@@ -1753,6 +1779,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
 		_node.AllowLive = value
+	}
+	if value, ok := _c.mutation.SmartWsMode(); ok {
+		_spec.SetField(group.FieldSmartWsMode, field.TypeString, value)
+		_node.SmartWsMode = value
 	}
 	if value, ok := _c.mutation.ForceOpenaiFast(); ok {
 		_spec.SetField(group.FieldForceOpenaiFast, field.TypeBool, value)
@@ -2861,6 +2891,18 @@ func (u *GroupUpsert) SetAllowLive(v bool) *GroupUpsert {
 // UpdateAllowLive sets the "allow_live" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateAllowLive() *GroupUpsert {
 	u.SetExcluded(group.FieldAllowLive)
+	return u
+}
+
+// SetSmartWsMode sets the "smart_ws_mode" field.
+func (u *GroupUpsert) SetSmartWsMode(v string) *GroupUpsert {
+	u.Set(group.FieldSmartWsMode, v)
+	return u
+}
+
+// UpdateSmartWsMode sets the "smart_ws_mode" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSmartWsMode() *GroupUpsert {
+	u.SetExcluded(group.FieldSmartWsMode)
 	return u
 }
 
@@ -4172,6 +4214,20 @@ func (u *GroupUpsertOne) SetAllowLive(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateAllowLive() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowLive()
+	})
+}
+
+// SetSmartWsMode sets the "smart_ws_mode" field.
+func (u *GroupUpsertOne) SetSmartWsMode(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSmartWsMode(v)
+	})
+}
+
+// UpdateSmartWsMode sets the "smart_ws_mode" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSmartWsMode() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSmartWsMode()
 	})
 }
 
@@ -5688,6 +5744,20 @@ func (u *GroupUpsertBulk) SetAllowLive(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateAllowLive() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowLive()
+	})
+}
+
+// SetSmartWsMode sets the "smart_ws_mode" field.
+func (u *GroupUpsertBulk) SetSmartWsMode(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSmartWsMode(v)
+	})
+}
+
+// UpdateSmartWsMode sets the "smart_ws_mode" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSmartWsMode() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSmartWsMode()
 	})
 }
 

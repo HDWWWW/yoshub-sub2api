@@ -84,6 +84,8 @@
         />
       </div>
 
+      <OpsSmartWSCard v-if="opsEnabled && !(loading && !hasLoadedOnce)" :refresh-token="dashboardRefreshToken" />
+
       <!-- Row: Token Stats -->
       <div v-if="opsEnabled && showOpenAITokenStats && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6">
         <OpsOpenAITokenStatsCard
@@ -141,6 +143,7 @@
 </template>
 
 <script setup lang="ts">
+import OpsSmartWSCard from "./components/OpsSmartWSCard.vue"
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDebounceFn, useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'

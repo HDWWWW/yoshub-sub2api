@@ -162,9 +162,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PreflightPingTol
 	require.Equal(t, 1, dialer.DialCount(), "预检 ping 慢于 2 秒不应换连")
 }
 
-// 场景：池内两条空闲连接同批陈旧（首读即失败）。首轮拿到其一失败后重试，
-// 重试必须新建连接，而不是再从池里拿另一条同样陈旧的连接。
-func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_TurnRetryForcesFreshConn(t *testing.T) {
+// A write followed by EOF is uncertain even on an idle pooled connection.
+// Neither another idle connection nor a fresh connection may replay that turn.
+func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DispatchedReadFailureDoesNotReplay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -278,6 +278,16 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_TurnRetryForcesF
 		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
 		msgType, event, readErr := clientConn.Read(readCtx)
 		cancelRead()
+		if expectedResponseID == "" {
+			require.Error(t, readErr)
+			select {
+			case serverErr := <-serverErrCh:
+				require.Error(t, serverErr)
+			case <-time.After(5 * time.Second):
+				t.Fatal("failed dispatched turn did not terminate")
+			}
+			return
+		}
 		require.NoError(t, readErr)
 		require.Equal(t, coderws.MessageText, msgType)
 		require.Equal(t, expectedResponseID, gjson.GetBytes(event, "response.id").String())
@@ -302,7 +312,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_TurnRetryForcesF
 	ap.mu.Unlock()
 	require.NotNil(t, lastAcquire)
 	staleConnB := newOpenAIWSConn(pool.nextConnID(account.ID), account.ID, staleB, nil)
-	staleConnB.handshakeCompatibility = normalizeOpenAIWSHandshakeCompatibility(lastAcquire.Account, lastAcquire.Headers)
+	staleConnB.handshakeCompatibility = openAIWSAcquireCompatibility(*lastAcquire)
 	staleConnB.routingAffinity = normalizeOpenAIWSRoutingAffinity(lastAcquire.Headers)
 	ap.mu.Lock()
 	ap.conns[staleConnB.id] = staleConnB
@@ -310,11 +320,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_TurnRetryForcesF
 	ap.mu.Unlock()
 	require.Equal(t, 2, idleConns, "第二会话开始前池内应有两条空闲连接")
 
-	runSingleTurnSession("resp_retry_fresh")
+	runSingleTurnSession("")
 
-	require.Equal(t, 2, dialer.DialCount(), "首读失败后的重试应新建连接")
+	require.Equal(t, 1, dialer.DialCount(), "dispatch followed by EOF must not redial or replay")
 	fresh.mu.Lock()
 	freshWrites := len(fresh.writes)
 	fresh.mu.Unlock()
-	require.Equal(t, 1, freshWrites)
+	require.Zero(t, freshWrites)
 }

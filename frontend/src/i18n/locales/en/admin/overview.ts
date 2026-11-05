@@ -1269,6 +1269,13 @@ export default {
         unsupportedMessage: 'This Sub2API server cannot generate the required Live attestation. Live will not work even if enabled. Continue anyway?',
         enableAnyway: 'Enable anyway'
       },
+      smartWS: {
+        title: "SmartWS upstream transport",
+        inherit: "Default: HTTP upstream",
+        enabled: "Enable SmartWS",
+        disabled: "Disable, use HTTP",
+        hint: "Eligible Responses requests, including converted Chat, reuse upstream WS. Global and account capability limits apply; bound transport plugins take priority. Native WS keeps account admission settings; disabling this switch bridges admitted native WS clients over HTTP."
+      },
       openaiFast: {
         reversePriority: 'Reverse account priority',
         reversePriorityHint: 'Select higher numeric account priorities first, falling back when capacity is unavailable. Load balancing within a tier and required response ownership still apply.',

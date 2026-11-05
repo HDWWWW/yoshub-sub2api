@@ -102,6 +102,7 @@ type Group struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       bool
 	AllowLive                   bool
+	SmartWSMode                 string
 	ForceOpenAIFast             bool // 强制 OpenAI 网关请求使用 service_tier=priority
 	ReverseAccountPriority      bool // 按账号优先级从大到小调度
 	ForceOpenAIUltrafast        bool // 强制 OpenAI 网关请求使用 service_tier=ultrafast

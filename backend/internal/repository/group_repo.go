@@ -137,6 +137,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
+		SetSmartWsMode(normalizedSmartWSMode(groupIn.SmartWSMode)).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetReverseAccountPriority(groupIn.ReverseAccountPriority).
 		SetForceOpenaiUltrafast(groupIn.ForceOpenAIUltrafast).
@@ -325,6 +326,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
+		SetSmartWsMode(normalizedSmartWSMode(groupIn.SmartWSMode)).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetReverseAccountPriority(groupIn.ReverseAccountPriority).
 		SetForceOpenaiUltrafast(groupIn.ForceOpenAIUltrafast).
@@ -1232,4 +1234,11 @@ func (r *groupRepository) UpdateSortOrders(ctx context.Context, updates []servic
 		}
 	}
 	return nil
+}
+
+func normalizedSmartWSMode(mode string) string {
+	if mode == "" {
+		return "inherit"
+	}
+	return mode
 }

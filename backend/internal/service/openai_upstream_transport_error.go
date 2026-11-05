@@ -121,6 +121,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 	if isClientCanceledTransportError(ctx, err) {
 		return err
 	}
+	var dispatchErr *smartWSDispatchError
+	if errors.As(err, &dispatchErr) {
+		body := []byte(`{"error":{"type":"upstream_error","code":"upstream_dispatch_uncertain","message":"Upstream WebSocket disconnected after dispatch; request was not replayed"}}`)
+		setOpsUpstreamError(c, http.StatusBadGateway, dispatchErr.Error(), "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{AccountID: account.ID, Platform: account.Platform, Kind: "ws_dispatch_uncertain", Message: dispatchErr.Error()})
+		return smartWSStopFailure(http.StatusBadGateway, body, nil)
+	}
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{

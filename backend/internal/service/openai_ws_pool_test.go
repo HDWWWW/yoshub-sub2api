@@ -290,6 +290,7 @@ func TestOpenAIWSConnPool_AcquireQueueWaitMetrics(t *testing.T) {
 	accountID := int64(99)
 	account := &Account{ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	conn := newOpenAIWSConn("busy", accountID, &openAIWSFakeConn{}, nil)
+	conn.handshakeCompatibility = openAIWSAcquireCompatibility(openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"})
 	require.True(t, conn.tryAcquire()) // 占用连接，触发后续排队
 
 	ap := pool.ensureAccountPoolLocked(accountID)
@@ -334,6 +335,8 @@ func TestOpenAIWSConnPool_AcquireAtCapacityWakesWhenAnotherConnReleases(t *testi
 	req := openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"}
 	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
 	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	target.handshakeCompatibility = openAIWSAcquireCompatibility(req)
+	other.handshakeCompatibility = target.handshakeCompatibility
 	require.True(t, target.tryAcquire())
 	require.True(t, other.tryAcquire())
 	// other 上已有一个等待者，新来的等待者会挂到 target 上。
@@ -394,6 +397,8 @@ func TestOpenAIWSConnPool_AcquireAtCapacityWakesWhenCapacityFreedByEviction(t *t
 	req := openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"}
 	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
 	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	target.handshakeCompatibility = openAIWSAcquireCompatibility(req)
+	other.handshakeCompatibility = target.handshakeCompatibility
 	require.True(t, target.tryAcquire())
 	require.True(t, other.tryAcquire())
 	other.waiters.Add(1)
@@ -452,6 +457,8 @@ func TestOpenAIWSConnPool_AcquireAtCapacityCanceledWaiterDoesNotTakeReleasedConn
 	pool := newOpenAIWSConnPool(cfg)
 	target := newOpenAIWSConn("target", accountID, &openAIWSFakeConn{}, nil)
 	other := newOpenAIWSConn("other", accountID, &openAIWSFakeConn{}, nil)
+	target.handshakeCompatibility = openAIWSAcquireCompatibility(req)
+	other.handshakeCompatibility = target.handshakeCompatibility
 	require.True(t, target.tryAcquire())
 	require.True(t, other.tryAcquire())
 	other.waiters.Add(1)
@@ -845,7 +852,7 @@ func TestOpenAIWSConnPool_AcquireReusesSameStableIdentityWithDifferentTurnMetada
 	first.Release()
 
 	nextHeaders := stableOpenAIWSIdentityHeadersForTest()
-	nextHeaders.Set("Authorization", "Bearer token-b")
+	nextHeaders.Set("Authorization", "Bearer token-a")
 	nextHeaders.Set("x-codex-turn-metadata", `{"turn_id":"turn-b"}`)
 	nextHeaders.Set(openAICodexRoutingHintHeader, "model=gpt-5.6-codex;tier=priority")
 	second, err := pool.Acquire(context.Background(), openAIWSAcquireRequest{
@@ -857,7 +864,7 @@ func TestOpenAIWSConnPool_AcquireReusesSameStableIdentityWithDifferentTurnMetada
 	require.True(t, second.Reused())
 	require.Equal(t, firstConnID, second.ConnID())
 	second.Release()
-	require.Equal(t, 1, dialer.DialCount(), "stable identity match should ignore auth, turn metadata, and soft routing hints")
+	require.Equal(t, 1, dialer.DialCount(), "matching auth and identity should ignore turn metadata and soft routing hints")
 }
 
 func TestOpenAIWSConnPool_AcquireDoesNotReuseDifferentStableIdentity(t *testing.T) {
@@ -945,7 +952,7 @@ func TestOpenAIWSConnPool_AcquireRoutingHintRemainsSoftAffinity(t *testing.T) {
 	require.Equal(t, 1, dialer.DialCount())
 }
 
-func TestOpenAIWSConnPool_DeviceModeKeysOnlyInstallationIdentity(t *testing.T) {
+func TestOpenAIWSConnPool_DeviceModeIsolatesSessionAndInstallationIdentity(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 2
 	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
@@ -979,8 +986,8 @@ func TestOpenAIWSConnPool_DeviceModeKeysOnlyInstallationIdentity(t *testing.T) {
 		Headers: sessionChanged,
 	})
 	require.NoError(t, err)
-	require.True(t, second.Reused())
-	require.Equal(t, firstConnID, second.ConnID())
+	require.False(t, second.Reused(), "session headers remain part of the actual handshake identity")
+	require.NotEqual(t, firstConnID, second.ConnID())
 	second.Release()
 
 	installationChanged := sessionChanged.Clone()
@@ -994,7 +1001,7 @@ func TestOpenAIWSConnPool_DeviceModeKeysOnlyInstallationIdentity(t *testing.T) {
 	require.False(t, third.Reused())
 	require.NotEqual(t, firstConnID, third.ConnID())
 	third.Release()
-	require.Equal(t, 2, dialer.DialCount())
+	require.Equal(t, 3, dialer.DialCount())
 }
 
 func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithDifferentBetaFeatures(t *testing.T) {
@@ -1148,6 +1155,8 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnQueuesOnPreferredOnly(t *test
 	ap := pool.getOrCreateAccountPool(account.ID)
 	preferredConn := newOpenAIWSConn("preferred_conn", account.ID, &openAIWSFakeConn{}, nil)
 	otherConn := newOpenAIWSConn("other_conn_idle", account.ID, &openAIWSFakeConn{}, nil)
+	preferredConn.handshakeCompatibility = openAIWSAcquireCompatibility(openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"})
+	otherConn.handshakeCompatibility = preferredConn.handshakeCompatibility
 	require.True(t, preferredConn.tryAcquire(), "先占用 preferred 连接，触发排队获取")
 	ap.mu.Lock()
 	ap.conns[preferredConn.id] = preferredConn
@@ -1189,6 +1198,8 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnDirectAndQueueFull(t *testing
 	ap := pool.getOrCreateAccountPool(account.ID)
 	preferredConn := newOpenAIWSConn("preferred_conn_direct", account.ID, &openAIWSFakeConn{}, nil)
 	otherConn := newOpenAIWSConn("other_conn_direct", account.ID, &openAIWSFakeConn{}, nil)
+	preferredConn.handshakeCompatibility = openAIWSAcquireCompatibility(openAIWSAcquireRequest{Account: account, WSURL: "wss://example.com/v1/responses"})
+	otherConn.handshakeCompatibility = preferredConn.handshakeCompatibility
 	ap.mu.Lock()
 	ap.conns[preferredConn.id] = preferredConn
 	ap.conns[otherConn.id] = otherConn
@@ -2283,6 +2294,7 @@ func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 	account2 := &Account{ID: 2002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	ap2 := fullPool.getOrCreateAccountPool(account2.ID)
 	conn := newOpenAIWSConn("queue_full", account2.ID, &openAIWSFakeConn{}, nil)
+	conn.handshakeCompatibility = openAIWSAcquireCompatibility(openAIWSAcquireRequest{Account: account2, WSURL: "wss://example.com/v1/responses"})
 	require.True(t, conn.tryAcquire())
 	conn.waiters.Store(1)
 	ap2.mu.Lock()

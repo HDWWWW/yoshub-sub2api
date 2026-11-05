@@ -265,6 +265,30 @@ describe("GroupsView Codex manifest binding", () => {
     getLiveCapability.mockResolvedValue({ supported: false });
   });
 
+  for (const form of ["create", "edit"] as const) {
+    it(`${form}: persists SmartWS policy and keeps the account default explicit`, async () => {
+      const wrapper = mountView();
+      await flushPromises();
+      if (form === "create") {
+        await wrapper.get('[data-tour="groups-create-btn"]').trigger("click");
+        const vm = wrapper.vm as unknown as { createForm: { platform: string; name: string } };
+        vm.createForm.platform = "openai";
+        vm.createForm.name = "smart-ws";
+      } else {
+        await wrapper.findAll("button").find((b) => b.text().includes("common.edit"))!.trigger("click");
+      }
+      await flushPromises();
+      const select = wrapper.get(`[data-testid="${form}-smart-ws"]`);
+      expect((select.element as HTMLSelectElement).value).toBe("inherit");
+      await select.setValue(form === "create" ? "enabled" : "disabled");
+      await wrapper.get("form").trigger("submit");
+      await flushPromises();
+      const call = (form === "create" ? createGroup : updateGroup).mock.calls[0];
+      expect(call[form === "create" ? 0 : 1]).toMatchObject({ smart_ws_mode: form === "create" ? "enabled" : "disabled" });
+      wrapper.unmount();
+    });
+  }
+
   it("preserves consecutive child updates on the reactive edit config", async () => {
     const wrapper = mountView();
     await flushPromises();

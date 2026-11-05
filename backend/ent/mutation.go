@@ -22160,6 +22160,7 @@ type GroupMutation struct {
 	addsort_order                           *int
 	allow_messages_dispatch                 *bool
 	allow_live                              *bool
+	smart_ws_mode                           *string
 	force_openai_fast                       *bool
 	reverse_account_priority                *bool
 	force_openai_ultrafast                  *bool
@@ -25025,6 +25026,42 @@ func (m *GroupMutation) ResetAllowLive() {
 	m.allow_live = nil
 }
 
+// SetSmartWsMode sets the "smart_ws_mode" field.
+func (m *GroupMutation) SetSmartWsMode(s string) {
+	m.smart_ws_mode = &s
+}
+
+// SmartWsMode returns the value of the "smart_ws_mode" field in the mutation.
+func (m *GroupMutation) SmartWsMode() (r string, exists bool) {
+	v := m.smart_ws_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSmartWsMode returns the old "smart_ws_mode" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldSmartWsMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSmartWsMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSmartWsMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSmartWsMode: %w", err)
+	}
+	return oldValue.SmartWsMode, nil
+}
+
+// ResetSmartWsMode resets all changes to the "smart_ws_mode" field.
+func (m *GroupMutation) ResetSmartWsMode() {
+	m.smart_ws_mode = nil
+}
+
 // SetForceOpenaiFast sets the "force_openai_fast" field.
 func (m *GroupMutation) SetForceOpenaiFast(b bool) {
 	m.force_openai_fast = &b
@@ -26106,7 +26143,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 71)
+	fields := make([]string, 0, 72)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26265,6 +26302,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.allow_live != nil {
 		fields = append(fields, group.FieldAllowLive)
+	}
+	if m.smart_ws_mode != nil {
+		fields = append(fields, group.FieldSmartWsMode)
 	}
 	if m.force_openai_fast != nil {
 		fields = append(fields, group.FieldForceOpenaiFast)
@@ -26434,6 +26474,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.AllowMessagesDispatch()
 	case group.FieldAllowLive:
 		return m.AllowLive()
+	case group.FieldSmartWsMode:
+		return m.SmartWsMode()
 	case group.FieldForceOpenaiFast:
 		return m.ForceOpenaiFast()
 	case group.FieldReverseAccountPriority:
@@ -26585,6 +26627,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldAllowMessagesDispatch(ctx)
 	case group.FieldAllowLive:
 		return m.OldAllowLive(ctx)
+	case group.FieldSmartWsMode:
+		return m.OldSmartWsMode(ctx)
 	case group.FieldForceOpenaiFast:
 		return m.OldForceOpenaiFast(ctx)
 	case group.FieldReverseAccountPriority:
@@ -27000,6 +27044,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAllowLive(v)
+		return nil
+	case group.FieldSmartWsMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSmartWsMode(v)
 		return nil
 	case group.FieldForceOpenaiFast:
 		v, ok := value.(bool)
@@ -27796,6 +27847,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldAllowLive:
 		m.ResetAllowLive()
+		return nil
+	case group.FieldSmartWsMode:
+		m.ResetSmartWsMode()
 		return nil
 	case group.FieldForceOpenaiFast:
 		m.ResetForceOpenaiFast()

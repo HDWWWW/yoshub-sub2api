@@ -1370,3 +1370,27 @@ export const opsAPI = {
 }
 
 export default opsAPI
+
+export interface SmartWSLatency {
+  samples: number
+  ttft_samples: number
+  ttft_p50_ms: number
+  ttft_p95_ms: number
+  duration_p95_ms: number
+}
+export interface SmartWSMetrics {
+  scope: string
+  started_at: string
+  connections: number
+  acquiring: number
+  handshaking: number
+  active: number
+  counters: Record<string, number>
+  limits: Record<string, number>
+  cold: SmartWSLatency
+  reused: SmartWSLatency
+}
+export async function getSmartWSMetrics(options?: OpsRequestOptions): Promise<SmartWSMetrics> {
+  const { data } = await apiClient.get<SmartWSMetrics>('/admin/ops/smart-ws', { signal: options?.signal })
+  return data
+}

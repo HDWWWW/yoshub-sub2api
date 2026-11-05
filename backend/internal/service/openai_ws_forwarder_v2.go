@@ -34,11 +34,13 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	attempt int,
 	lastFailureReason string,
 	agentTaskRecoveryTried *bool,
-) (*OpenAIForwardResult, error) {
+) (forwardResult *OpenAIForwardResult, forwardErr error) {
 	if s == nil || account == nil {
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
 	responseModelObserver := &upstreamResponseModelObserver{}
+	observation := s.beginSmartWSObservation(nil)
+	defer func() { observation.finish(ctx, forwardResult, forwardErr) }()
 
 	wsURL, err := s.buildOpenAIResponsesWSURL(account)
 	if err != nil {
@@ -63,7 +65,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	)
 
 	payload := s.buildOpenAIWSCreatePayload(reqBody, account)
-	payloadStrategy, removedKeys := applyOpenAIWSRetryPayloadStrategy(payload, attempt)
+	payloadStrategy, removedKeys := "preserve", []string(nil)
+	if account.Platform != PlatformOpenAI {
+		payloadStrategy, removedKeys = applyOpenAIWSRetryPayloadStrategy(payload, attempt)
+	}
 	turnState := ""
 	turnMetadata := ""
 	if c != nil && c.Request != nil {
@@ -210,6 +215,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return s.refreshOpenAIAgentIdentityHeaders(factoryCtx, account, headers)
 		},
 		PreferredConnID: preferredConnID,
+		IsolationKey:    fmt.Sprintf("native:%d:%s", getAPIKeyIDFromContext(c), executionScope),
 		ForceNewConn:    forceNewConn,
 		ProxyURL: func() string {
 			if account.ProxyID != nil && account.Proxy != nil {
@@ -331,20 +337,27 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
-	if err := s.performOpenAIWSGeneratePrewarm(
-		ctx,
-		lease,
-		decision,
-		payload,
-		previousResponseID,
-		reqBody,
-		account,
-		stateStore,
-		groupID,
-	); err != nil {
-		return nil, err
+	// Never dispatch an extra generation as a connection probe on OpenAI.
+	if account.Platform != PlatformOpenAI {
+		if err := s.performOpenAIWSGeneratePrewarm(
+			ctx,
+			lease,
+			decision,
+			payload,
+			previousResponseID,
+			reqBody,
+			account,
+			stateStore,
+			groupID,
+		); err != nil {
+			return nil, err
+		}
 	}
 
+	dispatch := beginSmartWSDispatch(c)
+	observation.dispatched = true
+	observation.reused = lease.Reused()
+	dispatch.state.Store(smartWSMayBeSent)
 	if err := lease.WriteJSONWithContextTimeout(ctx, payload, s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		if canceled := openAIAccountContextError(ctx, account); canceled != nil {
@@ -596,6 +609,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 
 		eventType, eventResponseID, responseField := parseOpenAIWSEventEnvelope(message)
+		dispatch.state.Store(smartWSReceived)
+		observation.event(message)
 		if eventType == "" {
 			continue
 		}
@@ -656,6 +671,40 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 		}
 
+		if account.Platform == PlatformOpenAI && (eventType == "error" || eventType == "response.failed") {
+			dispatch.state.Store(smartWSTerminal)
+			defer lease.MarkBroken()
+			upstreamTerminalEvent = eventType
+			failurePayload := message
+			if tail := readSmartWSFailedTail(ctx, lease, message, responseID); len(tail) > 0 {
+				failurePayload = tail
+				observation.event(tail)
+				parseOpenAIWSResponseUsageFromCompletedEvent(tail, usage)
+				responseModelObserver.ObserveOpenAI(tail, "response.failed")
+				upstreamTerminalEvent = "response.failed"
+				if id := gjson.GetBytes(tail, "response.id").String(); id != "" {
+					responseID = id
+				}
+			}
+			if !wroteDownstream {
+				failureErr := s.writeSmartWSHTTPError(c, account, openAIHTTPWSErrorResponse(c.Request, openAIHTTPWSEventErrorStatus(message), lease.HandshakeHeaders(), message), message, mappedModel)
+				markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
+				markOpenAICyberPolicyEvent(c, failurePayload, http.StatusOK, usage)
+				mergeSmartWSCyberPolicyUsage(c, usage)
+				return resultWithUsage(), failureErr
+			}
+			s.handleSmartWSFailureSideEffects(ctx, c, account, mappedModel, lease.HandshakeHeaders(), failurePayload)
+			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
+			markOpenAICyberPolicyEvent(c, failurePayload, http.StatusOK, usage)
+			mergeSmartWSCyberPolicyUsage(c, usage)
+			if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", message); err != nil {
+				clientDisconnected = true
+				return resultWithUsage(), err
+			}
+			c.Writer.Flush()
+			c.Set(smartWSFailureDeliveredKey, true)
+			return resultWithUsage(), smartWSStopFailure(openAIHTTPWSEventErrorStatus(message), message, lease.HandshakeHeaders())
+		}
 		if eventType == "error" {
 			s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(message)

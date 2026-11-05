@@ -368,6 +368,22 @@ gateway:
     responses_websockets: false
     responses_websockets_v2: true
     # 连接池参数（按账号池化复用）
+    # SmartWS process-wide ceilings; tune for available memory and upstream limits.
+    # Environment variables use GATEWAY_OPENAI_WS_<UPPERCASE_KEY>.
+    max_conns_global: 512
+    # Oversized HTTP requests keep the complete body and use HTTP before dispatch.
+    max_request_bytes: 16777216
+    max_upstream_frame_bytes: 16777216
+    max_conns_per_identity: 32
+    max_queued_global: 128
+    max_queued_per_identity: 16
+    max_concurrent_handshakes: 8
+    max_concurrent_handshakes_per_identity: 2
+    handshakes_per_second: 8
+    handshakes_per_second_per_identity: 2
+    # Reclaim idle/unleased connections only; never cap active stream duration.
+    idle_timeout_seconds: 300
+    max_conn_age_seconds: 3000
     max_conns_per_account: 128
     min_idle_per_account: 4
     max_idle_per_account: 12

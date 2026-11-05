@@ -238,6 +238,7 @@ type CreateGroupRequest struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       bool                                      `json:"allow_messages_dispatch"`
 	AllowLive                   bool                                      `json:"allow_live"`
+	SmartWSMode                 string                                    `json:"smart_ws_mode"`
 	ForceOpenAIFast             bool                                      `json:"force_openai_fast"`
 	ReverseAccountPriority      bool                                      `json:"reverse_account_priority"`
 	ForceOpenAIUltrafast        bool                                      `json:"force_openai_ultrafast"`
@@ -318,6 +319,7 @@ type UpdateGroupRequest struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       *bool                                      `json:"allow_messages_dispatch"`
 	AllowLive                   *bool                                      `json:"allow_live"`
+	SmartWSMode                 *string                                    `json:"smart_ws_mode"`
 	ForceOpenAIFast             *bool                                      `json:"force_openai_fast"`
 	ReverseAccountPriority      *bool                                      `json:"reverse_account_priority"`
 	ForceOpenAIUltrafast        *bool                                      `json:"force_openai_ultrafast"`
@@ -724,6 +726,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		SupportedModelScopes:            req.SupportedModelScopes,
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		AllowLive:                       req.AllowLive,
+		SmartWSMode:                     req.SmartWSMode,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		ReverseAccountPriority:          req.ReverseAccountPriority,
 		ForceOpenAIUltrafast:            req.ForceOpenAIUltrafast,
@@ -875,6 +878,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		SupportedModelScopes:            req.SupportedModelScopes,
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		AllowLive:                       req.AllowLive,
+		SmartWSMode:                     req.SmartWSMode,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		ReverseAccountPriority:          req.ReverseAccountPriority,
 		ForceOpenAIUltrafast:            req.ForceOpenAIUltrafast,

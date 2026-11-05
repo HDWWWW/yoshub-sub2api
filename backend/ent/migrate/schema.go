@@ -956,6 +956,7 @@ var (
 		{Name: "sort_order", Type: field.TypeInt, Default: 0},
 		{Name: "allow_messages_dispatch", Type: field.TypeBool, Default: false},
 		{Name: "allow_live", Type: field.TypeBool, Default: false},
+		{Name: "smart_ws_mode", Type: field.TypeString, Size: 16, Default: "inherit"},
 		{Name: "force_openai_fast", Type: field.TypeBool, Default: false},
 		{Name: "reverse_account_priority", Type: field.TypeBool, Default: false},
 		{Name: "force_openai_ultrafast", Type: field.TypeBool, Default: false},

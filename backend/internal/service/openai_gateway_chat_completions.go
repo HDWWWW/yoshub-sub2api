@@ -60,7 +60,12 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	body []byte,
 	promptCacheKey string,
 	defaultMappedModel string,
-) (*OpenAIForwardResult, error) {
+) (result *OpenAIForwardResult, returnErr error) {
+	defer func() {
+		result, returnErr = s.finalizeSmartWSHTTPFailure(c, account, body, result, returnErr)
+		returnErr = stopSmartWSReplay(c, returnErr)
+		finishSmartWSObservation(c, result, returnErr)
+	}()
 	return s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, false)
 }
 
@@ -74,6 +79,8 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	compatPromptCacheTenantIsolated bool,
 ) (*OpenAIForwardResult, error) {
 	rememberOpenCodeInboundBody(c, body)
+	wsScope, _ := resolveOpenAIWSExecutionScope(c, body, getAPIKeyIDFromContext(c))
+	c.Set(openAIHTTPWSExecutionScopeKey, wsScope)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -364,7 +371,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account, c)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
@@ -373,6 +380,10 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		_ = resp.Body.Close()
 	}()
 
+	if resp.StatusCode >= 400 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
+		payload := s.readUpstreamErrorBody(resp)
+		return smartWSHTTPFailureResult(resp, payload, responsesBody, originalModel, upstreamModel, chatReq.Stream, startTime), s.writeSmartWSHTTPError(c, account, resp, payload, upstreamModel)
+	}
 	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg, completeErrorBody := s.readOpenAIUpstreamErrorWithCompleteness(resp)
@@ -429,6 +440,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 	}
 	stampOpenAIResponsesUpstreamEndpoint(c, result)
+	if result != nil {
+		result.OpenAIWSMode = isOpenAIHTTPWSResponse(resp)
+	}
 
 	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
 	// 返回哨兵，使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
@@ -686,6 +700,11 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	if err != nil {
 		return nil, s.newOpenAICompatBufferedReadFailoverError(c, account, resp, requestID, err)
 	}
+	if _, failed := c.Get(smartWSHTTPFailureKey); failed {
+		// The adapter retained the exact error and any failed usage tail. Let
+		// the public boundary deliver it before writing a converted JSON body.
+		return nil, errors.New("upstream WebSocket response failed")
+	}
 
 	if finalResponse == nil {
 		writeChatCompletionsError(c, http.StatusBadGateway, "api_error", "Upstream stream ended without a terminal response event")
@@ -857,6 +876,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
+	streamFinalized := false
 	pendingSSE := make([]string, 0, 4)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
@@ -901,7 +921,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
-			ClientDisconnect:              clientDisconnected || openAIAccountContextError(c.Request.Context(), account) != nil,
+			ClientDisconnect:              clientDisconnected || (!streamFinalized && openAIAccountContextError(c.Request.Context(), account) != nil),
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -974,6 +994,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					// finalizeStream 的 [DONE] 同样发不出去，统一抑制。
 					clientDisconnected = true
 					closeOpenAIUpstreamOnDisconnect(resp, account)
+					if smartWSHasDispatched(c) {
+						c.Set(smartWSFailureDeliveredKey, true)
+					}
 				}
 				return true
 			}
@@ -1004,8 +1027,21 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					"message": defaultMsg,
 				},
 			})
+			if smartWSHasDispatched(c) {
+				originalError := gjson.GetBytes(payloadBytes, "response.error")
+				if !originalError.IsObject() {
+					originalError = gjson.GetBytes(payloadBytes, "error")
+				}
+				if originalError.IsObject() {
+					errorPayload = []byte(`{"error":` + originalError.Raw + `}`)
+				}
+			}
 			if c != nil && c.Writer != nil && !c.Writer.Written() {
-				writeChatCompletionsError(c, defaultStatus, defaultErrType, defaultMsg)
+				if smartWSHasDispatched(c) {
+					c.Data(openAIHTTPWSEventErrorStatus(payloadBytes), "application/json", errorPayload)
+				} else {
+					writeChatCompletionsError(c, defaultStatus, defaultErrType, defaultMsg)
+				}
 				clientOutputStarted = true
 			} else if c != nil && c.Writer != nil && !clientDisconnected {
 				if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", errorPayload); err != nil {
@@ -1018,6 +1054,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if !clientDisconnected {
 				c.Writer.Flush()
+				if smartWSHasDispatched(c) {
+					c.Set(smartWSFailureDeliveredKey, true)
+				}
 			}
 			streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", message)
 			return true
@@ -1157,6 +1196,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if !clientDisconnected {
 			c.Writer.Flush()
 		}
+		// A caller may close immediately after [DONE]. The completed write is
+		// already the result; do not label that normal close a delivery failure.
+		streamFinalized = !clientDisconnected
 		logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, &usage, terminalEventType, clientDisconnected)
 		return resultWithUsage(), nil
 	}

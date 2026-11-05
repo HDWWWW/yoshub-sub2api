@@ -18,6 +18,13 @@ import (
 )
 
 const openAIWSMessageReadLimitBytes int64 = 16 * 1024 * 1024
+
+func (c *coderOpenAIWSClientConn) SetReadLimit(limit int64) {
+	if c != nil && c.conn != nil && limit > 0 {
+		c.conn.SetReadLimit(limit)
+	}
+}
+
 const (
 	openAIWSProxyTransportMaxIdleConns        = 128
 	openAIWSProxyTransportMaxIdleConnsPerHost = 64

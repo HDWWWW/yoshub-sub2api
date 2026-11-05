@@ -259,7 +259,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
-	codexFailureTerminal := account != nil && account.IsOpenAIOAuthLike()
+	codexFailureTerminal := account != nil && account.IsOpenAIOAuthLike() && !smartWSHasDispatched(c)
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	var streamEarlyErr error
 	terminalFailurePending := false
@@ -362,6 +362,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	// both list the same call_id — counting both would ~2× the surcharge).
 	streamSearchSeen := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResult {
+		if failureDelivered && !clientDisconnected && smartWSHasDispatched(c) {
+			c.Set(smartWSFailureDeliveredKey, true)
+		}
 		return &openaiStreamingResult{
 			usage:              usage,
 			firstTokenMs:       firstTokenMs,
@@ -676,7 +679,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				dataBytes,
 				eventType,
 				openAIStreamClientOutputStarted(c, clientOutputStarted),
-			); sanitized {
+			); sanitized && !smartWSHasDispatched(c) {
 				dataBytes = sanitizedData
 				data = string(sanitizedData)
 				line = "data: " + data
@@ -1743,6 +1746,10 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
+		if isOpenAIHTTPWSResponse(resp) {
+			failureResponse := openAIHTTPWSErrorResponse(c.Request, openAIHTTPWSEventErrorStatus(terminalPayload), resp.Header, terminalPayload)
+			return nil, s.writeSmartWSHTTPError(c, account, failureResponse, terminalPayload, mappedModel)
+		}
 		msg := extractOpenAISSEErrorMessage(terminalPayload)
 		if msg == "" {
 			msg = "Upstream compact response failed"
@@ -1812,6 +1819,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		// Gin preserves an existing Content-Type. Replace the copied SSE
+		// header after conversion so downstream proxies parse the JSON usage.
+		c.Header("Content-Type", contentType)
 		c.Data(resp.StatusCode, contentType, body)
 	}
 

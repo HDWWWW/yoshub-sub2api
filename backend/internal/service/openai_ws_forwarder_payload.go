@@ -209,6 +209,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any
 	if _, exists := payload["stream"]; !exists {
 		payload["stream"] = true
 	}
+	if account != nil && !account.UsesOpenAICodexProtocol() {
+		delete(payload, "stream")
+	}
 	payload["type"] = "response.create"
 
 	// OAuth 默认保持 store=false，避免误依赖服务端历史。

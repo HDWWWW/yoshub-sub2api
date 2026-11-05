@@ -410,6 +410,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 
 	platform := NormalizeGroupPlatform(input.Platform)
+	smartWSMode, err := normalizeSmartWSMode(platform, input.SmartWSMode)
+	if err != nil {
+		return nil, err
+	}
 	// 固定账号 manifest 配置：账号绑定发生在创建之后，创建时无法校验成员关系，
 	// 拒绝开启并在创建后的编辑里配置。
 	if normalizeCodexModelsManifestConfig(platform, input.CodexModelsManifestConfig).Enabled {
@@ -628,6 +632,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		SupportedModelScopes:            input.SupportedModelScopes,
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
 		AllowLive:                       input.AllowLive,
+		SmartWSMode:                     smartWSMode,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		ReverseAccountPriority:          input.ReverseAccountPriority,
 		ForceOpenAIUltrafast:            input.ForceOpenAIUltrafast,
@@ -1028,6 +1033,16 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.ReverseAccountPriority != nil {
 		group.ReverseAccountPriority = *input.ReverseAccountPriority
+	}
+	if input.SmartWSMode != nil {
+		mode, err := normalizeSmartWSMode(group.Platform, *input.SmartWSMode)
+		if err != nil {
+			return nil, err
+		}
+		group.SmartWSMode = mode
+	}
+	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
+		group.SmartWSMode = "inherit"
 	}
 	if input.ForceOpenAIFast != nil {
 		group.ForceOpenAIFast = *input.ForceOpenAIFast

@@ -102,6 +102,7 @@ func TestForwardOpenAIWSV2_MarksCyberPolicyForFailureEventShapes(t *testing.T) {
 	tests := []struct {
 		name          string
 		upstreamEvent []byte
+		tailEvent     []byte
 		wantError     bool
 		wantInput     int
 		wantOutput    int
@@ -119,6 +120,13 @@ func TestForwardOpenAIWSV2_MarksCyberPolicyForFailureEventShapes(t *testing.T) {
 			wantInput:     9,
 			wantOutput:    2,
 		},
+		{
+			name:          "usage_only_in_failed_tail",
+			upstreamEvent: []byte(`{"type":"error","error":{"code":"cyber_policy","message":"blocked by cyber policy"}}`),
+			tailEvent:     []byte(`{"type":"response.failed","response":{"id":"resp_cyber","status":"failed","error":{"code":"cyber_policy","message":"blocked by cyber policy"},"usage":{"input_tokens":9,"output_tokens":2}}}`),
+			wantInput:     9,
+			wantOutput:    2,
+		},
 	}
 
 	for _, tt := range tests {
@@ -132,7 +140,11 @@ func TestForwardOpenAIWSV2_MarksCyberPolicyForFailureEventShapes(t *testing.T) {
 			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
 			cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
 			captureConn := &openAIWSCaptureConn{events: [][]byte{append([]byte(nil), tt.upstreamEvent...)}}
+			if len(tt.tailEvent) > 0 {
+				captureConn.events = append(captureConn.events, tt.tailEvent)
+			}
 			pool := newOpenAIWSConnPool(cfg)
+			t.Cleanup(pool.Close)
 			pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
 			svc := &OpenAIGatewayService{
 				cfg:              cfg,
@@ -150,15 +162,14 @@ func TestForwardOpenAIWSV2_MarksCyberPolicyForFailureEventShapes(t *testing.T) {
 			}
 
 			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.5","stream":false,"input":"hello"}`))
-			if tt.wantError {
-				require.Error(t, err)
-				require.Nil(t, result)
-				var failoverErr *UpstreamFailoverError
-				require.False(t, errors.As(err, &failoverErr))
-			} else {
-				require.NoError(t, err)
-				require.NotNil(t, result)
-			}
+			require.Error(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, tt.wantInput, result.Usage.InputTokens)
+			require.Equal(t, tt.wantOutput, result.Usage.OutputTokens)
+			var failoverErr *UpstreamFailoverError
+			require.True(t, errors.As(err, &failoverErr))
+			require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
+			require.JSONEq(t, string(tt.upstreamEvent), recorder.Body.String())
 
 			mark := GetOpsCyberPolicy(c)
 			require.NotNil(t, mark)

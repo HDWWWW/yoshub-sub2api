@@ -122,6 +122,8 @@ const (
 	FieldAllowMessagesDispatch = "allow_messages_dispatch"
 	// FieldAllowLive holds the string denoting the allow_live field in the database.
 	FieldAllowLive = "allow_live"
+	// FieldSmartWsMode holds the string denoting the smart_ws_mode field in the database.
+	FieldSmartWsMode = "smart_ws_mode"
 	// FieldForceOpenaiFast holds the string denoting the force_openai_fast field in the database.
 	FieldForceOpenaiFast = "force_openai_fast"
 	// FieldReverseAccountPriority holds the string denoting the reverse_account_priority field in the database.
@@ -286,6 +288,7 @@ var Columns = []string{
 	FieldSortOrder,
 	FieldAllowMessagesDispatch,
 	FieldAllowLive,
+	FieldSmartWsMode,
 	FieldForceOpenaiFast,
 	FieldReverseAccountPriority,
 	FieldForceOpenaiUltrafast,
@@ -417,6 +420,10 @@ var (
 	DefaultAllowMessagesDispatch bool
 	// DefaultAllowLive holds the default value on creation for the "allow_live" field.
 	DefaultAllowLive bool
+	// DefaultSmartWsMode holds the default value on creation for the "smart_ws_mode" field.
+	DefaultSmartWsMode string
+	// SmartWsModeValidator is a validator for the "smart_ws_mode" field. It is called by the builders before save.
+	SmartWsModeValidator func(string) error
 	// DefaultForceOpenaiFast holds the default value on creation for the "force_openai_fast" field.
 	DefaultForceOpenaiFast bool
 	// DefaultReverseAccountPriority holds the default value on creation for the "reverse_account_priority" field.
@@ -707,6 +714,11 @@ func ByAllowMessagesDispatch(opts ...sql.OrderTermOption) OrderOption {
 // ByAllowLive orders the results by the allow_live field.
 func ByAllowLive(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAllowLive, opts...).ToFunc()
+}
+
+// BySmartWsMode orders the results by the smart_ws_mode field.
+func BySmartWsMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSmartWsMode, opts...).ToFunc()
 }
 
 // ByForceOpenaiFast orders the results by the force_openai_fast field.

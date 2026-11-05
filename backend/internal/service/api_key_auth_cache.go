@@ -104,6 +104,7 @@ type APIKeyAuthGroupSnapshot struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       bool                              `json:"allow_messages_dispatch"`
 	AllowLive                   bool                              `json:"allow_live"`
+	SmartWSMode                 string                            `json:"smart_ws_mode"`
 	ForceOpenAIFast             bool                              `json:"force_openai_fast"`
 	ReverseAccountPriority      bool                              `json:"reverse_account_priority"`
 	ForceOpenAIUltrafast        bool                              `json:"force_openai_ultrafast"`

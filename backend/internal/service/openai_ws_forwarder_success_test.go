@@ -157,7 +157,7 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	received := <-receivedCh
 	require.Equal(t, "response.create", received.Type)
 	require.Equal(t, "resp_prev_1", received.PreviousResponseID)
-	require.True(t, received.StreamExists, "WS 请求应携带 stream 字段")
+	require.False(t, received.StreamExists, "OpenAI API-key WS protocol excludes the HTTP stream field")
 	require.False(t, received.Stream, "应保持客户端 stream=false 的原始语义")
 
 	store := svc.getOpenAIWSStateStore()
@@ -595,7 +595,10 @@ func TestOpenAIGatewayService_Forward_WSv2_ResponseFailedIsNotSchedulingSuccess(
 
 	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.5","stream":false,"input":"hello"}`))
 
-	require.NoError(t, err)
+	require.Error(t, err)
+	var stopped *UpstreamFailoverError
+	require.ErrorAs(t, err, &stopped)
+	require.Equal(t, NextAccountStop, stopped.NextAccountAction)
 	require.NotNil(t, result)
 	require.Equal(t, "response.failed", result.UpstreamTerminalEvent)
 	require.False(t, result.SucceededForScheduling())
@@ -1432,7 +1435,7 @@ func TestOpenAIGatewayService_Forward_WSv2_TurnStateAndMetadataReplayOnReconnect
 	require.Equal(t, "turn_state_first", secondHandshakeHeaders.Get("X-Codex-Turn-State"))
 }
 
-func TestOpenAIGatewayService_Forward_WSv2_GeneratePrewarm(t *testing.T) {
+func TestOpenAIGatewayService_Forward_WSv2_DoesNotSendProbeGeneration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1454,7 +1457,6 @@ func TestOpenAIGatewayService_Forward_WSv2_GeneratePrewarm(t *testing.T) {
 
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.completed","response":{"id":"resp_prewarm_1","model":"gpt-5.1","usage":{"input_tokens":0,"output_tokens":0}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_main_1","model":"gpt-5.1","usage":{"input_tokens":4,"output_tokens":2}}}`),
 		},
 	}
@@ -1493,12 +1495,8 @@ func TestOpenAIGatewayService_Forward_WSv2_GeneratePrewarm(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, "resp_main_1", result.RequestID)
 
-	require.Len(t, captureConn.writes, 2, "开启 generate=false 预热后应发送两次 WS 请求")
-	firstWrite := requestToJSONString(captureConn.writes[0])
-	secondWrite := requestToJSONString(captureConn.writes[1])
-	require.True(t, gjson.Get(firstWrite, "generate").Exists())
-	require.False(t, gjson.Get(firstWrite, "generate").Bool())
-	require.False(t, gjson.Get(secondWrite, "generate").Exists())
+	require.Len(t, captureConn.writes, 1, "an OpenAI turn must not send a probe generation")
+	require.False(t, gjson.Get(requestToJSONString(captureConn.writes[0]), "generate").Exists())
 }
 
 func TestOpenAIGatewayService_PrewarmReadHonorsParentContext(t *testing.T) {
@@ -1742,7 +1740,7 @@ func TestOpenAIGatewayService_Forward_WSv2StoreFalseSessionConnIsolation(t *test
 	require.Equal(t, int64(2), upgradeCount.Load(), "不同 session(store=false) 应隔离连接，避免续链状态互相覆盖")
 }
 
-func TestOpenAIGatewayService_Forward_WSv2StoreFalseDisableForceNewConnAllowsReuse(t *testing.T) {
+func TestOpenAIGatewayService_Forward_WSv2StoreFalseStillIsolatesDistinctSessions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	var upgradeCount atomic.Int64
@@ -1837,7 +1835,16 @@ func TestOpenAIGatewayService_Forward_WSv2StoreFalseDisableForceNewConnAllowsReu
 	result2, err := svc.Forward(context.Background(), c2, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result2)
-	require.Equal(t, int64(1), upgradeCount.Load(), "关闭强制新连后，不同 session(store=false) 可复用连接")
+	require.Equal(t, int64(2), upgradeCount.Load(), "different handshake session identities must remain isolated")
+	rec3 := httptest.NewRecorder()
+	c3, _ := gin.CreateTestContext(rec3)
+	c3.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c3.Request.Header.Set("session_id", "session_store_false_reuse_b")
+	result3, err := svc.Forward(context.Background(), c3, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result3)
+	require.Equal(t, int64(2), upgradeCount.Load(), "the same identity must still reuse its existing connection")
+
 }
 
 func TestOpenAIGatewayService_Forward_WSv2ReadTimeoutAppliesPerRead(t *testing.T) {

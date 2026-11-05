@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 25 // v25: group image_count_billing switch (per-image billing on image endpoints)
+const apiKeyAuthSnapshotVersion = 26 // v26: group SmartWS transport policy
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -419,6 +419,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			SupportedModelScopes:            apiKey.Group.SupportedModelScopes,
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
 			AllowLive:                       apiKey.Group.AllowLive,
+			SmartWSMode:                     apiKey.Group.SmartWSMode,
 			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
 			ReverseAccountPriority:          apiKey.Group.ReverseAccountPriority,
 			ForceOpenAIUltrafast:            apiKey.Group.ForceOpenAIUltrafast,
@@ -525,6 +526,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			SupportedModelScopes:            snapshot.Group.SupportedModelScopes,
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
 			AllowLive:                       snapshot.Group.AllowLive,
+			SmartWSMode:                     snapshot.Group.SmartWSMode,
 			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
 			ReverseAccountPriority:          snapshot.Group.ReverseAccountPriority,
 			ForceOpenAIUltrafast:            snapshot.Group.ForceOpenAIUltrafast,
