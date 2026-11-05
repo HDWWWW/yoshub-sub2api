@@ -285,11 +285,42 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	payload = s.redactAgentIdentitySensitiveBody(c.Request.Context(), account, payload)
 	message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(payload))
 	setOpsUpstreamError(c, resp.StatusCode, message, "")
-	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{AccountID: account.ID, Platform: account.Platform, UpstreamStatusCode: resp.StatusCode, Kind: "ws_upstream_error", Message: message})
+	event := OpsUpstreamErrorEvent{AccountID: account.ID, Platform: account.Platform, UpstreamStatusCode: resp.StatusCode, Kind: "ws_upstream_error", Message: message}
+	event.ProxyID, event.ProxyName = opsUpstreamWSProxyAttribution(account)
+	var handshake smartWSHandshakeFailure
+	var isHandshake bool
+	if resp.Request != nil {
+		handshake, isHandshake = resp.Request.Context().Value(smartWSHandshakeKey{}).(smartWSHandshakeFailure)
+	}
+	if isHandshake {
+		event.Stage, event.Scope, event.Reason = "ws_handshake", "upstream_transport", handshake.category
+		if handshake.accountFailure {
+			event.Scope = "account"
+		}
+		if resp.Request.URL != nil {
+			// Deliberately exclude userinfo, query, fragment and response headers.
+			event.UpstreamURL = resp.Request.URL.Host + resp.Request.URL.EscapedPath()
+		}
+	}
+	appendOpsUpstreamError(c, event)
 	var usage OpenAIUsage
 	parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
 	if !markOpenAICyberPolicyEvent(c, payload, resp.StatusCode, &usage) {
-		_ = s.handleOpenAIAccountUpstreamError(c.Request.Context(), account, resp.StatusCode, resp.Header, payload, upstreamModel...)
+		if !isOpenAIHTTPWSResponse(resp) {
+			// A safe pre-dispatch fallback may have produced an actual HTTP
+			// business response. Preserve its original account policy.
+			_ = s.handleOpenAIAccountUpstreamError(c.Request.Context(), account, resp.StatusCode, resp.Header, payload, upstreamModel...)
+		} else if isHandshake {
+			if handshake.accountFailure {
+				_ = s.handleOpenAIAccountUpstreamError(c.Request.Context(), account, resp.StatusCode, resp.Header, payload, upstreamModel...)
+			}
+		} else {
+			model := ""
+			if len(upstreamModel) > 0 {
+				model = upstreamModel[0]
+			}
+			s.handleSmartWSFailureSideEffects(c.Request.Context(), c, account, model, resp.Header, payload)
+		}
 	}
 	for _, key := range []string{"Retry-After", "X-Request-Id"} {
 		if v := resp.Header.Get(key); v != "" {

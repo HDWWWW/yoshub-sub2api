@@ -40,6 +40,37 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 	// Keep the entire original body available even when the WS limit is crossed.
 	// Falling back is safe here: no response.create has been written.
 	fallback := func() (*http.Response, error) {
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
+		previousID := gjson.GetBytes(raw, "previous_response_id").String()
+		if int64(len(raw)) > requestLimit {
+			// The identifier may occur after a large input. Finalized gateway
+			// requests have GetBody backed by the already bounded HTTP payload;
+			// inspect that complete JSON without consuming the fallback body.
+			if req.GetBody == nil {
+				return nil, errors.New("cannot verify continuation before oversized request fallback")
+			}
+			copy, err := req.GetBody()
+			if err != nil {
+				return nil, err
+			}
+			var continuation struct {
+				PreviousResponseID string `json:"previous_response_id"`
+			}
+			err = json.NewDecoder(copy).Decode(&continuation)
+			_ = copy.Close()
+			if err != nil {
+				return nil, err
+			}
+			previousID = continuation.PreviousResponseID
+		}
+		// A prior WS response can exist only on its originating connection.
+		// Never silently move such a continuation to a different transport.
+		if previousID != "" {
+			observation.m.continuationUnavailable.Add(1)
+			return openAIHTTPWSErrorResponse(req, http.StatusConflict, nil, []byte(`{"error":{"type":"invalid_request_error","code":"smart_ws_continuation_unavailable","message":"The upstream WebSocket continuation is unavailable; this request was not dispatched."}}`)), nil
+		}
 		observation.m.fallback.Add(1)
 		req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), originalBody))
 		observation.fallback = true
@@ -113,15 +144,22 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 			preferred, _ = stateStore.GetSessionConn(groupID, scope)
 		}
 	}
-	acquireCtx, cancelAcquire := context.WithTimeout(req.Context(), s.openAIWSAcquireTimeout())
-	lease, err := s.getOpenAIWSConnPool().Acquire(acquireCtx, openAIWSAcquireRequest{
+	pool := s.getOpenAIWSConnPool()
+	acquireRequest := openAIWSAcquireRequest{
 		Account: account, WSURL: wsURL.String(), Headers: headers, ProxyURL: proxyURL,
 		PreferredConnID: preferred, IsolationKey: scope, SkipPrewarm: true,
 		ForcePreferredConn: previousID != "" && preferred != "" && s.isOpenAIWSStoreDisabledInRequest(body, account),
 		HeadersFactory: func(ctx context.Context, headers http.Header) (http.Header, error) {
 			return s.refreshOpenAIAgentIdentityHeaders(ctx, account, headers)
 		},
-	})
+	}
+	if pool.rejections.active(smartWSRejectionDigest(acquireRequest), time.Now()) {
+		observation.m.rejectionBypass.Add(1)
+		c.Set("openai_ws_transport_reason", "handshake_rejection_cooldown")
+		return fallback()
+	}
+	acquireCtx, cancelAcquire := context.WithTimeout(req.Context(), s.openAIWSAcquireTimeout())
+	lease, err := pool.Acquire(acquireCtx, acquireRequest)
 	cancelAcquire()
 	if err != nil {
 		if req.Context().Err() != nil {
@@ -129,11 +167,12 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 		}
 		var dialErr *openAIWSDialError
 		if errors.As(err, &dialErr) && dialErr.StatusCode >= 400 {
+			pool.rememberSmartWSRejection(acquireRequest, dialErr)
 			switch dialErr.StatusCode {
 			case 404, 405, 426, 501:
 				return fallback()
 			}
-			return openAIHTTPWSErrorResponse(req, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody), nil
+			return smartWSHandshakeErrorResponse(req, dialErr), nil
 		}
 		return fallback()
 	}

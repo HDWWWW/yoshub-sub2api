@@ -120,6 +120,12 @@ func (p *openAIWSConnPool) smartWSLimits() config.GatewayOpenAIWSConfig {
 	if c.HandshakesPerSecondPerIdentity <= 0 {
 		c.HandshakesPerSecondPerIdentity = 2
 	}
+	if c.HandshakeRejectionCooldownSeconds <= 0 {
+		c.HandshakeRejectionCooldownSeconds = 30
+	}
+	if c.MaxHandshakeRejections <= 0 {
+		c.MaxHandshakeRejections = 1024
+	}
 	return c
 }
 
@@ -262,7 +268,11 @@ func smartWSCapacityIdentity(req openAIWSAcquireRequest) [32]byte {
 func (m *smartWSMetrics) recordHandshakeFailure(status int) {
 	m.handshakeFailed.Add(1)
 	switch status {
-	case 401, 403:
+	case 401:
+		m.handshake401.Add(1)
+		m.handshakeAuth.Add(1)
+	case 403:
+		m.handshake403.Add(1)
 		m.handshakeAuth.Add(1)
 	case 429:
 		m.handshakeRateLimited.Add(1)

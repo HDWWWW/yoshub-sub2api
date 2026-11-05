@@ -1281,6 +1281,9 @@ type GatewayOpenAIWSConfig struct {
 	HandshakesPerSecondPerIdentity     int `mapstructure:"handshakes_per_second_per_identity"`
 	IdleTimeoutSeconds                 int `mapstructure:"idle_timeout_seconds"`
 	MaxConnAgeSeconds                  int `mapstructure:"max_conn_age_seconds"`
+	// HTTP SmartWS endpoint rejection cache; does not change account health.
+	HandshakeRejectionCooldownSeconds int `mapstructure:"handshake_rejection_cooldown_seconds"`
+	MaxHandshakeRejections            int `mapstructure:"max_handshake_rejections"`
 
 	// ModeRouterV2Enabled: 新版 WS mode 路由开关（默认 false；关闭时保持 legacy 行为）
 	ModeRouterV2Enabled bool `mapstructure:"mode_router_v2_enabled"`
@@ -2500,6 +2503,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.handshakes_per_second_per_identity", 2)
 	viper.SetDefault("gateway.openai_ws.idle_timeout_seconds", 300)
 	viper.SetDefault("gateway.openai_ws.max_conn_age_seconds", 3000)
+	viper.SetDefault("gateway.openai_ws.handshake_rejection_cooldown_seconds", 30)
+	viper.SetDefault("gateway.openai_ws.max_handshake_rejections", 1024)
 	viper.SetDefault("gateway.openai_ws.max_conns_per_account", 128)
 	viper.SetDefault("gateway.openai_ws.min_idle_per_account", 4)
 	viper.SetDefault("gateway.openai_ws.max_idle_per_account", 12)
@@ -3515,6 +3520,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIWS.MaxRequestBytes < 1024 || c.Gateway.OpenAIWS.MaxRequestBytes > 128*1024*1024 {
 		return fmt.Errorf("gateway.openai_ws.max_request_bytes must be between 1024 and 134217728")
+	}
+	if c.Gateway.OpenAIWS.HandshakeRejectionCooldownSeconds < 1 || c.Gateway.OpenAIWS.HandshakeRejectionCooldownSeconds > 300 {
+		return fmt.Errorf("gateway.openai_ws.handshake_rejection_cooldown_seconds must be between 1 and 300")
+	}
+	if c.Gateway.OpenAIWS.MaxHandshakeRejections < 1 || c.Gateway.OpenAIWS.MaxHandshakeRejections > 65536 {
+		return fmt.Errorf("gateway.openai_ws.max_handshake_rejections must be between 1 and 65536")
 	}
 	if c.Gateway.OpenAIWS.MaxUpstreamFrameBytes < 1024 || c.Gateway.OpenAIWS.MaxUpstreamFrameBytes > 128*1024*1024 {
 		return fmt.Errorf("gateway.openai_ws.max_upstream_frame_bytes must be between 1024 and 134217728")

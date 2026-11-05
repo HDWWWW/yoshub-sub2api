@@ -16,13 +16,14 @@ const smartWSObservationKey = "openai_smart_ws_observation"
 
 // Process-local, bounded samples. No account, prompt or credential is retained.
 type smartWSMetrics struct {
-	nativeConnections, incomplete                                                          atomic.Int64
-	attempted, succeeded, failed, canceled                                                 atomic.Int64
-	handshakes, handshakeFailed, handshakeAuth, handshakeRateLimited, handshakeUnsupported atomic.Int64
-	queueRejected, capacityRejected, fallback, upstreamError, transportError, uncertain    atomic.Int64
-	mu                                                                                     sync.Mutex
-	samples                                                                                [256]smartWSSample
-	next, count                                                                            int
+	handshake401, handshake403, handshakeRejection, rejectionBypass, continuationUnavailable atomic.Int64
+	nativeConnections, incomplete                                                            atomic.Int64
+	attempted, succeeded, failed, canceled                                                   atomic.Int64
+	handshakes, handshakeFailed, handshakeAuth, handshakeRateLimited, handshakeUnsupported   atomic.Int64
+	queueRejected, capacityRejected, fallback, upstreamError, transportError, uncertain      atomic.Int64
+	mu                                                                                       sync.Mutex
+	samples                                                                                  [256]smartWSSample
+	next, count                                                                              int
 }
 type smartWSSample struct {
 	reused         bool
@@ -181,6 +182,7 @@ func finishSmartWSObservation(c *gin.Context, result *OpenAIForwardResult, err e
 func (p *openAIWSConnPool) SmartWSSnapshot() SmartWSSnapshot {
 	m := &p.smartMetrics
 	s := SmartWSSnapshot{Scope: "process", StartedAt: p.startedAt, Counters: map[string]int64{
+		"handshake_401": m.handshake401.Load(), "handshake_403": m.handshake403.Load(), "handshake_rejection": m.handshakeRejection.Load(), "rejection_bypass": m.rejectionBypass.Load(), "continuation_unavailable": m.continuationUnavailable.Load(),
 		"incomplete": m.incomplete.Load(),
 		"attempted":  m.attempted.Load(), "succeeded": m.succeeded.Load(), "failed": m.failed.Load(), "canceled": m.canceled.Load(),
 		"handshakes": m.handshakes.Load(), "handshake_failed": m.handshakeFailed.Load(), "handshake_auth": m.handshakeAuth.Load(), "handshake_rate_limited": m.handshakeRateLimited.Load(), "handshake_unsupported": m.handshakeUnsupported.Load(),
@@ -206,6 +208,8 @@ func (p *openAIWSConnPool) SmartWSSnapshot() SmartWSSnapshot {
 	})
 	c := p.smartWSLimits()
 	s.Limits = map[string]int{"connections": c.MaxConnsGlobal, "connections_per_identity": c.MaxConnsPerIdentity, "acquiring": c.MaxQueuedGlobal, "acquiring_per_identity": c.MaxQueuedPerIdentity, "handshakes": c.MaxConcurrentHandshakes, "handshakes_per_identity": c.MaxConcurrentHandshakesPerIdentity, "handshakes_per_second": c.HandshakesPerSecond, "handshakes_per_second_per_identity": c.HandshakesPerSecondPerIdentity}
+	s.Limits["handshake_rejection_cooldown_seconds"] = c.HandshakeRejectionCooldownSeconds
+	s.Limits["max_handshake_rejections"] = c.MaxHandshakeRejections
 	m.mu.Lock()
 	samples := append([]smartWSSample(nil), m.samples[:m.count]...)
 	m.mu.Unlock()

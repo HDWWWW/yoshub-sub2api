@@ -20,6 +20,10 @@ Dispatch states are `NotSent → MayBeSent → Received → Terminal`. `MayBeSen
 
 After a write may have occurred, neither HTTP fallback, another account, nor same-account replay is permitted. A transport failure reports an unknown dispatch outcome. Explicit upstream errors remain errors; observed failed usage is retained for the existing accounting path. A bounded failed-event tail can collect authoritative usage after a bare error. A missing terminal usage event is never fabricated as billable success.
 
+Handshake provenance remains attached to errors through the HTTP formatter. An unstructured or request-scoped 403 is an endpoint rejection, not evidence that the account credential is invalid; it does not increment account 403 strikes, cool down shared groups, or disable the account. A 401 or structured credential/workspace revocation retains the existing authentication policy. Explicit 429/529 signals retain the existing rate/overload policy. The rejected request receives its status/body and is never replayed.
+
+An endpoint 403 or unsupported-WS status pauses HTTP-to-WS attempts for the same account, credential, destination, proxy, and capability/identity headers for 30 seconds by default. Later independent requests may choose HTTP before dispatch; cache hits do not extend the pause. Authentication changes do not inherit the old pause. Session IDs are excluded from this rejection cache only; connection reuse isolation remains unchanged. This bounded process-local cache does not affect native WS. A request carrying `previous_response_id` is rejected with `409 smart_ws_continuation_unavailable` when fallback would be needed, instead of silently moving connection-local context to HTTP.
+
 ## Connection bounds
 
 Each lease is serial. Reuse requires matching account, authorization, destination, proxy, protocol/capability/session headers, downstream API key, and execution scope. The identity capacity bucket excludes proxy/session/account aliases so duplicating an upstream credential cannot gain extra capacity. Credentials and header values never appear in SmartWS metrics.
@@ -34,12 +38,15 @@ Limits are process-local. Multiple app replicas each have their own pool; size t
 | `handshakes_per_second`, `handshakes_per_second_per_identity` | Handshake rate limits |
 | `idle_timeout_seconds`, `max_conn_age_seconds` | Idle reclamation and maximum age between turns |
 | `max_request_bytes`, `max_upstream_frame_bytes` | HTTP-to-WS request limit and incoming upstream WS message limit |
+| `handshake_rejection_cooldown_seconds`, `max_handshake_rejections` | Temporary endpoint pause (1–300 seconds, default 30) and bounded entries (1–65536, default 1024) |
 
 Defaults are conservative guardrails, not measured server capacity. HTTP requests above the WS size bound retain their entire body and use HTTP before dispatch. Existing HTTP and native-client body/frame limits remain additional bounds. Cancellation interrupts queued acquisition and active I/O; damaged or incomplete leases are evicted. Age/idle cleanup never cuts an active generation; an aged native session rejects the next turn before dispatch. HTTP adaptation opens connections on demand and does not create idle prewarm connections.
 
 ## Observation and release
 
 `GET /api/v1/admin/ops/smart-ws` requires the existing admin/monitoring access. The Ops dashboard shows connections, active leases, acquisition/handshake counts and limits, reuse, fallback, queue rejection, cancellation, upstream terminal errors, transport failures, and uncertain dispatch. Counters are per process and reset on restart. Latency retains at most 256 successfully delivered samples, separates new/reused connections, and measures actual content rather than metadata or gateway notifications. These server-side counters do not establish end-to-end client success rates.
+
+Handshake 401 and 403 have separate counters. Endpoint pauses, subsequent requests during pauses, and rejected continuations are separate from upstream terminal generation errors. Error events include `stage=ws_handshake`, the classification reason, account and proxy attribution, and the upstream host/path; no credentials or request/header dumps are added. `handshake_auth` remains a legacy combined 401/403 counter for API compatibility, not a credential-failure diagnosis.
 
 Validation must include isolated fault injection and actual upstream/entry checks. Compare fixed account, credential, model, reasoning effort, request, session, and concurrency; report HTTP, cold WS, and warm WS separately. Record client terminal outcomes, transport failures, upstream errors, and replay counts independently. Small samples establish protocol behavior, not site-wide capacity or latency improvement.
 

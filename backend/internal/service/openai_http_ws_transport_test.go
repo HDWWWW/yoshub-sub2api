@@ -345,7 +345,7 @@ func TestForcedWSReuseAndTenantThreadIsolation(t *testing.T) {
 
 func TestForcedWSErrorsBeforeAcceptanceKeepStatus(t *testing.T) {
 	for _, handshake := range []bool{false, true} {
-		for _, status := range []int{400, 401, 429, 503} {
+		for _, status := range []int{400, 401, 403, 429, 503} {
 			t.Run(fmt.Sprintf("handshake=%v/status=%d", handshake, status), func(t *testing.T) {
 				s, a, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
 					payload := fmt.Sprintf(`{"type":"error","status":%d,"error":{"message":"upstream rejected","type":"server_error"}}`, status)
