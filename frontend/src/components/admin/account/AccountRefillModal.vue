@@ -85,6 +85,19 @@
           <div v-show="activeTab === 'delivery'" class="space-y-5">
             <label class="block"><span class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</span><input v-model.number="form.delivery.same_account_retry_count" data-testid="refill-same-account-retries" type="number" min="0" :max="MAX_SAME_ACCOUNT_RETRY_COUNT" step="1" required class="input" /><p class="input-hint">{{ t('admin.accounts.sameAccountRetryCountHint', { default: DEFAULT_SAME_ACCOUNT_RETRY_COUNT, max: MAX_SAME_ACCOUNT_RETRY_COUNT }) }}</p></label>
             <OpenAIPrivacyControl :model-value="form.delivery.privacy_enabled !== false" @update:model-value="form.delivery.privacy_enabled = $event" />
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <p id="refill-flatten-namespaces-label" class="input-label mb-0">{{ t('admin.accounts.openai.flattenNamespaces') }}</p>
+                <p id="refill-flatten-namespaces-description" class="input-hint">{{ t('admin.accounts.openai.flattenNamespacesDesc') }}</p>
+              </div>
+              <Toggle
+                :model-value="form.delivery.openai_responses_flatten_namespaces === true"
+                data-testid="refill-flatten-namespaces-toggle"
+                aria-labelledby="refill-flatten-namespaces-label"
+                aria-describedby="refill-flatten-namespaces-description"
+                @update:model-value="form.delivery.openai_responses_flatten_namespaces = $event"
+              />
+            </div>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.push_enabled" type="checkbox" />{{ t('accountRefill.push_enabled') }}</label><p class="input-hint">{{ t('accountRefill.pushHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.ws_mode') }}</span><select v-model="form.delivery.ws_mode" class="input"><option v-for="mode in ['off', 'ctx_pool', 'http_bridge', 'passthrough']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
@@ -133,6 +146,7 @@
             <div><dt class="text-gray-500">{{ t('accountRefill.deliveryGroups') }}</dt><dd>{{ manualGroups }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.import_concurrency') }}</dt><dd data-testid="refill-manual-concurrency">{{ view.config.plan_import_concurrency?.[manualPlan] ?? view.config.import_concurrency }}</dd></div>
             <div><dt class="text-gray-500">{{ t('admin.accounts.privacyProtection') }}</dt><dd>{{ t(view.config.delivery.privacy_enabled !== false ? 'common.enabled' : 'common.disabled') }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('admin.accounts.openai.flattenNamespaces') }}</dt><dd data-testid="refill-manual-flatten-namespaces">{{ t(view.config.delivery.openai_responses_flatten_namespaces === true ? 'common.enabled' : 'common.disabled') }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.proxy_mode') }}</dt><dd>{{ t(view.config.delivery.proxy_mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${view.config.delivery.proxy_mode}`) }} {{ view.config.delivery.proxy_mode === 'specified' ? `#${view.config.delivery.proxy_id}` : '' }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.import_expiry_grace_minutes') }}</dt><dd>{{ view.config.import_expiry_grace_minutes }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.priority') }} / {{ t('accountRefill.load_factor') }}</dt><dd>{{ view.config.delivery.priority }} / {{ view.config.delivery.load_factor }}</dd></div>
@@ -242,6 +256,7 @@ import { useI18n } from 'vue-i18n'
 import { getCodexFingerprintModeOptions } from '@/utils/codexFingerprintMode'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT } from '@/components/account/sameAccountRetry'
 import OpenAIPrivacyControl from '@/components/account/OpenAIPrivacyControl.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -352,6 +367,7 @@ function accept(data: RefillView, reset: boolean) {
   if (!reset && data.config.group_id !== selectedGroup.value) return
   data.config.delivery.same_account_retry_count ??= DEFAULT_SAME_ACCOUNT_RETRY_COUNT
   data.config.delivery.privacy_enabled ??= true
+  data.config.delivery.openai_responses_flatten_namespaces ??= false
   data.config.forecast_enabled ??= true
   data.config.immediate_failure_retry ??= true
   data.config.rotation ??= []

@@ -345,6 +345,10 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			count := *state.Config.Delivery.SameAccountRetryCount
 			c.Delivery.SameAccountRetryCount = &count
 		}
+		if c.Delivery.OpenAIResponsesFlattenNamespaces == nil && state.Config.Delivery.OpenAIResponsesFlattenNamespaces != nil {
+			enabled := *state.Config.Delivery.OpenAIResponsesFlattenNamespaces
+			c.Delivery.OpenAIResponsesFlattenNamespaces = &enabled
+		}
 		state.Config = c
 		reconcileRefillFailureReplacements(&state)
 		state.Revision++
@@ -895,6 +899,9 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		extra := map[string]any{"same_account_retry_count": j.DeliveryConfig.sameAccountRetryCount(), "refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
 			"refill_plan":            j.Plan,
 			"codex_fingerprint_mode": j.DeliveryConfig.FingerprintMode, "openai_oauth_responses_websockets_v2_enabled": j.DeliveryConfig.WSMode != "off", "openai_oauth_responses_websockets_v2_mode": j.DeliveryConfig.WSMode}
+		if j.DeliveryConfig.OpenAIResponsesFlattenNamespaces != nil && *j.DeliveryConfig.OpenAIResponsesFlattenNamespaces {
+			extra["openai_responses_flatten_namespaces"] = true
+		}
 		graceMinutes := AccountImportExpiryOffsetMinutes
 		if j.ExpiryGraceMinutes != nil {
 			graceMinutes = *j.ExpiryGraceMinutes

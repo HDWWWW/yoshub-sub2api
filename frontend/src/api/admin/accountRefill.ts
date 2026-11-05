@@ -15,6 +15,7 @@ export interface RefillDeliveryConfig {
   fingerprint_mode: string
   same_account_retry_count?: number | null
   privacy_enabled?: boolean
+  openai_responses_flatten_namespaces?: boolean | null
   expiry_mode: string
   fixed_expires_at: number | null
   model_mapping: Record<string, string>

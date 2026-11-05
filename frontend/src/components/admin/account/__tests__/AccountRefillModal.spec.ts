@@ -45,6 +45,41 @@ async function openProgress() {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('defaults namespace flattening off and preserves unsaved changes during polling', async () => {
+  const w = await open()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.delivery')!.trigger('click')
+  const toggle = w.get('[data-testid="refill-flatten-namespaces-toggle"]')
+  expect(toggle.attributes('aria-checked')).toBe('false')
+  expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined()
+  await toggle.trigger('click')
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(toggle.attributes('aria-checked')).toBe('true')
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.manual')!.trigger('click')
+  expect(w.get('[data-testid="refill-manual-flatten-namespaces"]').text()).toBe('common.disabled')
+  expect(save).not.toHaveBeenCalled(); expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('saves and reopens namespace flattening in both directions and shows the saved manual setting', async () => {
+  let revision = 1
+  save.mockImplementation(async cfg => ({ ...response(++revision), config: cfg }))
+  let w = await open()
+  for (const enabled of [true, false]) {
+   await w.findAll('nav button').find(b => b.text() === 'accountRefill.delivery')!.trigger('click')
+   await w.get('[data-testid="refill-flatten-namespaces-toggle"]').trigger('click')
+   const previousRevision = revision
+   await w.get('form').trigger('submit'); await flushPromises()
+   expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ openai_responses_flatten_namespaces: enabled }) }), '', previousRevision, '')
+   get.mockResolvedValue({ ...response(revision), config: structuredClone(save.mock.calls[save.mock.calls.length - 1]![0]) })
+   w.unmount()
+   w = await open()
+   expect(w.get('[data-testid="refill-flatten-namespaces-toggle"]').attributes('aria-checked')).toBe(String(enabled))
+   expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined()
+   await w.findAll('nav button').find(b => b.text() === 'accountRefill.manual')!.trigger('click')
+   expect(w.get('[data-testid="refill-manual-flatten-namespaces"]').text()).toBe(enabled ? 'common.enabled' : 'common.disabled')
+  }
+  expect(check).not.toHaveBeenCalled(); expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it.each([
   ['off', 'admin.accounts.openai.codexFingerprintOff'],
   ['device', 'admin.accounts.openai.codexFingerprintDevice'],
