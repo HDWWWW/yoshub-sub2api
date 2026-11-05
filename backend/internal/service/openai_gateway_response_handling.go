@@ -327,6 +327,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return
 		}
 		errorEventSent = true
+		uncertainDispatch := smartWSOutcomeUncertain(c)
+		if uncertainDispatch {
+			code, message = smartWSUncertainCode, smartWSUncertainMessage
+		}
 		// Responses error events use top-level code/message/param fields. A nested
 		// Chat Completions error envelope loses the classification in strict clients.
 		payload := `{"type":"error","sequence_number":0,"code":` + strconv.Quote(code) + `,"message":` + strconv.Quote(message) + `,"param":null}`
@@ -349,6 +353,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		lastDownstreamWriteAt = time.Now()
 		// The handler must not append its generic failure after this error event.
 		MarkResponseCommitted(c)
+		if uncertainDispatch {
+			c.Set(smartWSFailureDeliveredKey, true)
+		}
 	}
 
 	needModelReplace := originalModel != mappedModel

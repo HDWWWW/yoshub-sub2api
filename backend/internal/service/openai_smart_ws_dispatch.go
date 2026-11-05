@@ -142,7 +142,7 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 	v, _ := c.Get(smartWSHTTPFailureKey)
 	failure, _ := v.(*smartWSHTTPFailure)
 	if failure == nil {
-		return result, err
+		return finalizeSmartWSUncertainFailure(c, result, err)
 	}
 	response := openAIHTTPWSErrorResponse(c.Request, openAIHTTPWSEventErrorStatus(failure.payload), failure.headers, failure.payload)
 	observed := smartWSHTTPFailureResult(response, failure.payload, failure.request,
@@ -244,6 +244,50 @@ func smartWSHasDispatched(c *gin.Context) bool {
 	v, _ := c.Get(smartWSDispatchKey)
 	d, _ := v.(*smartWSDispatch)
 	return d != nil && d.state.Load() >= smartWSMayBeSent
+}
+
+const smartWSUncertainCode = "smart_ws_dispatch_uncertain"
+const smartWSUncertainMessage = "Upstream connection ended before a terminal result; the request may have been executed and was not replayed."
+
+func smartWSOutcomeUncertain(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	v, _ := c.Get(smartWSDispatchKey)
+	d, _ := v.(*smartWSDispatch)
+	if d == nil {
+		return false
+	}
+	state := d.state.Load()
+	return state >= smartWSMayBeSent && state < smartWSTerminal
+}
+
+// Generic failover formatting hides whether generation may already have begun.
+// Deliver an explicit non-replay outcome while retaining any observed usage.
+func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult, err error) (*OpenAIForwardResult, error) {
+	if err == nil || !smartWSOutcomeUncertain(c) || SmartWSFailureDelivered(c) ||
+		c.Request.Context().Err() != nil || (result != nil && result.ClientDisconnect) {
+		return result, err
+	}
+	payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "code": smartWSUncertainCode, "message": smartWSUncertainMessage}})
+	setOpsUpstreamError(c, http.StatusBadGateway, smartWSUncertainMessage, "")
+	if !c.Writer.Written() {
+		c.Data(http.StatusBadGateway, "application/json", payload)
+	} else {
+		if !strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/chat/completions") {
+			payload, _ = json.Marshal(gin.H{"type": "error", "sequence_number": 0, "code": smartWSUncertainCode, "message": smartWSUncertainMessage, "param": nil})
+		}
+		if _, writeErr := fmt.Fprintf(c.Writer, "data: %s\n\n", payload); writeErr != nil {
+			if result != nil {
+				result.ClientDisconnect = true
+			}
+			return result, writeErr
+		}
+		c.Writer.Flush()
+	}
+	MarkResponseCommitted(c)
+	c.Set(smartWSFailureDeliveredKey, true)
+	return result, smartWSStopFailure(http.StatusBadGateway, payload, nil)
 }
 
 // Also applied at the public forward boundary, so stream, timeout, conversion

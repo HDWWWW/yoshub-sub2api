@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -240,8 +241,58 @@ func TestSmartWS_DispatchedDisconnectNeverReplays(t *testing.T) {
 			var failover *UpstreamFailoverError
 			require.True(t, errors.As(err, &failover))
 			require.False(t, failover.ShouldRetryNextAccount())
-			require.Empty(t, rec.Body.String())
-			t.Logf("CONFIRMED: upstream_received=1, next_account_retry_allowed=false, downstream_bytes=0, error_type=%T", err)
+			require.Equal(t, http.StatusBadGateway, rec.Code)
+			require.Equal(t, smartWSUncertainCode, gjson.Get(rec.Body.String(), "error.code").String())
+			require.Contains(t, rec.Body.String(), "may have been executed")
+			require.True(t, SmartWSFailureDelivered(c))
+		})
+	}
+}
+
+func TestSmartWSPartialDisconnectReportsUncertainOnce(t *testing.T) {
+	for _, chat := range []bool{false, true} {
+		t.Run(fmt.Sprintf("chat=%v", chat), func(t *testing.T) {
+			var received atomic.Int32
+			s, account, httpUpstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+				conn, err := forcedWSUpgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+				received.Add(1)
+				for _, frame := range []string{
+					`{"type":"response.created","response":{"id":"resp_disconnect","status":"in_progress","model":"gpt-5.1","output":[]}}`,
+					`{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_disconnect","type":"message","role":"assistant","content":[]}}`,
+					`{"type":"response.content_part.added","item_id":"msg_disconnect","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}`,
+					`{"type":"response.output_text.delta","item_id":"msg_disconnect","output_index":0,"content_index":0,"delta":"partial answer"}`,
+				} {
+					if conn.WriteMessage(websocket.TextMessage, []byte(frame)) != nil {
+						return
+					}
+				}
+			})
+			path := "/v1/responses"
+			if chat {
+				path = "/v1/chat/completions"
+			}
+			c, rec := forcedWSContext(t, path, 1, "partial-disconnect")
+			var err error
+			if chat {
+				_, err = s.ForwardAsChatCompletions(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"messages":[{"role":"user","content":"hello"}]}`), "", "")
+			} else {
+				_, err = s.Forward(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+			}
+			require.Error(t, err)
+			require.EqualValues(t, 1, received.Load())
+			require.Zero(t, httpUpstream.callCount)
+			require.Contains(t, rec.Body.String(), "partial answer")
+			require.Equal(t, 1, strings.Count(rec.Body.String(), smartWSUncertainCode))
+			require.NotContains(t, rec.Body.String(), "[DONE]")
+			require.NotContains(t, rec.Body.String(), "response.completed")
+			require.True(t, SmartWSFailureDelivered(c))
 		})
 	}
 }
