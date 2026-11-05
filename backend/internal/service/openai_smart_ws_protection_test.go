@@ -77,6 +77,56 @@ func TestSmartWS_GroupPolicyAndAdminPersistence(t *testing.T) {
 	}
 }
 
+func TestSmartWS_HTTPContinuationPolicy(t *testing.T) {
+	s, a, _ := forcedWSService(t, func(http.ResponseWriter, *http.Request) {})
+	a.Type = AccountTypeOAuth
+	a.Extra = map[string]any{"openai_oauth_responses_websockets_v2_mode": "off"}
+	c, _ := forcedWSContext(t, "/v1/responses", 1, "continuation")
+	require.True(t, s.SupportsSmartWSHTTPContinuation(c, a), "the group can opt OAuth HTTP requests into WS")
+	for _, path := range []string{"/v1/responses/compact", "/v1/messages"} {
+		c.Request.URL.Path = path
+		require.False(t, s.SupportsSmartWSHTTPContinuation(c, a))
+	}
+	c.Request.URL.Path = "/v1/responses"
+	group := c.Request.Context().Value(ctxkey.Group).(*Group)
+	for _, mode := range []string{"disabled", "inherit"} {
+		group.SmartWSMode = mode
+		require.False(t, s.SupportsSmartWSHTTPContinuation(c, a))
+	}
+	group.SmartWSMode = "enabled"
+	a.Extra["openai_ws_force_http"] = true
+	require.False(t, s.SupportsSmartWSHTTPContinuation(c, a))
+	delete(a.Extra, "openai_ws_force_http")
+	s.cfg.Gateway.OpenAIWS.ForceHTTP = true
+	require.False(t, s.SupportsSmartWSHTTPContinuation(c, a))
+}
+
+func TestSmartWS_OAuthContinuationKeepsAccountWithGroupOptIn(t *testing.T) {
+	group := &Group{ID: 23, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, SmartWSMode: "enabled"}
+	ctx := context.WithValue(context.Background(), ctxkey.Group, group)
+	account := Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, Concurrency: 2,
+		Extra: map[string]any{"openai_oauth_responses_websockets_v2_mode": "off"}}
+	cache := &stubGatewayCache{}
+	store := NewOpenAIWSStateStore(cache)
+	cfg := newOpenAIWSV2TestConfig()
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	s := &OpenAIGatewayService{accountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+		cache: cache, cfg: cfg, concurrencyService: NewConcurrencyService(stubConcurrencyCache{}), openaiWSStateStore: store}
+	require.NoError(t, store.BindResponseAccount(ctx, group.ID, "resp_smartws", account.ID, time.Hour))
+	selection, err := s.SelectAccountByPreviousResponseID(ctx, &group.ID, "resp_smartws", "gpt-5.1", nil, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection, "HTTP SmartWS continuation must retain its original account even with native WS disabled")
+	require.Equal(t, account.ID, selection.Account.ID)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+	group.SmartWSMode = "disabled"
+	selection, err = s.SelectAccountByPreviousResponseID(ctx, &group.ID, "resp_smartws", "gpt-5.1", nil, false)
+	require.NoError(t, err)
+	require.Nil(t, selection)
+}
+
 func TestSmartWS_CapacityAndQueueAreBoundedAcrossSessions(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.MaxConnsGlobal = 2

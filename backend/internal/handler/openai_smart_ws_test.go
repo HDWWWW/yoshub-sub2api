@@ -19,7 +19,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestSmartWSNativeFirstFramePreservesContinuationWithoutStickyBinding(t *testing.T) {
+	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModePassthrough} {
+		t.Run(mode, func(t *testing.T) {
+			got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+				firstPayload: `{"type":"response.create","model":"gpt-5.4","previous_response_id":"resp_existing","input":[{"role":"user","content":"continue"}]}`,
+				ingressMode:  mode,
+			})
+			require.Equal(t, "resp_existing", gjson.GetBytes(got.upstreamFirstPayload, "previous_response_id").String())
+			require.Len(t, got.logs, 1)
+		})
+	}
+}
 
 // Use the public handlers, a real local WebSocket and the normal usage writer:
 // a service-only test cannot detect appended handler errors or dropped billing.
