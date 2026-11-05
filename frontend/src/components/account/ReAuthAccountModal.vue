@@ -189,7 +189,7 @@ import {
   type AddMethod,
   type AuthInputMethod
 } from '@/composables/useAccountOAuth'
-import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
+import { OPENAI_EXCEL_CLIENT_ID, useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import type { Account } from '@/types'
@@ -327,7 +327,8 @@ const handleGenerateUrl = async () => {
   if (!props.account) return
 
   if (isOpenAILike.value) {
-    await openaiOAuth.generateAuthUrl(props.account.proxy_id)
+    const profile = props.account.credentials?.client_id === OPENAI_EXCEL_CLIENT_ID ? 'excel' : undefined
+    await openaiOAuth.generateAuthUrl(props.account.proxy_id, undefined, profile)
   } else if (isGemini.value) {
     const creds = (props.account.credentials || {}) as Record<string, unknown>
     const tierId = typeof creds.tier_id === 'string' ? creds.tier_id : undefined
@@ -367,8 +368,13 @@ const handleExchangeCode = async () => {
     if (!tokenInfo) return
 
     // Build credentials and extra info
-    const credentials = oauthClient.buildCredentials(tokenInfo)
-    const extra = oauthClient.buildExtraInfo(tokenInfo)
+    let credentials = oauthClient.buildCredentials(tokenInfo)
+    let extra = oauthClient.buildExtraInfo(tokenInfo)
+    if (props.account.credentials?.client_id === OPENAI_EXCEL_CLIENT_ID) {
+      // Reauthorization rotates the same grant and preserves its routing policy.
+      credentials = { ...props.account.credentials, ...credentials }
+      extra = { ...props.account.extra, ...extra, openai_excel_bps: props.account.extra?.openai_excel_bps === true }
+    }
 
     try {
       // Update account with new credentials

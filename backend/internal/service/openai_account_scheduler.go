@@ -2532,6 +2532,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	if s == nil || account == nil {
 		return false
 	}
+	if account.IsExcelOAuth() {
+		return false
+	}
 	if requiredTransport == OpenAIUpstreamTransportResponsesWebsocketV2Ingress {
 		if s.cfg == nil || !s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled {
 			return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == OpenAIUpstreamTransportResponsesWebsocketV2
@@ -2554,6 +2557,12 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 	if !success && len(observedErr) > 0 && errors.Is(observedErr[0], context.Canceled) {
 		// A caller cancellation says nothing about account health or reliability.
 		return false
+	}
+	if !success && len(observedErr) > 0 {
+		var failover *UpstreamFailoverError
+		if errors.Is(observedErr[0], errExcelBPSProxyUnavailable) || (errors.As(observedErr[0], &failover) && (failover.Reason == ExcelBPSRateLimitedReason || failover.IsExcelBPSImageAdmissionRejection())) {
+			return false
+		}
 	}
 	accountID := account.ID
 	healthTripped := false

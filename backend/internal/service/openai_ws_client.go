@@ -32,6 +32,11 @@ type OpenAIWSTransportMetricsSnapshot struct {
 	TransportReuseRatio    float64 `json:"transport_reuse_ratio"`
 }
 
+// openAIWSPreparedJSON is encoded and bounded before any upstream write.
+type openAIWSPreparedJSON []byte
+
+func (p openAIWSPreparedJSON) MarshalJSON() ([]byte, error) { return p, nil }
+
 // openAIWSClientConn 抽象 WS 客户端连接，便于替换底层实现。
 type openAIWSClientConn interface {
 	WriteJSON(ctx context.Context, value any) error
@@ -308,6 +313,9 @@ func (c *coderOpenAIWSClientConn) WriteJSON(ctx context.Context, value any) erro
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if payload, ok := value.(openAIWSPreparedJSON); ok {
+		return c.conn.Write(ctx, coderws.MessageText, payload)
 	}
 	return wsjson.Write(ctx, c.conn, value)
 }

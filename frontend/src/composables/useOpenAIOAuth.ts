@@ -25,6 +25,8 @@ export interface OpenAITokenInfo {
   [key: string]: unknown
 }
 
+export const OPENAI_EXCEL_CLIENT_ID = 'app_fnr0pYvVwwFDocDumLG3H2Bp'
+
 export type OpenAIOAuthPlatform = 'openai'
 
 export function useOpenAIOAuth() {
@@ -51,7 +53,8 @@ export function useOpenAIOAuth() {
   // Generate auth URL for OpenAI OAuth
   const generateAuthUrl = async (
     proxyId?: number | null,
-    redirectUri?: string
+    redirectUri?: string,
+    oauthProfile?: 'codex' | 'excel'
   ): Promise<boolean> => {
     loading.value = true
     authUrl.value = ''
@@ -61,6 +64,7 @@ export function useOpenAIOAuth() {
 
     try {
       const payload: Record<string, unknown> = {}
+      if (oauthProfile) payload.oauth_profile = oauthProfile
       if (proxyId) {
         payload.proxy_id = proxyId
       }
@@ -209,8 +213,9 @@ export function useOpenAIOAuth() {
   }
 
   // Build extra info from token response
-  const buildExtraInfo = (tokenInfo: OpenAITokenInfo): Record<string, string> | undefined => {
-    const extra: Record<string, string> = {}
+  const buildExtraInfo = (tokenInfo: OpenAITokenInfo): Record<string, unknown> | undefined => {
+    const extra: Record<string, unknown> = {}
+    if (tokenInfo.client_id === OPENAI_EXCEL_CLIENT_ID) extra.openai_excel_bps = true
     if (tokenInfo.email) {
       extra.email = tokenInfo.email
     }

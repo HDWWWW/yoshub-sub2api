@@ -8,6 +8,14 @@ import zhCommon from "@/i18n/locales/zh/common";
 import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
 
+// These panels own their API calls and have independent component coverage.
+vi.mock("@/features/excel-bps/ExcelBPSSettings.vue", () => ({
+  default: { template: '<section data-testid="excel-bps-settings" />' },
+}));
+vi.mock("@/features/ip-risk/IPRiskSettings.vue", () => ({
+  default: { template: '<section data-testid="ip-risk-settings" />' },
+}));
+
 const {
   getSettings,
   updateSettings,

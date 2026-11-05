@@ -105,8 +105,9 @@ func NewOpenAIOAuthHandler(
 
 // OpenAIGenerateAuthURLRequest represents the request for generating OpenAI auth URL
 type OpenAIGenerateAuthURLRequest struct {
-	ProxyID     *int64 `json:"proxy_id"`
-	RedirectURI string `json:"redirect_uri"`
+	OAuthProfile string `json:"oauth_profile"`
+	ProxyID      *int64 `json:"proxy_id"`
+	RedirectURI  string `json:"redirect_uri"`
 }
 
 // GenerateAuthURL generates OpenAI OAuth authorization URL
@@ -118,11 +119,21 @@ func (h *OpenAIOAuthHandler) GenerateAuthURL(c *gin.Context) {
 		req = OpenAIGenerateAuthURLRequest{}
 	}
 
+	platform := oauthPlatformFromPath(c)
+	switch req.OAuthProfile {
+	case "", "codex":
+	case "excel":
+		platform = openai.OAuthPlatformExcel
+	default:
+		response.BadRequest(c, "oauth_profile must be codex or excel")
+		return
+	}
+
 	result, err := h.openaiOAuthService.GenerateAuthURL(
 		c.Request.Context(),
 		req.ProxyID,
 		req.RedirectURI,
-		oauthPlatformFromPath(c),
+		platform,
 	)
 	if err != nil {
 		response.ErrorFrom(c, err)

@@ -76,6 +76,11 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 		prewarmPayload[k] = v
 	}
 	prewarmPayload["generate"] = false
+	if decision.Reason == openAIOAuthWSSSEAccelerationReason {
+		if err := encodeOpenAIWSSSEPayload(prewarmPayload, s.openAIWSSSEMaxPayloadBytes(), func([]byte) error { return nil }); err != nil {
+			return err
+		}
+	}
 	prewarmPayloadJSON := payloadAsJSONBytes(prewarmPayload)
 
 	if err := lease.WriteJSONWithContextTimeout(ctx, prewarmPayload, s.openAIWSWriteTimeout()); err != nil {

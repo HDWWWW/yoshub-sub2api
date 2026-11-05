@@ -1868,6 +1868,18 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err := validateOpenAIImagesModel(upstreamModel); err != nil {
 		return nil, err
 	}
+	if err := s.validateExcelOAuthRoute(ctx, account, requestModel); err != nil {
+		return nil, writeExcelOAuthRouteError(c)
+	}
+	if account.IsExcelBPSImagesEnabledForModel(requestModel) && s.excelBPSGloballyEnabled(ctx) {
+		upstreamCtx, release := openAIAccountUpstreamContext(ctx, account)
+		defer release()
+		result, _, err := s.forwardExcelBPSImages(upstreamCtx, c, account, parsed, requestModel, upstreamModel, startTime)
+		return result, err
+	}
+	if account.IsExcelOAuth() {
+		return nil, writeExcelOAuthRouteError(c)
+	}
 	direct := usesCodexDirectImages(upstreamModel) && !isOpenAIImagesForceResponses(ctx)
 	beginUpstreamResponseModelObservation(c)
 	SetOpsUpstreamModel(c, upstreamModel)

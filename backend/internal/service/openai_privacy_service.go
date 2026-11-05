@@ -73,7 +73,7 @@ func MergeLockedOpenAIPrivacy(ctx context.Context, account, current *Account) {
 }
 
 func applyAccountOpenAIPrivacy(ctx context.Context, accountRepo AccountRepository, proxyRepo ProxyRepository, factory PrivacyClientFactory, account *Account, accessTokenOverride string, force bool) string {
-	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() || factory == nil {
+	if account == nil || !account.IsOpenAIOAuth() || account.IsExcelOAuth() || account.IsCredentialShadow() || factory == nil {
 		return ""
 	}
 	conditional, canReconcile := accountRepo.(openAIPrivacyStateRepository)
@@ -96,7 +96,7 @@ func applyAccountOpenAIPrivacy(ctx context.Context, accountRepo AccountRepositor
 	// A changed preference invalidates even an apparently matching stored
 	// outcome: the late request may just have overwritten upstream state.
 	for attempt := 0; attempt < 3; attempt++ {
-		if !current.IsOpenAIOAuth() || current.IsCredentialShadow() {
+		if !current.IsOpenAIOAuth() || current.IsExcelOAuth() || current.IsCredentialShadow() {
 			return ""
 		}
 		if attempt == 0 && !force && shouldSkipOpenAIPrivacyEnsure(current.Extra) {

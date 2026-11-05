@@ -1892,7 +1892,7 @@
         <p v-else-if="currentManagedIPv6" data-testid="account-managed-ipv6" class="input-hint break-all">{{ t('ovhIPv6.currentBinding', { address: currentManagedIPv6 }) }}</p>
       </div>
 
-      <OpenAIPrivacyControl v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" v-model="privacyEnabled" />
+      <OpenAIPrivacyControl v-if="!isExcelOAuth && account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" v-model="privacyEnabled" />
 
       <UpstreamRequestIdHeaderField
         v-model="upstreamRequestIdHeader"
@@ -2124,9 +2124,10 @@
         </div>
       </div>
 
+      <ExcelBPSAccountOptions v-if="isExcelOAuth" v-model="excelBPSOptions" />
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="!isExcelOAuth && account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -2143,6 +2144,11 @@
             <Select v-model="openaiResponsesWebSocketV2Mode" data-testid="edit-openai-ws-mode-select" :options="openAIWSModeOptions" />
           </div>
         </div>
+      </div>
+
+      <div v-if="!isExcelOAuth && account?.platform === 'openai' && account?.type === 'oauth'" class="space-y-2 border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="flex items-center gap-2 text-sm"><input v-model="openaiOAuthWSSSEAcceleration" type="checkbox" data-testid="edit-openai-ws-sse-acceleration" />{{ t('admin.accounts.openai.wsSSEAcceleration') }}</label>
+        <p class="text-xs text-gray-500">{{ t('admin.accounts.openai.wsSSEAccelerationDesc') }}</p>
       </div>
 
       <!-- OpenAI APIKey Responses API support mode -->
@@ -2620,7 +2626,7 @@
 
       <!-- OpenAI 订阅档位手动覆盖（Plus/Pro/Free），仅 OAuth 非影子账号 -->
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        v-if="!isExcelOAuth && account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -2801,7 +2807,7 @@
       </div>
 
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        v-if="!isExcelOAuth && account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
         class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600"
         data-testid="auto-reset-credit-settings"
       >
@@ -3368,6 +3374,9 @@
 </template>
 
 <script setup lang="ts">
+import ExcelBPSAccountOptions from './ExcelBPSAccountOptions.vue'
+import { readExcelBPSOptions, applyExcelBPSOptions } from '@/utils/excelBps'
+import { OPENAI_EXCEL_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT, normalizeSameAccountRetryCount, readSameAccountRetryCount } from '@/components/account/sameAccountRetry'
 import { ref, reactive, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -4165,6 +4174,9 @@ const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 // Images 非流式响应缺 b64_json 时由网关下载 url 回填（仅 OpenAI API Key）。
 const openAIImagesUrlToB64JsonEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
+const excelBPSOptions = ref(readExcelBPSOptions())
+const isExcelOAuth = computed(() => props.account?.platform === 'openai' && props.account?.type === 'oauth' && props.account?.credentials?.client_id === OPENAI_EXCEL_CLIENT_ID)
+const openaiOAuthWSSSEAcceleration = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -4694,6 +4706,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     } else if (codexImageGenerationBridgeValue === false) {
       codexImageToolMode.value = 'disabled'
     }
+    excelBPSOptions.value = readExcelBPSOptions(extra)
+    openaiOAuthWSSSEAcceleration.value = newAccount.type === 'oauth' && extra?.openai_oauth_ws_sse_acceleration === true
     openaiOAuthResponsesWebSocketV2Mode.value = resolveOpenAIWSModeFromExtra(extra, {
       modeKey: 'openai_oauth_responses_websockets_v2_mode',
       enabledKey: 'openai_oauth_responses_websockets_v2_enabled',
@@ -6206,6 +6220,7 @@ const handleSubmit = async () => {
     if (props.account.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'apikey')) {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (isExcelOAuth.value) applyExcelBPSOptions(newExtra, excelBPSOptions.value)
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true
       if (props.account.type === 'oauth' || props.account.type === 'setup-token') {
         newExtra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
@@ -6214,6 +6229,8 @@ const handleSubmit = async () => {
         newExtra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
         newExtra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
       }
+      if (props.account.type === 'oauth' && openaiOAuthWSSSEAcceleration.value) newExtra.openai_oauth_ws_sse_acceleration = true
+      else delete newExtra.openai_oauth_ws_sse_acceleration
       delete newExtra.responses_websockets_v2_enabled
       delete newExtra.openai_ws_enabled
       if (openaiPassthroughEnabled.value) {

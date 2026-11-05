@@ -685,6 +685,17 @@ export default {
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
+        oauthProfile: "OAuth authorization route",
+        excelEnabled: "Enable Excel / BPS",
+        excelDescription: "Use this account’s Excel OAuth grant for BPS. Disabling stops this Excel account from serving requests. Supports HTTP/SSE, not native inbound WebSocket.",
+        excelAuthorization: "Authorize Excel separately; a Codex token cannot be reused. Copy the complete callback URL and paste it in the next step. Uses the selected account proxy.",
+        excelModels: "BPS models (optional)",
+        excelModelsHint: "Upstream model names, one per line or comma separated. Empty allows all; otherwise only listed models are eligible.",
+        excelOmitTools: "Allow omission of unsupported hosted tools with a capability notice",
+        excelIgnoreEncrypted: "Replace unsupported encrypted history with an omission notice (may lose context)",
+        excelCacheInput: "Expose cache writes as regular input downstream (retain original usage locally)",
+        wsSSEAcceleration: 'Use WebSocket upstream for HTTP streams',
+        wsSSEAccelerationDesc: 'Ordinary OpenAI OAuth Responses streams only; WS mode must also be enabled. Forward early events while measuring real first content. Submitted requests are never replayed.',
         wsMode: 'WS mode',
         wsModeDesc:
           'Applies only to the current OpenAI account type. Select Off to disable WS. Other modes use the selected connection method only when gateway.openai_ws.mode_router_v2_enabled=true; otherwise, they use the context pool.',

@@ -8905,6 +8905,8 @@
           </button>
         </div>
       </form>
+      <ExcelBPSSettings v-if="!loading && activeTab === 'gateway'" />
+      <IPRiskSettings v-if="!loading && activeTab === 'security'" />
 
       <!-- Provider dialogs placed outside the settings form to prevent form submission bubbling -->
       <PaymentProviderDialog
@@ -8944,6 +8946,8 @@
 </template>
 
 <script setup lang="ts">
+import ExcelBPSSettings from "@/features/excel-bps/ExcelBPSSettings.vue";
+import IPRiskSettings from "@/features/ip-risk/IPRiskSettings.vue";
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { listPlatformIds } from "@/constants/platformCatalog";
 import { useI18n } from "vue-i18n";

@@ -217,7 +217,7 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	// Codex discovery lists Responses drivers, not image_generation tool models.
 	// Add locally supported image choices only to the OAuth test picker; keep the
 	// shared upstream catalog and API-key discovery authoritative.
-	if account != nil && account.IsOpenAIOAuthLike() {
+	if account != nil && account.IsOpenAIOAuthLike() && !account.IsExcelOAuth() {
 		passthrough := account.IsOpenAIPassthroughEnabled()
 		seen := make(map[string]bool, len(payload.Data))
 		for _, model := range payload.Data {
@@ -805,6 +805,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	testModelID := modelID
 	if testModelID == "" {
 		testModelID = openai.DefaultTestModel
+	}
+
+	if account.IsExcelOAuth() || account.IsExcelBPSEnabledForModel(testModelID) {
+		return s.testExcelBPSConnection(c, account, testModelID, prompt, mode)
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal

@@ -46,14 +46,22 @@ func (s *openaiOAuthService) ExchangeCode(ctx context.Context, code, codeVerifie
 
 	var tokenResp openai.TokenResponse
 
-	authUA, authOriginator := service.CodexCanonicalAuthIdentity()
-	resp, err := client.R().
-		SetContext(ctx).
-		SetHeader("User-Agent", authUA).
-		SetHeader("originator", authOriginator).
-		SetFormDataFromValues(formData).
-		SetSuccessResult(&tokenResp).
-		Post(s.tokenURL)
+	request := client.R().SetContext(ctx).SetFormDataFromValues(formData).SetSuccessResult(&tokenResp)
+	tokenURL := s.tokenURL
+	if clientID == openai.ExcelClientID {
+		parsed, parseErr := url.Parse(tokenURL)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		query := parsed.Query()
+		query.Set("unified", "true")
+		parsed.RawQuery = query.Encode()
+		tokenURL = parsed.String()
+	} else {
+		authUA, authOriginator := service.CodexCanonicalAuthIdentity()
+		request.SetHeader("User-Agent", authUA).SetHeader("originator", authOriginator)
+	}
+	resp, err := request.Post(tokenURL)
 
 	if err != nil {
 		if shouldReturnOpenAINoProxyHint(ctx, proxyURL, err) {
@@ -92,18 +100,28 @@ func (s *openaiOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 	formData.Set("grant_type", "refresh_token")
 	formData.Set("refresh_token", refreshToken)
 	formData.Set("client_id", clientID)
-	formData.Set("scope", openai.RefreshScopes)
+	if clientID != openai.ExcelClientID {
+		formData.Set("scope", openai.RefreshScopes)
+	}
 
 	var tokenResp openai.TokenResponse
 
-	authUA, authOriginator := service.CodexCanonicalAuthIdentity()
-	resp, err := client.R().
-		SetContext(ctx).
-		SetHeader("User-Agent", authUA).
-		SetHeader("originator", authOriginator).
-		SetFormDataFromValues(formData).
-		SetSuccessResult(&tokenResp).
-		Post(s.tokenURL)
+	request := client.R().SetContext(ctx).SetFormDataFromValues(formData).SetSuccessResult(&tokenResp)
+	tokenURL := s.tokenURL
+	if clientID == openai.ExcelClientID {
+		parsed, parseErr := url.Parse(tokenURL)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		query := parsed.Query()
+		query.Set("unified", "true")
+		parsed.RawQuery = query.Encode()
+		tokenURL = parsed.String()
+	} else {
+		authUA, authOriginator := service.CodexCanonicalAuthIdentity()
+		request.SetHeader("User-Agent", authUA).SetHeader("originator", authOriginator)
+	}
+	resp, err := request.Post(tokenURL)
 
 	if err != nil {
 		if shouldReturnOpenAINoProxyHint(ctx, proxyURL, err) {

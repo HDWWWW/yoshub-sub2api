@@ -80,6 +80,9 @@ func (s *OpenAIOAuthService) GenerateAuthURL(ctx context.Context, proxyID *int64
 		redirectURI = openai.DefaultRedirectURI
 	}
 	normalizedPlatform := normalizeOpenAIOAuthPlatform(platform)
+	if normalizedPlatform == openai.OAuthPlatformExcel {
+		redirectURI = openai.ExcelRedirectURI
+	}
 	clientID, _ := openai.OAuthClientConfigByPlatform(normalizedPlatform)
 
 	// Store session
@@ -158,7 +161,7 @@ func (s *OpenAIOAuthService) ExchangeCode(ctx context.Context, input *OpenAIExch
 
 	// Use redirect URI from session or input
 	redirectURI := session.RedirectURI
-	if input.RedirectURI != "" {
+	if input.RedirectURI != "" && session.ClientID != openai.ExcelClientID {
 		redirectURI = input.RedirectURI
 	}
 	clientID := strings.TrimSpace(session.ClientID)
@@ -242,6 +245,9 @@ func (s *OpenAIOAuthService) refreshTokenWithPrivacy(ctx context.Context, refres
 		ExpiresIn:    int64(tokenResp.ExpiresIn),
 		ExpiresAt:    time.Now().Unix() + int64(tokenResp.ExpiresIn),
 	}
+	if tokenInfo.RefreshToken == "" {
+		tokenInfo.RefreshToken = refreshToken
+	}
 	if trimmed := strings.TrimSpace(clientID); trimmed != "" {
 		tokenInfo.ClientID = trimmed
 	}
@@ -267,7 +273,29 @@ func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *Ope
 }
 
 func (s *OpenAIOAuthService) enrichTokenInfoWithPrivacy(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string, privacyAccount *Account) {
-	if tokenInfo.AccessToken == "" || s.privacyClientFactory == nil {
+	if tokenInfo.ClientID == openai.ExcelClientID {
+		// Excel refreshes may omit id_token. Its access-token claims still carry
+		// the account identity needed by BPS; never query Codex for enrichment.
+		if claims, err := openai.DecodeIDToken(tokenInfo.AccessToken); err == nil {
+			info := claims.GetUserInfo()
+			if tokenInfo.ChatGPTAccountID == "" {
+				tokenInfo.ChatGPTAccountID = info.ChatGPTAccountID
+			}
+			if tokenInfo.ChatGPTUserID == "" {
+				tokenInfo.ChatGPTUserID = info.ChatGPTUserID
+			}
+			if tokenInfo.PlanType == "" {
+				tokenInfo.PlanType = info.PlanType
+			}
+			if tokenInfo.Email == "" {
+				tokenInfo.Email = info.Email
+			}
+			if tokenInfo.OrganizationID == "" {
+				tokenInfo.OrganizationID = info.OrganizationID
+			}
+		}
+	}
+	if tokenInfo.AccessToken == "" || tokenInfo.ClientID == openai.ExcelClientID || s.privacyClientFactory == nil {
 		return
 	}
 
@@ -462,5 +490,8 @@ func (s *OpenAIOAuthService) Stop() {
 }
 
 func normalizeOpenAIOAuthPlatform(platform string) string {
+	if strings.EqualFold(strings.TrimSpace(platform), openai.OAuthPlatformExcel) {
+		return openai.OAuthPlatformExcel
+	}
 	return openai.OAuthPlatformOpenAI
 }

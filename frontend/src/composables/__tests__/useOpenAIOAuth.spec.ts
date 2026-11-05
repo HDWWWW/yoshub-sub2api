@@ -29,10 +29,15 @@ vi.mock('@/api/admin', () => ({
   }
 }))
 
-import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
+import { useOpenAIOAuth, OPENAI_EXCEL_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 import { adminAPI } from '@/api/admin'
 
 describe('useOpenAIOAuth.buildCredentials', () => {
+	 it('enables BPS only for the separately authorized Excel client', () => {
+	   const oauth = useOpenAIOAuth()
+	   expect(oauth.buildExtraInfo({ client_id: OPENAI_EXCEL_CLIENT_ID, access_token: 'at' })?.openai_excel_bps).toBe(true)
+	   expect(oauth.buildExtraInfo({ client_id: 'codex', access_token: 'at' })?.openai_excel_bps).toBeUndefined()
+	 })
   it('should keep client_id when token response contains it', () => {
     const oauth = useOpenAIOAuth()
     const creds = oauth.buildCredentials({

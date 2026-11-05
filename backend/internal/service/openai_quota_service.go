@@ -472,6 +472,9 @@ func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID 
 	}
 
 	chatGPTAccountID = strings.TrimSpace(account.GetCredential("chatgpt_account_id"))
+	if account.IsExcelOAuth() {
+		return "", "", "", false, infraerrors.BadRequest("EXCEL_CODEX_QUOTA_UNAVAILABLE", "Excel OAuth credentials do not support Codex quota queries or refill")
+	}
 	if chatGPTAccountID == "" {
 		// Fall back to organization_id — some legacy accounts only persisted poid.
 		chatGPTAccountID = strings.TrimSpace(account.GetCredential("organization_id"))

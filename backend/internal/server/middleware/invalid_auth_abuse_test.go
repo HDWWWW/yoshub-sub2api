@@ -24,7 +24,7 @@ func invalidAuthAbuseTestConfig(threshold int) *config.Config {
 	}
 }
 
-func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
+func TestAPIKeyAuthInvalidAbuseReturns429AfterCredentialCheck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repoCalls := 0
 	repo := &stubApiKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) {
@@ -56,7 +56,7 @@ func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
 	require.Equal(t, "60", w.Header().Get("Retry-After"))
 	require.Contains(t, w.Body.String(), "INVALID_AUTH_RATE_LIMITED")
 	require.Equal(t, IngressRejectInvalidAuthRateLimited, reason)
-	require.Equal(t, 1, repoCalls, "rate-limited request must not reach the repository")
+	require.Equal(t, 2, repoCalls, "check credentials before applying an IP ban so valid keys sharing the IP remain usable")
 }
 
 func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
@@ -90,7 +90,35 @@ func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
 	require.Equal(t, "60", w.Header().Get("Retry-After"))
 	require.Contains(t, w.Body.String(), "RESOURCE_EXHAUSTED")
 	require.Equal(t, IngressRejectInvalidAuthRateLimited, reason)
-	require.Equal(t, 2, repoCalls)
+	require.Equal(t, 3, repoCalls)
+}
+
+func TestLegacyInvalidAuthBanAllowsValidKeysOnSharedIP(t *testing.T) {
+	for _, google := range []bool{false, true} {
+		cfg := invalidAuthAbuseTestConfig(1)
+		repo := &stubApiKeyRepo{getByKey: func(_ context.Context, key string) (*service.APIKey, error) {
+			if key == "valid-key" {
+				return &service.APIKey{ID: 1, UserID: 1, Key: key, Status: service.StatusActive,
+					User: &service.User{ID: 1, Status: service.StatusActive, Role: service.RoleUser, Balance: 1}}, nil
+			}
+			return nil, service.ErrAPIKeyNotFound
+		}}
+		svc := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+		router := gin.New()
+		auth := gin.HandlerFunc(NewAPIKeyAuthMiddleware(svc, nil, cfg))
+		if google {
+			auth = APIKeyAuthGoogle(svc, cfg)
+		}
+		router.POST("/test", auth, func(c *gin.Context) { c.Status(http.StatusOK) })
+		for _, tc := range []struct {
+			key    string
+			status int
+		}{{"bad-key", 401}, {"another-bad-key", 429}, {"valid-key", 200}, {"still-bad-key", 429}} {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httpRequest(t, "/test", "", tc.key))
+			require.Equal(t, tc.status, rec.Code, "google=%v key=%s", google, tc.key)
+		}
+	}
 }
 
 func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {

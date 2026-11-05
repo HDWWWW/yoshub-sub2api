@@ -110,6 +110,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		}
 		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
+	if s.shouldUseExcelBPSCompat(ctx, account, body, defaultMappedModel) {
+		return s.forwardExcelBPSCompat(ctx, c, account, body, defaultMappedModel, false)
+	}
 
 	// Cursor compatibility: some clients send a Responses-shaped body to the
 	// /v1/chat/completions URL. Detect it before protocol routing so adaptive

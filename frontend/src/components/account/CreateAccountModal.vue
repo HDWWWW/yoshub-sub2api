@@ -3197,7 +3197,13 @@
         <p v-if="form.proxy_mode === 'ovh_ipv6'" class="input-hint">{{ t(isOAuthFlow ? 'ovhIPv6.oauthTiming' : 'ovhIPv6.allocateOnSave') }}</p>
       </div>
 
-      <OpenAIPrivacyControl v-if="form.platform === 'openai' && isOAuthFlow" v-model="privacyEnabled" />
+      <div v-if="form.platform === 'openai' && isOAuthFlow" class="space-y-3">
+        <label class="input-label">{{ t('admin.accounts.openai.oauthProfile') }}</label>
+        <Select v-model="openaiOAuthProfile" :options="[{value: 'codex', label: 'Codex'}, {value: 'excel', label: 'Excel / BPS'}]" data-testid="create-openai-oauth-profile" />
+        <p v-if="openaiOAuthProfile === 'excel'" class="input-hint">{{ t('admin.accounts.openai.excelAuthorization') }}</p>
+        <ExcelBPSAccountOptions v-if="openaiOAuthProfile === 'excel'" v-model="excelBPSOptions" />
+      </div>
+      <OpenAIPrivacyControl v-if="form.platform === 'openai' && isOAuthFlow && openaiOAuthProfile === 'codex'" v-model="privacyEnabled" />
 
       <UpstreamRequestIdHeaderField
         v-model="upstreamRequestIdHeader"
@@ -3331,7 +3337,7 @@
 
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
-        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="form.platform === 'openai' && openaiOAuthProfile !== 'excel' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         data-testid="create-openai-ws-mode"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
@@ -3349,6 +3355,11 @@
             <Select v-model="openaiResponsesWebSocketV2Mode" :options="openAIWSModeOptions" />
           </div>
         </div>
+      </div>
+
+      <div v-if="form.platform === 'openai' && accountCategory === 'oauth-based' && openaiOAuthProfile === 'codex'" class="space-y-2 border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="flex items-center gap-2 text-sm"><input v-model="openaiOAuthWSSSEAcceleration" type="checkbox" data-testid="create-openai-ws-sse-acceleration" />{{ t('admin.accounts.openai.wsSSEAcceleration') }}</label>
+        <p class="text-xs text-gray-500">{{ t('admin.accounts.openai.wsSSEAccelerationDesc') }}</p>
       </div>
 
       <!-- Anthropic API Key 自动透传开关 -->
@@ -3757,12 +3768,12 @@
         :allow-multiple="form.platform === 'anthropic'"
         :show-cookie-option="form.platform === 'anthropic'"
         :show-refresh-token-option="form.platform === 'openai' || form.platform === 'antigravity' || form.platform === 'grok'"
-        :show-mobile-refresh-token-option="form.platform === 'openai'"
+        :show-mobile-refresh-token-option="form.platform === 'openai' && openaiOAuthProfile === 'codex'"
         :show-session-token-option="false"
         :show-access-token-option="false"
-        :show-codex-session-import-option="form.platform === 'openai'"
-        :show-agent-identity-option="form.platform === 'openai'"
-        :show-codex-pat-option="form.platform === 'openai'"
+        :show-codex-session-import-option="form.platform === 'openai' && openaiOAuthProfile === 'codex'"
+        :show-agent-identity-option="form.platform === 'openai' && openaiOAuthProfile === 'codex'"
+        :show-codex-pat-option="form.platform === 'openai' && openaiOAuthProfile === 'codex'"
         :show-sso-option="form.platform === 'grok'"
         :show-email-password-option="false"
         :show-manual-option="true"
@@ -4204,6 +4215,9 @@ import {
   type OpenAIWSMode
 } from '@/utils/openaiWsMode'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
+import ExcelBPSAccountOptions from './ExcelBPSAccountOptions.vue'
+import { readExcelBPSOptions, applyExcelBPSOptions } from '@/utils/excelBps'
+import { OPENAI_EXCEL_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 
 // Type for exposed OAuthAuthorizationFlow component
 // Note: defineExpose automatically unwraps refs, so we use the unwrapped types
@@ -4703,6 +4717,10 @@ const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 // Images 非流式响应缺 b64_json 时由网关下载 url 回填（仅 OpenAI API Key）。
 const openAIImagesUrlToB64JsonEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
+const openaiOAuthProfile = ref<'codex' | 'excel'>('codex')
+const excelBPSOptions = ref(readExcelBPSOptions({ openai_excel_bps: true }))
+watch(openaiOAuthProfile, () => openaiOAuth.resetState())
+const openaiOAuthWSSSEAcceleration = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -5216,6 +5234,9 @@ watch(
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
+      openaiOAuthProfile.value = 'codex'
+      excelBPSOptions.value = readExcelBPSOptions({ openai_excel_bps: true })
+      openaiOAuthWSSSEAcceleration.value = false
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
@@ -5682,6 +5703,9 @@ const resetForm = () => {
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
+  openaiOAuthProfile.value = 'codex'
+  excelBPSOptions.value = readExcelBPSOptions({ openai_excel_bps: true })
+  openaiOAuthWSSSEAcceleration.value = false
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
@@ -5749,6 +5773,7 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   const extra: Record<string, unknown> = { ...(base || {}) }
+  if (base?.openai_excel_bps === true) applyExcelBPSOptions(extra, excelBPSOptions.value)
   if (accountCategory.value === 'oauth-based') {
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
@@ -5757,6 +5782,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
   }
   // 清理兼容旧键，统一改用分类型开关。
+  if (form.type === 'oauth' && openaiOAuthWSSSEAcceleration.value) extra.openai_oauth_ws_sse_acceleration = true
+  else delete extra.openai_oauth_ws_sse_acceleration
   delete extra.responses_websockets_v2_enabled
   delete extra.openai_ws_enabled
   if (openaiPassthroughEnabled.value) {
@@ -6235,7 +6262,7 @@ const goBackToBasicInfo = () => {
 
 const handleGenerateUrl = async () => {
   if (form.platform === 'openai') {
-    await openaiOAuth.generateAuthUrl(form.proxy_id)
+    await openaiOAuth.generateAuthUrl(form.proxy_id, undefined, openaiOAuthProfile.value)
   } else if (form.platform === 'gemini') {
     await geminiOAuth.generateAuthUrl(
       form.proxy_id,
@@ -6895,6 +6922,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
 
 // OpenAI RT 批量验证和创建（共享逻辑）
 const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string) => {
+  if (openaiOAuthProfile.value === 'excel') clientId = OPENAI_EXCEL_CLIENT_ID
   const oauthClient = openaiOAuth
   if (!refreshTokenInput.trim()) return
 

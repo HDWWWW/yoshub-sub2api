@@ -159,6 +159,12 @@ func (s *OpenAIGatewayService) BuildGroupConfiguredCodexModelsManifest(
 	if err != nil {
 		return nil, false, fmt.Errorf("build group configured Codex models: %w", err)
 	}
+	if s.excelBPSGloballyEnabled(ctx) {
+		body, _, err = restrictExcelBPSCodexModelsManifest(body, catalog, group)
+		if err != nil {
+			return nil, false, fmt.Errorf("restrict Excel BPS Codex models: %w", err)
+		}
+	}
 	manifest := &OpenAIModelsResponse{
 		Body: body,
 		ETag: codexModelsManifestBodyETag(body),
@@ -216,7 +222,14 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		return fmt.Errorf("filter retired Codex models: %w", err)
 	}
 	body = filtered
-	if changed || retired {
+	bpsChanged := false
+	if s.excelBPSGloballyEnabled(ctx) {
+		body, bpsChanged, err = restrictExcelBPSCodexModelsManifest(body, accounts, group)
+		if err != nil {
+			return fmt.Errorf("restrict Excel BPS Codex models: %w", err)
+		}
+	}
+	if changed || retired || bpsChanged {
 		manifest.Body = body
 		manifest.ETag = codexModelsManifestBodyETag(body)
 	}
@@ -1706,6 +1719,22 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	}
 
 	clientVersion = strings.TrimSpace(clientVersion)
+	if credAccount.IsExcelOAuth() {
+		catalog, fetchErr := s.FetchExcelBPSModelsList(ctx, credAccount)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		body := convertOpenAIModelListToCodexManifestForAccount(catalog.Body, account)
+		if bytes.Contains(body, []byte(`"data":[]`)) {
+			body = []byte(`{"models":[]}`)
+		}
+		body, _, fetchErr = restrictExcelBPSCodexModelsManifest(body, []Account{*account}, nil)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		result := &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}
+		return openAIModelsResponseForClient(result, ifNoneMatch), nil
+	}
 	if clientVersion == "" {
 		clientVersion = CodexCanonicalClientVersion()
 	}

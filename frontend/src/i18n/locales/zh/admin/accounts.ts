@@ -802,6 +802,17 @@ export default {
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',
+        oauthProfile: "OAuth 授权通路",
+        excelEnabled: "启用 Excel / BPS",
+        excelDescription: "使用该账号的 Excel OAuth 凭据走 BPS。关闭后，该 Excel 账号停止接单。支持 HTTP/SSE，不支持原生 WebSocket 入站。",
+        excelAuthorization: "需要独立授权 Excel；Codex Token 不能直接使用。授权后复制完整回调 URL，回到下一步粘贴。沿用当前账号代理。",
+        excelModels: "BPS 模型（可选）",
+        excelModelsHint: "每行一个上游模型名，也可用逗号分隔。留空表示全部；填写后只接所列模型。",
+        excelOmitTools: "允许忽略不受支持的托管工具，并向模型说明不可用",
+        excelIgnoreEncrypted: "允许用省略说明替代无法转发的加密历史（可能损失上下文）",
+        excelCacheInput: "下游将缓存写入计为普通输入（本地保留原始用量）",
+        wsSSEAcceleration: 'HTTP 流式使用 WebSocket 上游',
+        wsSSEAccelerationDesc: '仅用于普通 OpenAI OAuth Responses 流式请求；需同时启用 WS 模式。提前透传上游通知，真实首字仍按内容计时；请求提交后不重放。',
         wsMode: 'WS mode',
         wsModeDesc:
           '仅对当前 OpenAI 账号类型生效。选择“关闭”可禁用 WS；其余模式需全局 gateway.openai_ws.mode_router_v2_enabled=true 才按所选方式连接，未开启时统一使用上下文池。',

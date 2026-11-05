@@ -16,7 +16,9 @@ import (
 // OpenAI OAuth Constants (from CRS project - Codex CLI client)
 const (
 	// OAuth Client ID for OpenAI (Codex CLI official)
-	ClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+	ClientID         = "app_EMoamEEZ73f0CkXaXp7hrann"
+	ExcelClientID    = "app_fnr0pYvVwwFDocDumLG3H2Bp"
+	ExcelRedirectURI = "https://bps.openai.com/basispoints/extension/360590d7-f8f9-4d88-bf75-0edfe0a4b9f3/auth/callback"
 
 	// OAuth endpoints
 	AuthorizeURL = "https://auth.openai.com/oauth/authorize"
@@ -37,6 +39,7 @@ const (
 const (
 	// OAuthPlatformOpenAI uses OpenAI Codex-compatible OAuth client.
 	OAuthPlatformOpenAI = "openai"
+	OAuthPlatformExcel  = "excel"
 )
 
 // OAuthSession stores OAuth flow state for OpenAI
@@ -183,6 +186,9 @@ func BuildAuthorizationURL(state, codeChallenge, redirectURI string) string {
 
 // BuildAuthorizationURLForPlatform builds authorization URL by platform.
 func BuildAuthorizationURLForPlatform(state, codeChallenge, redirectURI, platform string) string {
+	if platform == OAuthPlatformExcel {
+		return BuildExcelAuthorizationURL(state, codeChallenge)
+	}
 	if redirectURI == "" {
 		redirectURI = DefaultRedirectURI
 	}
@@ -208,6 +214,9 @@ func BuildAuthorizationURLForPlatform(state, codeChallenge, redirectURI, platfor
 
 // OAuthClientConfigByPlatform returns oauth client_id and whether codex simplified flow should be enabled.
 func OAuthClientConfigByPlatform(platform string) (clientID string, codexFlow bool) {
+	if platform == OAuthPlatformExcel {
+		return ExcelClientID, false
+	}
 	return ClientID, true
 }
 
@@ -410,4 +419,15 @@ func (c *IDTokenClaims) GetUserInfo() *UserInfo {
 	}
 
 	return info
+}
+
+// BuildExcelAuthorizationURL uses the registered Excel add-in callback and PKCE.
+func BuildExcelAuthorizationURL(state, challenge string) string {
+	params := url.Values{
+		"client_id": {ExcelClientID}, "response_type": {"code"},
+		"redirect_uri": {ExcelRedirectURI}, "scope": {"openid offline_access email profile organization.read"},
+		"state": {state}, "code_challenge_method": {"S256"}, "code_challenge": {challenge},
+		"audience": {"https://api.openai.com/v1"}, "platform": {"PC"},
+	}
+	return "https://auth.openai.com/api/accounts/authorize?" + params.Encode()
 }
