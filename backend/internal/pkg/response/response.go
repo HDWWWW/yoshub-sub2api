@@ -57,14 +57,8 @@ func Accepted(c *gin.Context, data any) {
 	})
 }
 
-const errorReasonContextKey = "sub2api.response.error_reason"
-
-// ErrorReason exposes structured errors to authentication auditing without buffering response bodies.
-func ErrorReason(c *gin.Context) string { return c.GetString(errorReasonContextKey) }
-
 // Error 返回错误响应
 func Error(c *gin.Context, statusCode int, message string) {
-	c.Set(errorReasonContextKey, "")
 	c.JSON(statusCode, Response{
 		Code:     statusCode,
 		Message:  message,
@@ -76,7 +70,6 @@ func Error(c *gin.Context, statusCode int, message string) {
 // ErrorWithDetails returns an error response compatible with the existing envelope while
 // optionally providing structured error fields (reason/metadata).
 func ErrorWithDetails(c *gin.Context, statusCode int, message, reason string, metadata map[string]string) {
-	c.Set(errorReasonContextKey, reason)
 	c.JSON(statusCode, Response{
 		Code:     statusCode,
 		Message:  message,

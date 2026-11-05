@@ -694,8 +694,6 @@ export default {
         excelOmitTools: "Allow omission of unsupported hosted tools with a capability notice",
         excelIgnoreEncrypted: "Replace unsupported encrypted history with an omission notice (may lose context)",
         excelCacheInput: "Expose cache writes as regular input downstream (retain original usage locally)",
-        wsSSEAcceleration: 'Use WebSocket upstream for HTTP streams',
-        wsSSEAccelerationDesc: 'Ordinary OpenAI OAuth Responses streams only; WS mode must also be enabled. Forward early events while measuring real first content. Submitted requests are never replayed.',
         wsMode: 'WS mode',
         wsModeDesc:
           'Applies only to the current OpenAI account type. Select Off to disable WS. Other modes use the selected connection method only when gateway.openai_ws.mode_router_v2_enabled=true; otherwise, they use the context pool.',

@@ -69,9 +69,6 @@ func SetupRouter(
 		return nil
 	}))
 	r.Use(middleware2.ServerTiming(cfg.Server.EnableServerTiming))
-	if settingService.IPRisk != nil {
-		r.Use(settingService.IPRisk.Middleware())
-	}
 
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedFrontend() {

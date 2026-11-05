@@ -12,9 +12,6 @@ import SettingsView from "../SettingsView.vue";
 vi.mock("@/features/excel-bps/ExcelBPSSettings.vue", () => ({
   default: { template: '<section data-testid="excel-bps-settings" />' },
 }));
-vi.mock("@/features/ip-risk/IPRiskSettings.vue", () => ({
-  default: { template: '<section data-testid="ip-risk-settings" />' },
-}));
 
 const {
   getSettings,

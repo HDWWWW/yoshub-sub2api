@@ -1,9 +1,7 @@
 import excelBps from './excelBps'
-import ipRisk from './ipRisk'
 
 export default {
     settings: {
-      ipRisk,
       excelBps,
       title: '系统设置',
       description: '管理注册、邮箱验证、默认值和 SMTP 设置',

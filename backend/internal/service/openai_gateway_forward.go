@@ -17,35 +17,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func normalizeOpenAIResponsesNamespaces(c *gin.Context, account *Account, body []byte, transport OpenAIUpstreamTransport, passthroughEnabled, compactPath bool) ([]byte, error) {
-	var err error
-	if shouldFlattenOpenAIResponsesNamespaces(account, transport, passthroughEnabled, compactPath) {
-		body, err = flattenOpenAIResponsesNamespaces(c, body)
-		if err != nil {
-			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
-			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
-				"type": "invalid_request_error", "message": err.Error(), "param": "tools",
-			}})
-			return nil, err
-		}
-	}
-	if shouldStripOpenAIResponsesInputNamespaces(account, transport, passthroughEnabled) {
-		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
-			account, transport, passthroughEnabled, compactPath, body,
-		)
-		body, err = stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
-		if err != nil {
-			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
-			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
-				"type": "invalid_request_error", "message": err.Error(), "param": "input",
-			}})
-			return nil, err
-		}
-	}
-
-	return body, nil
-}
-
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
@@ -147,14 +118,32 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
-	// Ordinary OAuth HTTP streams may opt into the WS pool.
-	wsDecision = s.resolveOpenAIHTTPWSSSEDecision(c, account, body, wsDecision)
-	accelerateHTTPSSE := wsDecision.Reason == openAIOAuthWSSSEAccelerationReason
+	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
+	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, GetOpenAIClientTransport(c))
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	compactPath := isOpenAIResponsesCompactPath(c)
-	body, err = normalizeOpenAIResponsesNamespaces(c, account, body, wsDecision.Transport, passthroughEnabled, compactPath)
-	if err != nil {
-		return nil, err
+	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
+		body, err = flattenOpenAIResponsesNamespaces(c, body)
+		if err != nil {
+			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": err.Error(), "param": "tools",
+			}})
+			return nil, err
+		}
+	}
+	if shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) {
+		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
+			account, wsDecision.Transport, passthroughEnabled, compactPath, body,
+		)
+		body, err = stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
+		if err != nil {
+			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": err.Error(), "param": "input",
+			}})
+			return nil, err
+		}
 	}
 
 	nativeCNResponses := account.UsesNativeCNResponses()
@@ -936,9 +925,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if c != nil && c.Writer != nil && c.Writer.Written() {
 				break
 			}
-			if accelerateHTTPSSE {
-				break
-			} // Submitted requests must never replay, even before the first event.
 			var taskRecoveredErr *agentIdentityTaskRecoveredError
 			if errors.As(wsErr, &taskRecoveredErr) {
 				continue
@@ -1044,29 +1030,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return wsResult, nil
 		}
-		fallbackReason := ""
-		if accelerateHTTPSSE {
-			fallbackReason = openAIWSSSEFallbackReason(ctx, c, wsErr)
-		}
-		if fallbackReason == "" {
-			s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
-			return wsResult, wsErr
-		}
-		c.Writer.Header().Del(openAIWSTurnStateHeader)
-		body, err = normalizeOpenAIResponsesNamespaces(c, account, body, OpenAIUpstreamTransportHTTPSSE, passthroughEnabled, compactPath)
-		if err != nil {
-			return nil, err
-		}
-		if !account.IsOpenAIApiKey() {
-			body, _, err = dropPreviousResponseIDFromRawPayload(body)
-			if err != nil {
-				return nil, err
-			}
-		}
-		requestView = newOpenAIRequestView(body)
-		reqBody = nil
-		c.Set("openai_ws_transport_decision", string(OpenAIUpstreamTransportHTTPSSE))
-		c.Set("openai_ws_transport_reason", fallbackReason)
+		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
+		return nil, wsErr
 	}
 
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)

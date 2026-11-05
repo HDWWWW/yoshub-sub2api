@@ -2146,11 +2146,6 @@
         </div>
       </div>
 
-      <div v-if="!isExcelOAuth && account?.platform === 'openai' && account?.type === 'oauth'" class="space-y-2 border-t border-gray-200 pt-4 dark:border-dark-600">
-        <label class="flex items-center gap-2 text-sm"><input v-model="openaiOAuthWSSSEAcceleration" type="checkbox" data-testid="edit-openai-ws-sse-acceleration" />{{ t('admin.accounts.openai.wsSSEAcceleration') }}</label>
-        <p class="text-xs text-gray-500">{{ t('admin.accounts.openai.wsSSEAccelerationDesc') }}</p>
-      </div>
-
       <!-- OpenAI APIKey Responses API support mode -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'apikey'"
@@ -4176,7 +4171,6 @@ const openAIImagesUrlToB64JsonEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const excelBPSOptions = ref(readExcelBPSOptions())
 const isExcelOAuth = computed(() => props.account?.platform === 'openai' && props.account?.type === 'oauth' && props.account?.credentials?.client_id === OPENAI_EXCEL_CLIENT_ID)
-const openaiOAuthWSSSEAcceleration = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -4707,7 +4701,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       codexImageToolMode.value = 'disabled'
     }
     excelBPSOptions.value = readExcelBPSOptions(extra)
-    openaiOAuthWSSSEAcceleration.value = newAccount.type === 'oauth' && extra?.openai_oauth_ws_sse_acceleration === true
     openaiOAuthResponsesWebSocketV2Mode.value = resolveOpenAIWSModeFromExtra(extra, {
       modeKey: 'openai_oauth_responses_websockets_v2_mode',
       enabledKey: 'openai_oauth_responses_websockets_v2_enabled',
@@ -6229,8 +6222,6 @@ const handleSubmit = async () => {
         newExtra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
         newExtra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
       }
-      if (props.account.type === 'oauth' && openaiOAuthWSSSEAcceleration.value) newExtra.openai_oauth_ws_sse_acceleration = true
-      else delete newExtra.openai_oauth_ws_sse_acceleration
       delete newExtra.responses_websockets_v2_enabled
       delete newExtra.openai_ws_enabled
       if (openaiPassthroughEnabled.value) {

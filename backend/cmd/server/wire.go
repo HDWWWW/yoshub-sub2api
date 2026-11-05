@@ -93,7 +93,6 @@ func provideCleanup(
 	opsService *service.OpsService,
 	opsIngressReject *service.OpsIngressRejectAggregator,
 	apiKeyService *service.APIKeyService,
-	settingService *service.SettingService,
 	authCacheInvalidationWorker *service.AuthCacheInvalidationWorker,
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
@@ -145,12 +144,6 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
-			{"IPRisk", func() error {
-				if settingService.IPRisk != nil {
-					settingService.IPRisk.Stop()
-				}
-				return nil
-			}},
 			{"AccountRefillService", func() error { accountRefill.Stop(); return nil }},
 			{"PluginManager", func() error {
 				if pluginManager != nil {

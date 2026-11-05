@@ -63,7 +63,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	)
 
 	payload := s.buildOpenAIWSCreatePayload(reqBody, account)
-	accelerateHTTPSSE := decision.Reason == openAIOAuthWSSSEAccelerationReason
 	payloadStrategy, removedKeys := applyOpenAIWSRetryPayloadStrategy(payload, attempt)
 	turnState := ""
 	turnMetadata := ""
@@ -332,14 +331,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
-	var preparedPayload []byte
-	if accelerateHTTPSSE {
-		err = encodeOpenAIWSSSEPayload(payload, s.openAIWSSSEMaxPayloadBytes(), func(encoded []byte) error { preparedPayload = append([]byte(nil), encoded...); return nil })
-		if err != nil {
-			cleanExit = errors.Is(err, errOpenAIWSSSEPayloadTooLarge)
-			return nil, err
-		}
-	}
 	if err := s.performOpenAIWSGeneratePrewarm(
 		ctx,
 		lease,
@@ -351,15 +342,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		stateStore,
 		groupID,
 	); err != nil {
-		cleanExit = errors.Is(err, errOpenAIWSSSEPayloadTooLarge)
 		return nil, err
 	}
 
-	var requestPayload any = payload
-	if accelerateHTTPSSE {
-		requestPayload = openAIWSPreparedJSON(preparedPayload)
-	}
-	if err := lease.WriteJSONWithContextTimeout(ctx, requestPayload, s.openAIWSWriteTimeout()); err != nil {
+	if err := lease.WriteJSONWithContextTimeout(ctx, payload, s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		if canceled := openAIAccountContextError(ctx, account); canceled != nil {
 			return nil, canceled
@@ -396,8 +382,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		mappedModelBytes = []byte(mappedModel)
 	}
 	bufferedStreamEvents := make([][]byte, 0, 4)
-	flushEarlyEvents := reqStream && accelerateHTTPSSE
-	ttftMode := s.openAITTFTMode(ctx)
 	eventCount := 0
 	tokenEventCount := 0
 	terminalEventCount := 0
@@ -634,7 +618,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if isTerminalEvent {
 			terminalEventCount++
 		}
-		if firstTokenMs == nil && ((ttftMode == OpenAITTFTModeVisible && openAIStreamDataStartsVisibleOutput(string(message), eventType)) || (ttftMode != OpenAITTFTModeVisible && isTokenEvent)) {
+		if firstTokenMs == nil && isTokenEvent {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
@@ -742,9 +726,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 
 		if reqStream {
-			// 保留原生 WS 路径的首个 token 前事件缓冲。
-			// HTTP SSE 加速立即透传上游事件；已提交的请求不能据此安全重放。
-			shouldBuffer := !flushEarlyEvents && firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
+			// 在首个 token 前先缓冲事件（如 response.created），
+			// 以便上游早期断连时仍可安全回退到 HTTP，不给下游发送半截流。
+			shouldBuffer := firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
 			if shouldBuffer {
 				buffered := make([]byte, len(message))
 				copy(buffered, message)
@@ -763,7 +747,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				}
 			} else {
 				flushBufferedStreamEvents(eventType)
-				emitStreamMessage(message, isTerminalEvent || flushEarlyEvents)
+				emitStreamMessage(message, isTerminalEvent)
 			}
 		} else {
 			if responseField.Exists() && responseField.Type == gjson.JSON {

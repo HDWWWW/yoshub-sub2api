@@ -1959,13 +1959,6 @@ type openAIWSCaptureConn struct {
 }
 
 func (c *openAIWSCaptureConn) WriteJSON(ctx context.Context, value any) error {
-	if prepared, ok := value.(openAIWSPreparedJSON); ok {
-		var decoded map[string]any
-		if err := json.Unmarshal(prepared, &decoded); err != nil {
-			return err
-		}
-		value = decoded
-	}
 	_ = ctx
 	c.mu.Lock()
 	defer c.mu.Unlock()

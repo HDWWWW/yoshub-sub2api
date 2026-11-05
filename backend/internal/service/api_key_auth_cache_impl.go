@@ -281,12 +281,6 @@ func (s *APIKeyService) loadAuthCacheEntry(ctx context.Context, key, cacheKey st
 		}
 		return nil, fmt.Errorf("get api key: %w", err)
 	}
-	if apiKey == nil {
-		return nil, ErrAPIKeyNotFound
-	}
-	if apiKey.User == nil {
-		return nil, ErrUserNotFound
-	}
 	apiKey.Key = key
 	snapshot := s.snapshotFromAPIKey(ctx, apiKey)
 	if snapshot == nil {

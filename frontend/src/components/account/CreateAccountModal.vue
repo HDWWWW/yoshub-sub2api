@@ -3357,11 +3357,6 @@
         </div>
       </div>
 
-      <div v-if="form.platform === 'openai' && accountCategory === 'oauth-based' && openaiOAuthProfile === 'codex'" class="space-y-2 border-t border-gray-200 pt-4 dark:border-dark-600">
-        <label class="flex items-center gap-2 text-sm"><input v-model="openaiOAuthWSSSEAcceleration" type="checkbox" data-testid="create-openai-ws-sse-acceleration" />{{ t('admin.accounts.openai.wsSSEAcceleration') }}</label>
-        <p class="text-xs text-gray-500">{{ t('admin.accounts.openai.wsSSEAccelerationDesc') }}</p>
-      </div>
-
       <!-- Anthropic API Key 自动透传开关 -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
@@ -4720,7 +4715,6 @@ const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_comple
 const openaiOAuthProfile = ref<'codex' | 'excel'>('codex')
 const excelBPSOptions = ref(readExcelBPSOptions({ openai_excel_bps: true }))
 watch(openaiOAuthProfile, () => openaiOAuth.resetState())
-const openaiOAuthWSSSEAcceleration = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -5236,7 +5230,6 @@ watch(
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openaiOAuthProfile.value = 'codex'
       excelBPSOptions.value = readExcelBPSOptions({ openai_excel_bps: true })
-      openaiOAuthWSSSEAcceleration.value = false
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
@@ -5705,7 +5698,6 @@ const resetForm = () => {
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
   openaiOAuthProfile.value = 'codex'
   excelBPSOptions.value = readExcelBPSOptions({ openai_excel_bps: true })
-  openaiOAuthWSSSEAcceleration.value = false
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
@@ -5782,8 +5774,6 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
   }
   // 清理兼容旧键，统一改用分类型开关。
-  if (form.type === 'oauth' && openaiOAuthWSSSEAcceleration.value) extra.openai_oauth_ws_sse_acceleration = true
-  else delete extra.openai_oauth_ws_sse_acceleration
   delete extra.responses_websockets_v2_enabled
   delete extra.openai_ws_enabled
   if (openaiPassthroughEnabled.value) {
