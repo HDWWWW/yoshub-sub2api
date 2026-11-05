@@ -1397,12 +1397,6 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_HTTPBridgeModeRe
 	runNativeHTTPBridgeStream(t, "inherit", OpenAIWSIngressModeHTTPBridge)
 }
 
-func TestSmartWS_GroupDisabledBridgesNativeWS(t *testing.T) {
-	for _, mode := range []string{OpenAIWSIngressModeCtxPool, OpenAIWSIngressModePassthrough} {
-		t.Run(mode, func(t *testing.T) { runNativeHTTPBridgeStream(t, "disabled", mode) })
-	}
-}
-
 func runNativeHTTPBridgeStream(t *testing.T, groupMode, accountMode string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

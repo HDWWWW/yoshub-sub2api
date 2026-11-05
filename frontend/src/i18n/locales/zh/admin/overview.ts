@@ -1272,7 +1272,7 @@ export default {
         inherit: "默认：HTTP 上游",
         enabled: "启用 SmartWS",
         disabled: "关闭，使用 HTTP",
-        hint: "适用的 Responses 请求（含转换后的 Chat）复用上游 WS。仍受全局及账号能力限制，已绑定的传输插件优先。原生 WS 保留账号准入设置；关闭本开关后，已获准的原生 WS 客户端通过 HTTP 桥接。"
+        hint: "适用的 HTTP Responses 请求（含转换后的 Chat）复用上游 WS。仍受全局及账号能力限制，已绑定的传输插件优先。关闭后 HTTP 请求恢复 HTTP 上游；原生 WS 由账号原有设置独立控制。"
       },
       openaiFast: {
         reversePriority: '反转账号优先级',

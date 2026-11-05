@@ -1274,7 +1274,7 @@ export default {
         inherit: "Default: HTTP upstream",
         enabled: "Enable SmartWS",
         disabled: "Disable, use HTTP",
-        hint: "Eligible Responses requests, including converted Chat, reuse upstream WS. Global and account capability limits apply; bound transport plugins take priority. Native WS keeps account admission settings; disabling this switch bridges admitted native WS clients over HTTP."
+        hint: "Eligible HTTP Responses requests, including converted Chat, reuse upstream WS. Global and account capability limits apply; bound transport plugins take priority. Disabling this switch restores HTTP upstream for HTTP clients. Native WS remains independently controlled by the existing account settings."
       },
       openaiFast: {
         reversePriority: 'Reverse account priority',

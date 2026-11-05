@@ -28,6 +28,8 @@ func TestSmartWSNativeFirstFramePreservesContinuationWithoutStickyBinding(t *tes
 			got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 				firstPayload: `{"type":"response.create","model":"gpt-5.4","previous_response_id":"resp_existing","input":[{"role":"user","content":"continue"}]}`,
 				ingressMode:  mode,
+				group: &service.Group{ID: 4201, Platform: service.PlatformOpenAI, Status: service.StatusActive,
+					Hydrated: true, SmartWSMode: "disabled"},
 			})
 			require.Equal(t, "resp_existing", gjson.GetBytes(got.upstreamFirstPayload, "previous_response_id").String())
 			require.Len(t, got.logs, 1)
