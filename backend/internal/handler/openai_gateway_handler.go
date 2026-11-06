@@ -2972,6 +2972,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						turnKey.Status == service.StatusAPIKeyQuotaExhausted || turnKey.IsQuotaExhausted() {
 						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", nil)
 					}
+					// Match the HTTP auth gate as well as BillingCacheService:
+					// administrative balance changes can invalidate auth before
+					// the separate billing cache has observed the new balance.
+					if (turnKey.Group == nil || !turnKey.Group.IsSubscriptionType()) && turnKey.User.Balance <= 0 {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", nil)
+					}
 					if err := checkOpenAIWSTurnSubscription(ctx, h.wsSubscriptionLookup, turnKey, subscription); err != nil {
 						return err
 					}

@@ -131,9 +131,10 @@ func (s *wsAdmissionRPM) IncrementUserGroupRPM(context.Context, int64, int64) (i
 
 func TestSmartWSNativeStandardBillingEachTurn(t *testing.T) {
 	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModePassthrough} {
-		for _, kind := range []string{"key_expired", "key_quota", "key_window", "balance", "user_rpm", "group_rpm", "subscription_revoked", "subscription_expired", "subscription_quota", "subscription_replaced", "rpm_once_per_turn"} {
+		for _, kind := range []string{"key_expired", "key_quota", "key_window", "balance", "auth_balance", "user_rpm", "group_rpm", "subscription_revoked", "subscription_expired", "subscription_quota", "subscription_replaced", "rpm_once_per_turn"} {
 			t.Run(mode+"/"+kind, func(t *testing.T) {
 				repo := newWSGroupPricingAPIKeyRepoStub(1)
+				repo.apiKey.User.Balance = 100
 				cache := &wsAdmissionCache{kind: kind}
 				rpm := &wsAdmissionRPM{}
 				repo.apiKey.User.RPMLimit = 2
@@ -171,6 +172,8 @@ func TestSmartWSNativeStandardBillingEachTurn(t *testing.T) {
 						return repo.adminUpdate(keys, func(key *service.APIKey, _ *service.Group) {
 							key.User.Concurrency = 2
 							switch kind {
+							case "auth_balance":
+								key.User.Balance = 0
 							case "key_expired":
 								at := time.Now().Add(-time.Minute)
 								key.ExpiresAt = &at
