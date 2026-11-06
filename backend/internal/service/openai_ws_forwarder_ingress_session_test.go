@@ -3735,9 +3735,10 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_WriteFailureAfte
 
 	writeMessage(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_turn_write_retry_1"}`)
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
-	_, _, readErr := clientConn.Read(readCtx)
+	_, uncertain, readErr := clientConn.Read(readCtx)
 	cancelRead()
-	require.Error(t, readErr)
+	require.NoError(t, readErr)
+	require.Equal(t, smartWSUncertainCode, gjson.GetBytes(uncertain, "error.code").String())
 	select {
 	case serverErr := <-serverErrCh:
 		require.Error(t, serverErr)

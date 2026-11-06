@@ -233,6 +233,7 @@ func beginSmartWSDispatch(c *gin.Context) *smartWSDispatch {
 	d := &smartWSDispatch{}
 	if c != nil {
 		c.Set(smartWSDispatchKey, d)
+		c.Set(smartWSFailureDeliveredKey, false)
 	}
 	return d
 }
@@ -378,5 +379,9 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	MarkResponseCommitted(c)
 	c.Data(resp.StatusCode, contentType, payload)
 	c.Set(smartWSFailureDeliveredKey, true)
-	return smartWSStopFailure(resp.StatusCode, payload, resp.Header)
+	failure := smartWSStopFailure(resp.StatusCode, payload, resp.Header)
+	if isHandshake {
+		handshake.annotate(failure)
+	}
+	return failure
 }

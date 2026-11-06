@@ -688,7 +688,7 @@ func TestOpenAIGatewayService_Forward_WSv2FallbackWhenResponseAlreadyWrittenRetu
 	require.Nil(t, upstream.lastReq, "已写下游响应时，不应再回退 HTTP")
 }
 
-func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseFallbackHTTP(t *testing.T) {
+func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseExplicitUncertainty(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
@@ -778,7 +778,7 @@ func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseFallbackHTTP(t *testin
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Nil(t, upstream.lastReq, "WS 早期断连后不应再回退 HTTP")
-	require.Empty(t, rec.Body.String(), "未产出 token 前上游断连时不应写入下游半截流")
+	require.Contains(t, rec.Body.String(), smartWSUncertainCode)
 }
 
 func TestOpenAIGatewayService_Forward_WSv2DisconnectAfterDispatchIsNotReplayed(t *testing.T) {

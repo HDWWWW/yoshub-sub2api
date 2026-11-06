@@ -38,6 +38,7 @@ func TestSmartWSOpaqueHandshake403DoesNotDisableSharedAccount(t *testing.T) {
 	var stop *UpstreamFailoverError
 	require.ErrorAs(t, err, &stop)
 	require.Equal(t, NextAccountStop, stop.NextAccountAction)
+	require.False(t, stop.ShouldReportAccountScheduleFailure(), "a rejected WS upgrade must not lower shared account health")
 }
 
 func TestSmartWSHandshakeAccountFailureClassification(t *testing.T) {
@@ -69,6 +70,9 @@ func TestSmartWSHandshakeAccountFailureClassification(t *testing.T) {
 			require.Equal(t, "7", rec.Header().Get("Retry-After"))
 			require.Zero(t, upstream.callCount)
 			require.Equal(t, test.accountFailure, repo.tempCalls+repo.setErrorCalls > 0)
+			var stop *UpstreamFailoverError
+			require.ErrorAs(t, err, &stop)
+			require.Equal(t, test.accountFailure, stop.ShouldReportAccountScheduleFailure())
 			snapshot := s.getOpenAIWSConnPool().SmartWSSnapshot()
 			require.EqualValues(t, 1, snapshot.Counters["failed"])
 			require.Zero(t, snapshot.Counters["succeeded"])

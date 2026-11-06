@@ -3588,11 +3588,20 @@ func TestOpenAIWSHTTPBridgeSSEErrorSideEffectsRunOncePerPlatform(t *testing.T) {
 				},
 			)
 
-			require.Nil(t, result)
+			if platform == PlatformOpenAI {
+				require.NotNil(t, result)
+			} else {
+				require.Nil(t, result)
+			}
 			var failoverErr *UpstreamFailoverError
 			require.ErrorAs(t, err, &failoverErr)
 			require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
-			require.Zero(t, writes)
+			if platform == PlatformOpenAI {
+				require.Equal(t, 1, writes)
+				requireStoppedSmartWSFailure(t, err)
+			} else {
+				require.Zero(t, writes)
+			}
 			require.Equal(t, 1, repo.rateLimitedCalls)
 		})
 	}

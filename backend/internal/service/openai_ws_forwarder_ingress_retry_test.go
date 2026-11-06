@@ -279,7 +279,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DispatchedReadFa
 		msgType, event, readErr := clientConn.Read(readCtx)
 		cancelRead()
 		if expectedResponseID == "" {
-			require.Error(t, readErr)
+			require.NoError(t, readErr)
+			require.Equal(t, smartWSUncertainCode, gjson.GetBytes(event, "error.code").String())
 			select {
 			case serverErr := <-serverErrCh:
 				require.Error(t, serverErr)

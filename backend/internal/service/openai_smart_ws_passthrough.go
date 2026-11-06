@@ -8,6 +8,7 @@ import (
 
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
@@ -16,6 +17,7 @@ import (
 type smartWSNativeObserver struct {
 	openaiwsv2.FrameConn
 	s        *OpenAIGatewayService
+	c        *gin.Context
 	dispatch *smartWSDispatch
 	mu       sync.Mutex
 	current  *smartWSObservation
@@ -38,6 +40,9 @@ func (w *smartWSNativeObserver) WriteFrame(ctx context.Context, typ coderws.Mess
 		w.current.reused = w.turns > 0
 		w.current.dispatched = true
 		w.turns++
+		if w.c != nil {
+			w.c.Set(smartWSFailureDeliveredKey, false)
+		}
 		w.dispatch.state.Store(smartWSMayBeSent)
 		w.mu.Unlock()
 	}
@@ -48,7 +53,9 @@ func (w *smartWSNativeObserver) ReadFrame(ctx context.Context) (coderws.MessageT
 	if err == nil {
 		w.mu.Lock()
 		w.current.event(payload)
-		w.dispatch.state.Store(smartWSReceived)
+		if w.current != nil {
+			w.dispatch.state.Store(smartWSReceived)
+		}
 		w.mu.Unlock()
 	}
 	return typ, payload, err

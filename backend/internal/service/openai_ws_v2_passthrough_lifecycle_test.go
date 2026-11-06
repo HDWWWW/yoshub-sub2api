@@ -464,7 +464,10 @@ func TestPassthroughLifecycle_CloseReasonTruncationPreservesUTF8(t *testing.T) {
 	clientConn := dialPassthroughLifecycleClient(t, server)
 	defer func() { _ = clientConn.CloseNow() }()
 
-	_, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+	uncertain, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, smartWSUncertainCode, gjson.GetBytes(uncertain, "error.code").String())
+	_, err = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
 	var closeErr coderws.CloseError
 	require.ErrorAs(t, err, &closeErr)
 	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
@@ -649,11 +652,14 @@ func TestPassthroughLifecycle_ActiveTurnInactivityUsesReadTimeout(t *testing.T) 
 	delta, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(delta, "type").String())
+	uncertain, err := readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, smartWSUncertainCode, gjson.GetBytes(uncertain, "error.code").String())
 	_, err = readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
 	var websocketCloseErr coderws.CloseError
 	require.ErrorAs(t, err, &websocketCloseErr)
-	require.Equal(t, coderws.StatusGoingAway, websocketCloseErr.Code)
-	require.Equal(t, "upstream websocket read timeout; please reconnect", websocketCloseErr.Reason)
+	require.Equal(t, coderws.StatusInternalError, websocketCloseErr.Code)
+	require.Contains(t, websocketCloseErr.Reason, smartWSUncertainCode)
 	select {
 	case err := <-serverErr:
 		var closeErr *OpenAIWSClientCloseError
@@ -831,6 +837,12 @@ func TestPassthroughLifecycle_FirstOutputTimeoutRemainsBounded(t *testing.T) {
 	clientConn := dialPassthroughLifecycleClient(t, server)
 	defer func() { _ = clientConn.CloseNow() }()
 
+	uncertain, readErr := readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
+	require.NoError(t, readErr)
+	require.Equal(t, smartWSUncertainCode, gjson.GetBytes(uncertain, "error.code").String())
+	_, readErr = readPassthroughLifecycleFrame(t, clientConn, time.Second)
+	require.Error(t, readErr)
+
 	select {
 	case err := <-serverErr:
 		var failoverErr *UpstreamFailoverError
@@ -856,11 +868,14 @@ func TestPassthroughLifecycle_ResponseCreatedTimeoutClosesWithoutFailover(t *tes
 	created, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
+	uncertain, err := readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, smartWSUncertainCode, gjson.GetBytes(uncertain, "error.code").String())
 	_, err = readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
 	var websocketCloseErr coderws.CloseError
 	require.ErrorAs(t, err, &websocketCloseErr)
-	require.Equal(t, coderws.StatusGoingAway, websocketCloseErr.Code)
-	require.Equal(t, "upstream produced no semantic output; please reconnect", websocketCloseErr.Reason)
+	require.Equal(t, coderws.StatusInternalError, websocketCloseErr.Code)
+	require.Contains(t, websocketCloseErr.Reason, smartWSUncertainCode)
 	select {
 	case err := <-serverErr:
 		var failoverErr *UpstreamFailoverError
@@ -897,11 +912,14 @@ func TestPassthroughLifecycle_SecondTurnTimeoutIsNotFailoverSafe(t *testing.T) {
 	created, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
+	uncertain, err := readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, smartWSUncertainCode, gjson.GetBytes(uncertain, "error.code").String())
 	_, err = readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
 	var websocketCloseErr coderws.CloseError
 	require.ErrorAs(t, err, &websocketCloseErr)
-	require.Equal(t, coderws.StatusGoingAway, websocketCloseErr.Code)
-	require.Equal(t, "upstream produced no semantic output; please reconnect", websocketCloseErr.Reason)
+	require.Equal(t, coderws.StatusInternalError, websocketCloseErr.Code)
+	require.Contains(t, websocketCloseErr.Reason, smartWSUncertainCode)
 	select {
 	case err := <-serverErr:
 		var failoverErr *UpstreamFailoverError

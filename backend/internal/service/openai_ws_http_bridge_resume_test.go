@@ -31,7 +31,7 @@ func TestBuildOpenAIWSCurrentTurnRetryPayloadRejectsOrphanToolOutput(t *testing.
 	require.Nil(t, retryPayload)
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurnLaterTurn429FailsOverBeforeClientWrite(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurnLaterTurn429IsDeliveredWithoutReplay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -60,7 +60,8 @@ func TestProxyOpenAIWSHTTPBridgeTurnLaterTurn429FailsOverBeforeClientWrite(t *te
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
-	require.Zero(t, writes)
+	require.Equal(t, 1, writes)
+	requireStoppedSmartWSFailure(t, err)
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnLaterTurnDoesNotFailOverAfterDownstreamOutput(t *testing.T) {
@@ -94,16 +95,17 @@ func TestProxyOpenAIWSHTTPBridgeTurnLaterTurnDoesNotFailOverAfterDownstreamOutpu
 	require.NotNil(t, result)
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
+	require.ErrorAs(t, err, &failoverErr)
+	requireStoppedSmartWSFailure(t, err)
 	require.Len(t, writes, 2)
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(writes[0], "type").String())
 	// P0.1: after downstream output, retain the upstream error and synthesize
 	// the official Responses terminal so Codex clients do not see a bare error
 	// followed by a closed stream.
-	require.Equal(t, "response.failed", gjson.GetBytes(writes[1], "type").String())
+	require.Equal(t, "error", gjson.GetBytes(writes[1], "type").String())
 }
 
-func TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount(t *testing.T) {
+func TestOpenAIWSHTTPBridgeLaterTurn429NeverReachesReplacementAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -180,7 +182,7 @@ func TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount(t 
 		}
 		proxyErr := svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "access-token-a", firstMessage, nil)
 		var failoverErr *UpstreamFailoverError
-		if !errors.As(proxyErr, &failoverErr) {
+		if !errors.As(proxyErr, &failoverErr) || !failoverErr.ShouldRetryNextAccount() {
 			serverErrCh <- proxyErr
 			return
 		}
@@ -222,42 +224,21 @@ func TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount(t 
 	_, retriedCompleted, err := clientConn.Read(readCtx)
 	cancel()
 	require.NoError(t, err)
-	require.Equal(t, "response.completed", gjson.GetBytes(retriedCompleted, "type").String())
-	require.Equal(t, "resp_second", gjson.GetBytes(retriedCompleted, "response.id").String())
-	_ = clientConn.Close(websocket.StatusNormalClosure, "done")
-
-	select {
-	case retryPayload := <-failoverCh:
-		require.NotEmpty(t, retryPayload)
-		require.False(t, gjson.GetBytes(retryPayload, "previous_response_id").Exists())
-		require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(retryPayload, "model").String())
-		input := gjson.GetBytes(retryPayload, "input")
-		require.True(t, input.IsArray())
-		require.Len(t, input.Array(), 4)
-		require.Contains(t, input.Raw, "first")
-		require.Contains(t, input.Raw, "first-ok")
-		require.Contains(t, input.Raw, "second")
-		require.Equal(t, 1, strings.Count(input.Raw, `"id":"fc_1"`))
-		require.Equal(t, 2, strings.Count(input.Raw, `"call_id":"call_1"`))
-		require.Equal(t, "client-session", gjson.GetBytes(retryPayload, "client_metadata.session_id").String())
-		require.Equal(t, "client-thread", gjson.GetBytes(retryPayload, "client_metadata.thread_id").String())
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for current-turn failover")
-	}
-
+	require.Equal(t, "error", gjson.GetBytes(retriedCompleted, "type").String())
+	require.Equal(t, "usage_limit_reached", gjson.GetBytes(retriedCompleted, "error.type").String())
+	require.Equal(t, "60", gjson.GetBytes(retriedCompleted, "retry_after").String())
 	select {
 	case proxyErr := <-serverErrCh:
-		require.NoError(t, proxyErr)
+		requireStoppedSmartWSFailure(t, proxyErr)
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for replacement-account completion")
+		t.Fatal("failed turn did not terminate")
 	}
-	require.Len(t, upstream.bodies, 3)
-	require.Contains(t, string(upstream.bodies[0]), "first")
-	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "client-session"), gjson.GetBytes(upstream.bodies[1], "client_metadata.session_id").String())
-	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "thread", "client-thread"), gjson.GetBytes(upstream.bodies[1], "client_metadata.thread_id").String())
-	require.NotContains(t, string(upstream.bodies[2]), "previous_response_id")
-	require.Contains(t, string(upstream.bodies[2]), "second")
-	require.Equal(t, scopeCodexAccountIdentityValue(&nextAccount, 0, "session", "client-session"), gjson.GetBytes(upstream.bodies[2], "client_metadata.session_id").String())
-	require.Equal(t, scopeCodexAccountIdentityValue(&nextAccount, 0, "thread", "client-thread"), gjson.GetBytes(upstream.bodies[2], "client_metadata.thread_id").String())
-	require.Empty(t, upstream.requests[2].Header.Get(openAIWSTurnStateHeader))
+	select {
+	case <-failoverCh:
+		t.Fatal("failed turn was replayed")
+	default:
+	}
+	require.Len(t, upstream.bodies, 2)
+	require.Equal(t, "resp_first", gjson.GetBytes(upstream.bodies[1], "previous_response_id").String())
+	require.Equal(t, "second", gjson.GetBytes(upstream.bodies[1], "input.0.output").String())
 }

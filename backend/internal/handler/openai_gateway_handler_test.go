@@ -2844,10 +2844,14 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutAfterDispatchDoesNotReplay(t
 	require.NoError(t, err)
 
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 6*time.Second)
-	_, _, readErr := clientConn.Read(readCtx)
+	_, uncertain, readErr := clientConn.Read(readCtx)
 	cancelRead()
-	require.Error(t, readErr)
-	require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(readErr))
+	require.NoError(t, readErr)
+	require.Equal(t, "smart_ws_dispatch_uncertain", gjson.GetBytes(uncertain, "error.code").String())
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), time.Second)
+	_, _, closeErr := clientConn.Read(closeCtx)
+	cancelClose()
+	require.Error(t, closeErr)
 
 	select {
 	case <-handlerDone:

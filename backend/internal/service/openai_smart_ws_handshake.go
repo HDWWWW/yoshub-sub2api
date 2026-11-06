@@ -15,6 +15,15 @@ type smartWSHandshakeFailure struct {
 	accountFailure bool
 }
 
+func (f smartWSHandshakeFailure) annotate(err *UpstreamFailoverError) {
+	err.Stage = GatewayFailureStageWSHandshake
+	err.Scope = GatewayFailureScopeProvider
+	err.Reason = GatewayFailureReason(f.category)
+	if f.accountFailure {
+		err.Scope = GatewayFailureScopeAccount
+	}
+}
+
 func classifySmartWSHandshake(status int, body []byte) smartWSHandshakeFailure {
 	switch status {
 	case http.StatusUnauthorized:

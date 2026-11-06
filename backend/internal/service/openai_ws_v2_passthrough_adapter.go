@@ -943,6 +943,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			statusCode,
 			truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen),
 		)
+		if failure := s.smartWSNativeHandshakeFailure(ctx, c, account, capturedSessionModel, dialErr, func(payload []byte) error {
+			writeCtx, cancel := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
+			defer cancel()
+			return clientConn.Write(writeCtx, coderws.MessageText, payload)
+		}); failure != nil {
+			return failure
+		}
 		s.handleOpenAIWSDialTransientFailure(ctx, account, capturedSessionModel, dialErr)
 		if statusCode == http.StatusTooManyRequests {
 			s.persistOpenAIWSRateLimitSignal(ctx, account, handshakeHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()), capturedSessionModel)
@@ -1181,7 +1188,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			cancel()
 		},
 	}
-	nativeObserver := &smartWSNativeObserver{FrameConn: relayUpstreamFrameConn, s: s, dispatch: beginSmartWSDispatch(c)}
+	nativeObserver := &smartWSNativeObserver{FrameConn: relayUpstreamFrameConn, s: s, c: c, dispatch: beginSmartWSDispatch(c)}
 	defer func() { nativeObserver.finish(ctx, returnErr); returnErr = stopSmartWSReplay(c, returnErr) }()
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
@@ -1316,6 +1323,15 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if context.Cause(ctx) != nil {
 					return
 				}
+				// A read-upstream exit is emitted after its only downstream writer
+				// stops. Send the uncertain outcome before closing the socket.
+				if account.Platform == PlatformOpenAI && exit.Stage == "read_upstream" && smartWSOutcomeUncertain(c) {
+					cause := exit.Err
+					if cause == nil {
+						cause = errors.New("upstream ended before a terminal result")
+					}
+					exit.Err = writeSmartWSNativeUncertain(c, clientConn, cause)
+				}
 				status, reason, ok := openAIWSPassthroughRelayClientClose(exit, int(completedTurns.Load()))
 				if !ok {
 					return
@@ -1393,6 +1409,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	})
 	var controlCloseErr error
+	if relayExit == nil && account.Platform == PlatformOpenAI && smartWSOutcomeUncertain(c) {
+		relayExit = &openaiwsv2.RelayExit{Stage: "read_upstream", Err: errors.New("upstream ended before a terminal result")}
+	}
 	if cause := context.Cause(controlCtx); cause != nil {
 		if isOpenAIWSSessionPreempted(ctx) {
 			return errOpenAIWSSessionPreempted

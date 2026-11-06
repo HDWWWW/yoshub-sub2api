@@ -104,6 +104,9 @@ func (u *httpBridgeIsolationUpstream) Do(req *http.Request, _ string, _ int64, _
 	u.mu.Unlock()
 
 	id := texts[0]
+	if previous := gjson.GetBytes(body, "previous_response_id").String(); previous != "" {
+		id = strings.TrimSuffix(strings.TrimPrefix(previous, "resp_"), "_1")
+	}
 	turn := 1
 	if input.IsArray() {
 		turn = 2
@@ -237,8 +240,8 @@ func TestOpenAIWSHTTPBridgeSessionIsolationAcrossSameSessionHash(t *testing.T) {
 	require.ElementsMatch(t, []httpBridgeIsolationRequest{
 		{input: []string{"alpha"}},
 		{input: []string{"beta"}},
-		{input: []string{"alpha", "call_alpha", "alpha-result"}, state: "turn-alpha"},
-		{input: []string{"beta", "call_beta", "beta-result"}, state: "turn-beta"},
+		{input: []string{"alpha-result"}, state: "turn-alpha"},
+		{input: []string{"beta-result"}, state: "turn-beta"},
 	}, requests)
 	gotState, ok := stateStore.GetSessionTurnState(groupID, seedHash)
 	require.True(t, ok)

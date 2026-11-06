@@ -151,13 +151,13 @@ func TestOpenAIWSv2RejectsMalformedEventAfterWritingDownstream(t *testing.T) {
 
 	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.6-sol","stream":true,"input":"hello"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "after downstream output")
+	requireStoppedSmartWSFailure(t, err)
 	require.Nil(t, result)
 	require.True(t, captureConn.closed)
 	require.Contains(t, recorder.Body.String(), `"delta":"ok"`)
 	require.NotContains(t, recorder.Body.String(), "unexpected-tail")
 	require.NotContains(t, recorder.Body.String(), "response.in_progress")
-	assertOpenAISSEFrames(t, recorder.Body.String(), []string{"response.output_text.delta"})
+	assertOpenAISSEFrames(t, recorder.Body.String(), []string{"response.output_text.delta", "error"})
 }
 
 func testOpenAIWSv2RejectsMalformedEventBeforeWritingDownstream(t *testing.T, malformedMessage []byte) {
@@ -214,11 +214,9 @@ func testOpenAIWSv2RejectsMalformedEventBeforeWritingDownstream(t *testing.T, ma
 
 	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.6-sol","stream":true,"input":"hello"}`))
 	require.Error(t, err)
-	var fallbackErr *openAIWSFallbackError
-	require.ErrorAs(t, err, &fallbackErr)
-	require.Equal(t, "invalid_event_json", fallbackErr.Reason)
+	requireStoppedSmartWSFailure(t, err)
 	require.Nil(t, result)
-	require.Empty(t, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), smartWSUncertainCode)
 	require.True(t, captureConn.closed)
 }
 

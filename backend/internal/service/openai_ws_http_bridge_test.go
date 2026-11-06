@@ -45,7 +45,7 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsWSFields(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPrepareOpenAIWSHTTPBridgeBodyStripsNoneReasoningForCompatibleEndpoint(t *testing.T) {
+func TestPrepareOpenAIWSHTTPBridgeBodyPreservesNoneReasoningForOpenAIEndpoint(t *testing.T) {
 	payload := []byte(`{"type":"response.create","model":"company-coding-model","reasoning":{"effort":"none"},"input":"hi"}`)
 	compatible := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
 		"base_url": "https://compat.example/v1",
@@ -53,8 +53,8 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsNoneReasoningForCompatibleEndpoint(t
 
 	body, err := prepareOpenAIWSHTTPBridgeBody(compatible, payload)
 	require.NoError(t, err)
-	require.False(t, gjson.GetBytes(body, "reasoning.effort").Exists())
-	require.False(t, gjson.GetBytes(body, "reasoning").Exists())
+	require.Equal(t, "none", gjson.GetBytes(body, "reasoning.effort").String())
+	require.True(t, gjson.GetBytes(body, "reasoning").Exists())
 
 	officialBody, err := prepareOpenAIWSHTTPBridgeBody(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, payload)
 	require.NoError(t, err)
@@ -500,14 +500,10 @@ func TestOpenAIWSHTTPBridgeAPIKeyReusesClientToolMappingWhenFollowupOmitsTools(t
 	require.Equal(t, "function", secondTools[0].Get("type").String())
 	require.Equal(t, "exec", secondTools[0].Get("name").String())
 	secondInput := gjson.GetBytes(upstream.bodies[1], "input").Array()
-	require.Len(t, secondInput, 3)
-	require.Equal(t, "run pwd", secondInput[0].String())
-	require.Equal(t, "function_call", secondInput[1].Get("type").String())
-	require.Equal(t, "fc_custom_1", secondInput[1].Get("id").String())
-	require.JSONEq(t, `{"input":"pwd"}`, secondInput[1].Get("arguments").String())
-	require.False(t, secondInput[1].Get("input").Exists())
-	require.Equal(t, "function_call_output", secondInput[2].Get("type").String())
-	require.False(t, secondInput[2].Get("id").Exists())
+	require.Len(t, secondInput, 1)
+	require.Equal(t, "function_call_output", secondInput[0].Get("type").String())
+	require.Equal(t, "call_custom_1", secondInput[0].Get("call_id").String())
+	require.NotEmpty(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").String())
 }
 
 func TestOpenAIWSHTTPBridgeFullCustomToolHistoryWithoutPreviousResponseIDDoesNotReplay(t *testing.T) {
@@ -598,9 +594,8 @@ func TestOpenAIWSHTTPBridgeFullCustomToolHistoryWithoutPreviousResponseIDDoesNot
 
 	require.Len(t, upstream.bodies, 4)
 	orphanInput := gjson.GetBytes(upstream.bodies[1], "input").Array()
-	require.Len(t, orphanInput, 2)
-	require.Equal(t, "run pwd", orphanInput[0].String())
-	require.Equal(t, "user", orphanInput[1].Get("role").String())
+	require.Len(t, orphanInput, 1)
+	require.Equal(t, "user", orphanInput[0].Get("role").String())
 	for _, body := range upstream.bodies[2:] {
 		input := gjson.GetBytes(body, "input").Array()
 		require.Len(t, input, 3)
@@ -611,7 +606,7 @@ func TestOpenAIWSHTTPBridgeFullCustomToolHistoryWithoutPreviousResponseIDDoesNot
 	}
 }
 
-func TestOpenAIWSHTTPBridgeObjectToolOutputWithoutPreviousResponseIDReplaysMatchingCall(t *testing.T) {
+func TestOpenAIWSHTTPBridgeObjectToolOutputWithoutPreviousResponseIDPreservesProvidedInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	completed := func(responseID string, output string) string {
@@ -694,11 +689,9 @@ func TestOpenAIWSHTTPBridgeObjectToolOutputWithoutPreviousResponseIDReplaysMatch
 
 	require.Len(t, upstream.bodies, 2)
 	secondInput := gjson.GetBytes(upstream.bodies[1], "input").Array()
-	require.Len(t, secondInput, 3)
-	require.Equal(t, "custom_tool_call", secondInput[1].Get("type").String())
-	require.Equal(t, "call_1", secondInput[1].Get("call_id").String())
-	require.Equal(t, "custom_tool_call_output", secondInput[2].Get("type").String())
-	require.Equal(t, "call_1", secondInput[2].Get("call_id").String())
+	require.Len(t, secondInput, 1)
+	require.Equal(t, "custom_tool_call_output", secondInput[0].Get("type").String())
+	require.Equal(t, "call_1", secondInput[0].Get("call_id").String())
 }
 
 func TestOpenAIWSHTTPBridgeDecisionKeepsSmallFramesOnWS(t *testing.T) {
@@ -768,8 +761,8 @@ func TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety(t *testing.T) {
 		wantFailover bool
 		wantWrites   int
 	}{
-		{name: "first_turn_fails_over_before_downstream_event", turn: 1, wantFailover: true},
-		{name: "later_turn_does_not_replay_completed_turns", turn: 2, wantWrites: 1},
+		{name: "first_turn_is_uncertain", turn: 1},
+		{name: "later_turn_does_not_replay_completed_turns", turn: 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -810,6 +803,8 @@ func TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety(t *testing.T) {
 				require.Error(t, err)
 				require.False(t, errors.As(err, &failoverErr))
 			}
+			require.True(t, smartWSOutcomeUncertain(c))
+			require.Len(t, upstream.requests, 1)
 			require.Len(t, writes, tt.wantWrites)
 			if tt.wantWrites > 0 {
 				require.Equal(t, "error", gjson.GetBytes(writes[0], "type").String())
@@ -859,20 +854,16 @@ func TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety(t *testing.T) {
 			)
 
 			require.Nil(t, result)
-			var failoverErr *UpstreamFailoverError
-			if tt.wantFailover {
-				require.ErrorAs(t, err, &failoverErr)
-				require.Equal(t, tt.status, failoverErr.StatusCode)
-			} else {
-				require.Error(t, err)
-				require.False(t, errors.As(err, &failoverErr))
-			}
-			require.Len(t, writes, tt.wantWrites)
+			requireStoppedSmartWSFailure(t, err)
+			require.Len(t, upstream.requests, 1)
+			require.Len(t, writes, 1)
+			require.EqualValues(t, tt.status, gjson.GetBytes(writes[0], "status").Int())
+			require.Equal(t, "temporary upstream failure", gjson.GetBytes(writes[0], "error.message").String())
 		})
 	}
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurnRetriesRejectedFieldBeforeClientOutput(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurnPreservesRejectedFieldWithoutReplay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstream := &httpUpstreamSequenceRecorder{responses: []*http.Response{
@@ -908,14 +899,13 @@ func TestProxyOpenAIWSHTTPBridgeTurnRetriesRejectedFieldBeforeClientOutput(t *te
 		},
 	)
 
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, 2, upstream.callCount)
-	require.Len(t, upstream.bodies, 2)
+	requireStoppedSmartWSFailure(t, err)
+	require.Nil(t, result)
+	require.Equal(t, 1, upstream.callCount)
+	require.Len(t, upstream.bodies, 1)
 	require.True(t, gjson.GetBytes(upstream.bodies[0], "truncation").Exists())
-	require.False(t, gjson.GetBytes(upstream.bodies[1], "truncation").Exists())
 	require.Len(t, writes, 1)
-	require.Equal(t, "response.completed", gjson.GetBytes(writes[0], "type").String())
+	require.Equal(t, "invalid_parameter", gjson.GetBytes(writes[0], "error.code").String())
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
@@ -948,10 +938,11 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 			)
 
 			var failoverErr *UpstreamFailoverError
-			require.Nil(t, result)
+			require.NotNil(t, result)
 			require.ErrorAs(t, err, &failoverErr)
 			require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
-			require.Empty(t, writes)
+			require.Len(t, writes, 1)
+			requireStoppedSmartWSFailure(t, err)
 		})
 	}
 }
@@ -959,7 +950,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 // 桥接转发 error / response.failed 给 WS 客户端前必须把容量降载码改写为可重试
 // 的 server_error：Codex 对 server_is_overloaded/slow_down 判致命并终止会话。
 // 账号状态判定使用改写前的原始事件，不受影响。
-func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurnPreservesCapacityShedCodeForClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -1005,14 +996,9 @@ func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing
 				},
 			)
 
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
+			requireStoppedSmartWSFailure(t, err)
 			require.Len(t, writes, 1)
-			require.Contains(t, string(writes[0]), `"code":"server_error"`)
-			require.NotContains(t, string(writes[0]), "server_is_overloaded")
+			require.Contains(t, string(writes[0]), `"code":"server_is_overloaded"`)
 			require.Contains(t, string(writes[0]), "Our servers are currently overloaded")
 		})
 	}
@@ -1043,14 +1029,15 @@ func TestProxyOpenAIWSHTTPBridgeTurnBareErrorUsesAuthoritativeFailed(t *testing.
 		return nil
 	})
 
-	require.NoError(t, err)
+	requireStoppedSmartWSFailure(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 9, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
 	require.Equal(t, 1, repo.setErrorCalls)
-	require.Len(t, writes, 2)
+	require.Len(t, writes, 3)
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(writes[0], "type").String())
-	require.Equal(t, "response.failed", gjson.GetBytes(writes[1], "type").String())
+	require.Equal(t, "error", gjson.GetBytes(writes[1], "type").String())
+	require.Equal(t, "response.failed", gjson.GetBytes(writes[2], "type").String())
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnMarksCyberPolicyForFailureShapes(t *testing.T) {
@@ -1091,6 +1078,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnMarksCyberPolicyForFailureShapes(t *testing.
 			wantInput:  9,
 			wantOutput: 2,
 			wantResult: true,
+			wantError:  true,
 		},
 	}
 
@@ -1126,7 +1114,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnMarksCyberPolicyForFailureShapes(t *testing.
 	}
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurnBareErrorEOFSynthesizesFailed(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurnBareErrorEOFPreservesOriginalFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_eof\",\"status\":\"in_progress\"}}\n\n" +
 		"data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n"
@@ -1144,16 +1132,15 @@ func TestProxyOpenAIWSHTTPBridgeTurnBareErrorEOFSynthesizesFailed(t *testing.T) 
 		return nil
 	})
 
-	require.EqualError(t, err, "bad request")
+	requireStoppedSmartWSFailure(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "response.failed", result.UpstreamTerminalEvent)
+	require.Equal(t, "error", result.UpstreamTerminalEvent)
 	require.Len(t, writes, 2)
-	require.Equal(t, "response.failed", gjson.GetBytes(writes[1], "type").String())
-	require.Equal(t, "failed", gjson.GetBytes(writes[1], "response.status").String())
-	require.Equal(t, "resp_eof", gjson.GetBytes(writes[1], "response.id").String())
+	require.Equal(t, "error", gjson.GetBytes(writes[1], "type").String())
+	require.Equal(t, "invalid_request", gjson.GetBytes(writes[1], "error.code").String())
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurnBareErrorFollowedByCompletedUsesCompleted(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurnBareErrorCannotBecomeSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_recovered","status":"in_progress"}}`,
@@ -1177,17 +1164,17 @@ func TestProxyOpenAIWSHTTPBridgeTurnBareErrorFollowedByCompletedUsesCompleted(t 
 		return nil
 	})
 
-	require.NoError(t, err)
+	requireStoppedSmartWSFailure(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "response.completed", result.UpstreamTerminalEvent)
-	require.Equal(t, 8, result.Usage.InputTokens)
-	require.Equal(t, 4, result.Usage.OutputTokens)
+	require.Equal(t, "error", result.UpstreamTerminalEvent)
+	require.Zero(t, result.Usage.InputTokens)
+	require.Zero(t, result.Usage.OutputTokens)
 	require.Len(t, writes, 2)
 	require.Equal(t, "response.created", gjson.GetBytes(writes[0], "type").String())
-	require.Equal(t, "response.completed", gjson.GetBytes(writes[1], "type").String())
+	require.Equal(t, "error", gjson.GetBytes(writes[1], "type").String())
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataAndRelaysKeepaliveBeforeCapacityFailover(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurnRelaysMetadataKeepaliveAndCapacityFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	preamble := strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_shed"}}`,
@@ -1248,19 +1235,16 @@ func TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataAndRelaysKeepaliveBeforeCapaci
 	)
 
 	require.NoError(t, <-writerDone)
-	require.Nil(t, result)
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.True(t, failoverErr.RetryableOnSameAccount)
-	require.True(t, failoverErr.RequestScopedTransient)
-	require.Len(t, writes, 1)
-	require.JSONEq(t, `{"type":"keepalive"}`, string(writes[0]))
+	require.NotNil(t, result)
+	requireStoppedSmartWSFailure(t, err)
+	require.Len(t, writes, 6)
+	require.Equal(t, "response.created", gjson.GetBytes(writes[0], "type").String())
+	require.JSONEq(t, `{"type":"keepalive"}`, string(writes[4]))
+	require.Equal(t, "response.failed", gjson.GetBytes(writes[5], "type").String())
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	logSink, restore := captureStructuredLog(t)
-	defer restore()
 	body := strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_partial"}}`,
 		"",
@@ -1296,18 +1280,13 @@ func TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput(t *
 	)
 
 	require.NotNil(t, result)
-	require.NoError(t, err)
+	requireStoppedSmartWSFailure(t, err)
 	require.Len(t, writes, 5)
-	require.Equal(t, "keepalive", gjson.GetBytes(writes[0], "type").String())
-	require.Equal(t, "response.created", gjson.GetBytes(writes[1], "type").String())
+	require.Equal(t, "response.created", gjson.GetBytes(writes[0], "type").String())
+	require.Equal(t, "keepalive", gjson.GetBytes(writes[1], "type").String())
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(writes[2], "type").String())
-	require.Equal(t, "keepalive", gjson.GetBytes(writes[3], "type").String())
-	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
-	require.Contains(t, string(writes[4]), `"code":"server_error"`)
-	require.NotContains(t, string(writes[4]), "server_is_overloaded")
-	require.True(t, logSink.ContainsMessage("gateway.failover_suppressed_after_semantic_output"))
-	require.True(t, logSink.ContainsFieldValue("path", "ws_http_bridge"))
+	require.Contains(t, string(writes[4]), `"code":"server_is_overloaded"`)
+	require.Len(t, upstream.requests, 1)
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure(t *testing.T) {
@@ -1352,21 +1331,12 @@ func TestProxyOpenAIWSHTTPBridgeTurnKeepaliveWriteFailure(t *testing.T) {
 			)
 
 			require.Len(t, writes, 1)
-			require.JSONEq(t, `{"type":"keepalive"}`, string(writes[0]))
-			if tc.wantDrain {
-				require.NoError(t, err)
-				require.NotNil(t, result)
-				require.Equal(t, 3, result.Usage.InputTokens)
-				require.Equal(t, 2, result.Usage.OutputTokens)
-			} else {
-				require.Nil(t, result)
-				require.ErrorIs(t, err, tc.writeErr)
-				var turnErr *openAIWSIngressTurnError
-				require.ErrorAs(t, err, &turnErr)
-				require.Equal(t, "write_client", turnErr.stage)
-				require.False(t, turnErr.wroteDownstream)
-				require.False(t, isOpenAIWSIngressTurnRetryable(err))
-			}
+			require.Equal(t, "response.created", gjson.GetBytes(writes[0], "type").String())
+			require.NotNil(t, result)
+			require.True(t, result.ClientDisconnect)
+			require.ErrorIs(t, err, tc.writeErr)
+			require.Zero(t, result.Usage.InputTokens, "cancel immediately without draining new output")
+			require.Len(t, upstream.requests, 1)
 		})
 	}
 }
@@ -1423,24 +1393,13 @@ func TestProxyOpenAIWSHTTPBridgeTurnDisconnectedBeforeOutputDoesNotFailOver(t *t
 			)
 
 			require.NotNil(t, result)
-			var failoverErr *UpstreamFailoverError
-			require.False(t, errors.As(err, &failoverErr))
+			require.True(t, result.ClientDisconnect)
+			require.ErrorIs(t, err, io.EOF)
 			require.Len(t, writes, 2)
-			for _, message := range writes {
-				require.JSONEq(t, `{"type":"keepalive"}`, string(message))
-			}
-			require.Nil(t, result.FirstTokenMs)
-			if tc.wantTerminal {
-				require.NoError(t, err)
-				require.Equal(t, "response.failed", result.UpstreamTerminalEvent)
-				require.Equal(t, 3, result.Usage.InputTokens)
-				require.Equal(t, 2, result.Usage.OutputTokens)
-			} else {
-				require.Error(t, err)
-				if tc.readErr != nil {
-					require.ErrorIs(t, err, context.Canceled, "downstream disconnect cancels the active upstream read")
-				}
-			}
+			require.Equal(t, "response.created", gjson.GetBytes(writes[0], "type").String())
+			require.Equal(t, "keepalive", gjson.GetBytes(writes[1], "type").String())
+			require.Len(t, upstream.requests, 1)
+			require.Zero(t, result.Usage.InputTokens)
 		})
 	}
 }
@@ -1486,16 +1445,15 @@ func TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent(t *testing.T) {
 				},
 			)
 
-			var failoverErr *UpstreamFailoverError
-			if tt.wantFailover {
-				require.Nil(t, result)
-				require.ErrorAs(t, err, &failoverErr)
+			require.NotNil(t, result)
+			require.Error(t, err)
+			require.True(t, smartWSOutcomeUncertain(c))
+			require.Len(t, upstream.requests, 1)
+			if strings.Contains(tt.body, "response.created") {
+				require.Len(t, writes, 1)
 			} else {
-				require.NotNil(t, result)
-				require.Error(t, err)
-				require.False(t, errors.As(err, &failoverErr))
+				require.Empty(t, writes)
 			}
-			require.Len(t, writes, tt.wantWrites)
 		})
 	}
 }
@@ -2093,7 +2051,7 @@ func TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB(t *testing.T) {
 	require.Equal(t, "gpt-5", gjson.GetBytes(upstream.lastBody, "model").String())
 }
 
-func TestOpenAIWSHTTPBridgeKeepsContinuationFramesOnHTTPWithoutPreviousResponseID(t *testing.T) {
+func TestOpenAIWSHTTPBridgePreservesContinuationIDOnHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	firstSSEBody := strings.Join([]string{
@@ -2236,14 +2194,11 @@ func TestOpenAIWSHTTPBridgeKeepsContinuationFramesOnHTTPWithoutPreviousResponseI
 
 	require.Len(t, upstream.bodies, 2, "进入 HTTP bridge 后同一客户端 WS 连接内应保持 HTTP/SSE bridge")
 	require.False(t, gjson.GetBytes(upstream.bodies[0], "previous_response_id").Exists())
-	require.False(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").Exists())
+	require.NotEmpty(t, gjson.GetBytes(upstream.bodies[1], "previous_response_id").String())
 	secondInput := gjson.GetBytes(upstream.bodies[1], "input").Array()
-	require.Len(t, secondInput, 3)
-	require.Equal(t, "first", secondInput[0].String())
-	require.Equal(t, "function_call", secondInput[1].Get("type").String())
-	require.Equal(t, "call_bridge_1", secondInput[1].Get("call_id").String())
-	require.Equal(t, "function_call_output", secondInput[2].Get("type").String())
-	require.Equal(t, "call_bridge_1", secondInput[2].Get("call_id").String())
+	require.Len(t, secondInput, 1)
+	require.Equal(t, "function_call_output", secondInput[0].Get("type").String())
+	require.Equal(t, "call_bridge_1", secondInput[0].Get("call_id").String())
 	require.Equal(t, 0, captureDialer.DialCount())
 	require.Empty(t, captureConn.writes)
 }
@@ -2351,4 +2306,12 @@ func TestOpenAIWSHTTPBridge_IdleTimeoutClosesClientSession(t *testing.T) {
 		t.Fatal("timed out waiting for idle HTTP bridge session to close")
 	}
 	require.Len(t, upstream.bodies, 1, "an idle client must not leave a continuation request running")
+}
+
+func requireStoppedSmartWSFailure(t *testing.T, err error) {
+	t.Helper()
+	var failure *UpstreamFailoverError
+	require.ErrorAs(t, err, &failure)
+	require.False(t, failure.ShouldRetryNextAccount())
+	require.False(t, failure.RetryableOnSameAccount)
 }

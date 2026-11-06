@@ -252,8 +252,10 @@ func prepareOpenAIWSHTTPBridgeBody(account *Account, payload []byte) ([]byte, er
 	}
 	delete(body, "type")
 	delete(body, "generate")
-	delete(body, "previous_response_id")
-	deleteOpenAIResponsesNoneReasoningEffortFromObject(account, body)
+	if account == nil || account.Platform != PlatformOpenAI {
+		delete(body, "previous_response_id")
+		deleteOpenAIResponsesNoneReasoningEffortFromObject(account, body)
+	}
 	body["stream"] = true
 	return json.Marshal(body)
 }
@@ -552,6 +554,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	turnStart := time.Now()
+	if account.Platform == PlatformOpenAI {
+		upstreamReq, buildErr := buildUpstreamRequest(body)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		return s.proxySmartWSHTTPBridge(ctx, c, account, upstreamReq, proxyURL, body, originalModel,
+			actualModel, imageBillingModel, imageSizeTier, imageInputSize, clientToolMapping, writeClientMessage)
+	}
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	var resp *http.Response
 	for {

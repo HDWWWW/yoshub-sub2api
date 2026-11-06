@@ -668,6 +668,7 @@ type GatewayFailureStage string
 const (
 	GatewayFailureStageInference   GatewayFailureStage = "inference"
 	GatewayFailureStageAccountAuth GatewayFailureStage = "account_auth"
+	GatewayFailureStageWSHandshake GatewayFailureStage = "ws_handshake"
 )
 
 // GatewayFailureScope identifies whether selecting another account can help.
@@ -739,7 +740,7 @@ func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
 	if e.Reason == ExcelBPSRateLimitedReason || e.IsExcelBPSImageAdmissionRejection() {
 		return false
 	}
-	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount
+	return (!e.IsCredentialFailure() && e.Stage != GatewayFailureStageWSHandshake) || e.Scope == GatewayFailureScopeAccount
 }
 
 // sseStreamErrorEventError 表示上游 SSE 流体内出现 event:error 帧。

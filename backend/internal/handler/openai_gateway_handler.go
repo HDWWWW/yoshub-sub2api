@@ -4008,6 +4008,10 @@ func openAIWSNextAttemptMessage(current, retryPayload []byte, retryCurrentTurn b
 }
 
 func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failoverErr *service.UpstreamFailoverError) {
+	if service.SmartWSFailureDelivered(c) {
+		closeOpenAIClientWS(conn, coderws.StatusInternalError, "upstream request failed; request was not replayed")
+		return
+	}
 	intendedStatus := http.StatusBadGateway
 	errorType := "upstream_error"
 	errorCode := "upstream_ws_failover_exhausted"

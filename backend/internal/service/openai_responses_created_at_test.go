@@ -279,7 +279,7 @@ func TestProxyOpenAIWSHTTPBridgeTurn_GrokStampsMissingCreatedAt(t *testing.T) {
 	require.Equal(t, createdAt.Int(), gjson.GetBytes(events[1], "response.created_at").Int())
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurn_BareErrorSynthesizedFailedCarriesCreatedAt(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurn_BareErrorPreservesOriginalSequence(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := `data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_eof","created_at":1700000000,"status":"in_progress"}}` + "\n\n" +
 		`data: {"type":"error","sequence_number":1,"error":{"code":"invalid_request","message":"bad request"}}` + "\n\n"
@@ -297,10 +297,10 @@ func TestProxyOpenAIWSHTTPBridgeTurn_BareErrorSynthesizedFailedCarriesCreatedAt(
 		return nil
 	})
 
-	require.EqualError(t, err, "bad request")
+	requireStoppedSmartWSFailure(t, err)
 	require.Len(t, writes, 2)
-	require.Equal(t, "response.failed", gjson.GetBytes(writes[1], "type").String())
-	require.EqualValues(t, 1700000000, gjson.GetBytes(writes[1], "response.created_at").Int())
+	require.Equal(t, "error", gjson.GetBytes(writes[1], "type").String())
+	require.EqualValues(t, 1700000000, gjson.GetBytes(writes[0], "response.created_at").Int())
 	require.EqualValues(t, 1, gjson.GetBytes(writes[1], "sequence_number").Int())
 }
 
