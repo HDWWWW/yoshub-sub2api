@@ -1,5 +1,6 @@
 import accountRefill from './accountRefill'
 import accountRisk from './accountRisk'
+import accountTestParams from './accountTestParams'
 import ovhIPv6 from './ovhIPv6'
 import adminAccessKeys from './adminAccessKeys'
 import happyFirstToken from './happyFirstToken'
@@ -14,6 +15,7 @@ import misc from './misc'
 export default {
   accountRefill,
   accountRisk,
+  accountTestParams,
   ovhIPv6,
   happyFirstToken,
   adminAccessKeys,

@@ -81,7 +81,14 @@
         />
       </div>
 
-      <div v-if="supportsPromptInput" class="space-y-1.5">
+      <AccountTestParameters
+        v-if="supportsTextParameters"
+        v-model:prompt="testPrompt"
+        v-model:reasoning-effort="reasoningEffort"
+        id-prefix="manual-test"
+        :disabled="status === 'connecting'"
+      />
+      <div v-if="supportsPromptInput && !supportsTextParameters" class="space-y-1.5">
         <TextArea
           v-model="testPrompt"
           :label="promptInputLabel"
@@ -370,6 +377,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import TextArea from '@/components/common/TextArea.vue'
+import AccountTestParameters from './AccountTestParameters.vue'
 import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
@@ -407,6 +415,7 @@ const errorMessage = ref('')
 const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
+const reasoningEffort = ref('')
 const loadingModels = ref(false)
 let abortController: AbortController | null = null
 const generatedImages = ref<PreviewMedia[]>([])
@@ -496,7 +505,11 @@ const modelOptionsForMode = computed(() => {
   return []
 })
 
+const supportsTextParameters = computed(() =>
+  isOpenAIAccount.value && testMode.value === 'default' && !supportsOpenAIImageTest.value
+)
 const supportsPromptInput = computed(() => {
+  if (supportsTextParameters.value) return true
   if (!isGrokAccount.value) {
     return supportsImageTest.value
   }
@@ -670,6 +683,7 @@ const testModeSummary = computed(() => {
     }
   }
   if (supportsImageTest.value) return t('admin.accounts.imageTestMode')
+  if (supportsTextParameters.value) return t('accountTestParams.textTestMode')
   return t('admin.accounts.testPrompt')
 })
 
@@ -738,6 +752,7 @@ watch(
   async (newVal) => {
     if (newVal && props.account) {
       testPrompt.value = ''
+      reasoningEffort.value = ''
       testMode.value = 'default'
       grokTestMode.value = 'text'
       resetState()
@@ -847,12 +862,16 @@ const startTest = async () => {
     const requestBody: {
       model_id: string
       prompt: string
+      reasoning_effort?: string
       mode?: string
       image_data_url?: string
       audio_data_url?: string
     } = {
       model_id: showModelSelect.value ? selectedModelId.value : '',
-      prompt: supportsPromptInput.value ? testPrompt.value.trim() : ''
+      prompt: supportsPromptInput.value ? testPrompt.value : ''
+    }
+    if (supportsTextParameters.value && reasoningEffort.value) {
+      requestBody.reasoning_effort = reasoningEffort.value
     }
     if (isOpenAIAccount.value) {
       requestBody.mode = testMode.value

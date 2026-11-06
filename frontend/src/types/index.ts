@@ -2535,6 +2535,8 @@ export interface ScheduledTestPlan {
   id: number
   account_id: number
   model_id: string
+  prompt: string
+  reasoning_effort: string
   cron_expression: string
   enabled: boolean
   max_results: number
@@ -2560,6 +2562,8 @@ export interface ScheduledTestResult {
 export interface CreateScheduledTestPlanRequest {
   account_id: number
   model_id: string
+  prompt?: string
+  reasoning_effort?: string
   cron_expression: string
   enabled?: boolean
   max_results?: number
@@ -2568,6 +2572,8 @@ export interface CreateScheduledTestPlanRequest {
 
 export interface UpdateScheduledTestPlanRequest {
   model_id?: string
+  prompt?: string
+  reasoning_effort?: string
   cron_expression?: string
   enabled?: boolean
   max_results?: number

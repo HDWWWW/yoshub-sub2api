@@ -90,6 +90,43 @@ function mountModal(account: Record<string, unknown> = {
 }
 
 describe('AccountTestModal', () => {
+  it('sends the exact OpenAI text and selected reasoning effort, resetting on reopen', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-5.4', display_name: 'GPT-5.4' }])
+    const wrapper = mountModal({ id: 71, name: 'OpenAI', platform: 'openai', type: 'oauth', status: 'active' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await wrapper.find('textarea').setValue('  请只回复 21\n保留空格  ')
+    await wrapper.find('#manual-test-effort').setValue('xhigh')
+    await wrapper.findAll('button').find(b => b.text().includes('admin.accounts.startTest'))!.trigger('click')
+    await flushPromises()
+    expect(JSON.parse((global.fetch as any).mock.calls[0][1].body)).toEqual({
+      model_id: 'gpt-5.4', prompt: '  请只回复 21\n保留空格  ', reasoning_effort: 'xhigh', mode: 'default'
+    })
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect((wrapper.find('#manual-test-effort').element as HTMLSelectElement).value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('omits text reasoning options for compact and image probes', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-5.4', display_name: 'GPT-5.4' }])
+    const wrapper = mountModal({ id: 71, name: 'OpenAI', platform: 'openai', type: 'oauth', status: 'active' })
+    await wrapper.setProps({ show: true }); await flushPromises()
+    await wrapper.find('#manual-test-effort').setValue('high')
+    ;(wrapper.vm as any).testMode = 'compact'
+    await flushPromises()
+    expect(wrapper.find('#manual-test-effort').exists()).toBe(false)
+    await (wrapper.vm as any).startTest(); await flushPromises()
+    expect(JSON.parse((global.fetch as any).mock.calls[0][1].body)).not.toHaveProperty('reasoning_effort')
+    ;(wrapper.vm as any).testMode = 'default'
+    ;(wrapper.vm as any).selectedModelId = 'gpt-image-2'
+    await flushPromises()
+    expect(wrapper.find('#manual-test-effort').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     getAvailableModels.mockResolvedValue([
       { id: 'gemini-2.0-flash', display_name: 'Gemini 2.0 Flash' },

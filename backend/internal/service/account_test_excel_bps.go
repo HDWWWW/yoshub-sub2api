@@ -11,7 +11,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func (s *AccountTestService) testExcelBPSConnection(c *gin.Context, account *Account, model, prompt, mode string) error {
+func (s *AccountTestService) testExcelBPSConnection(c *gin.Context, account *Account, model, prompt, mode string, opts ...AccountTestOptions) error {
 	if s.openaiGatewayService == nil {
 		return s.sendErrorAndEnd(c, "Excel BPS gateway is unavailable")
 	}
@@ -21,7 +21,11 @@ func (s *AccountTestService) testExcelBPSConnection(c *gin.Context, account *Acc
 	if strings.TrimSpace(prompt) == "" {
 		prompt = "hi"
 	}
-	body, err := json.Marshal(map[string]any{"model": model, "input": prompt, "stream": true, "max_output_tokens": 128})
+	payload := map[string]any{"model": model, "input": prompt, "stream": true, "max_output_tokens": 128}
+	if effort := firstAccountTestOptions(opts).ReasoningEffort; effort != "" {
+		payload["reasoning"] = map[string]any{"effort": effort}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}

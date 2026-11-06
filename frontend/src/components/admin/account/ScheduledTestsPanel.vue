@@ -108,6 +108,15 @@
             </div>
           </div>
         </div>
+        <AccountTestParameters
+          v-if="accountPlatform === 'openai'"
+          v-model:prompt="newPlan.prompt"
+          v-model:reasoning-effort="newPlan.reasoning_effort"
+          id-prefix="scheduled-new"
+          class="mt-3"
+          :supports-reasoning="supportsReasoning(newPlan.model_id)"
+          :disabled="creating"
+        />
         <div class="mt-3 flex justify-end gap-2">
           <button
             @click="showAddForm = false; resetNewPlan()"
@@ -318,6 +327,15 @@
                 </div>
               </div>
             </div>
+            <AccountTestParameters
+              v-if="accountPlatform === 'openai'"
+              v-model:prompt="editForm.prompt"
+              v-model:reasoning-effort="editForm.reasoning_effort"
+              :id-prefix="`scheduled-edit-${plan.id}`"
+              class="mt-3"
+              :supports-reasoning="supportsReasoning(editForm.model_id)"
+              :disabled="updating"
+            />
             <div class="mt-3 flex justify-end gap-2">
               <button
                 @click="cancelEdit"
@@ -471,6 +489,7 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import Input from '@/components/common/Input.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import AccountTestParameters from './AccountTestParameters.vue'
 import { Icon } from '@/components/icons'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
@@ -479,11 +498,13 @@ import type { ScheduledTestPlan, ScheduledTestResult } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const supportsReasoning = (model: string) => props.accountPlatform === 'openai' && !model.toLowerCase().startsWith('gpt-image-')
 
 const props = defineProps<{
   show: boolean
   accountId: number | null
   modelOptions: SelectOption[]
+  accountPlatform?: string
 }>()
 
 const emit = defineEmits<{
@@ -512,6 +533,8 @@ const editingPlanId = ref<number | null>(null)
 const updating = ref(false)
 const editForm = reactive({
   model_id: '' as string,
+  prompt: '',
+  reasoning_effort: '',
   cron_expression: '' as string,
   max_results: '100' as string,
   enabled: true,
@@ -520,6 +543,8 @@ const editForm = reactive({
 
 const newPlan = reactive({
   model_id: '' as string,
+  prompt: '',
+  reasoning_effort: '',
   cron_expression: '' as string,
   max_results: '100' as string,
   enabled: true,
@@ -528,6 +553,8 @@ const newPlan = reactive({
 
 const resetNewPlan = () => {
   newPlan.model_id = ''
+  newPlan.prompt = ''
+  newPlan.reasoning_effort = ''
   newPlan.cron_expression = ''
   newPlan.max_results = '100'
   newPlan.enabled = true
@@ -539,6 +566,8 @@ watch(
   () => props.show,
   async (visible) => {
     if (visible && props.accountId) {
+      resetNewPlan()
+      editingPlanId.value = null
       await loadPlans()
     } else {
       plans.value = []
@@ -571,6 +600,8 @@ const handleCreate = async () => {
     await adminAPI.scheduledTests.create({
       account_id: props.accountId,
       model_id: newPlan.model_id,
+      prompt: newPlan.prompt,
+      reasoning_effort: supportsReasoning(newPlan.model_id) ? newPlan.reasoning_effort : '',
       cron_expression: newPlan.cron_expression,
       enabled: newPlan.enabled,
       max_results: maxResults,
@@ -603,6 +634,8 @@ const handleToggleEnabled = async (plan: ScheduledTestPlan, enabled: boolean) =>
 const startEdit = (plan: ScheduledTestPlan) => {
   editingPlanId.value = plan.id
   editForm.model_id = plan.model_id
+  editForm.prompt = plan.prompt ?? ''
+  editForm.reasoning_effort = plan.reasoning_effort ?? ''
   editForm.cron_expression = plan.cron_expression
   editForm.max_results = String(plan.max_results)
   editForm.enabled = plan.enabled
@@ -619,6 +652,8 @@ const handleEdit = async () => {
   try {
     const updated = await adminAPI.scheduledTests.update(editingPlanId.value, {
       model_id: editForm.model_id,
+      prompt: editForm.prompt,
+      reasoning_effort: supportsReasoning(editForm.model_id) ? editForm.reasoning_effort : '',
       cron_expression: editForm.cron_expression,
       max_results: Number(editForm.max_results) || 100,
       enabled: editForm.enabled,
