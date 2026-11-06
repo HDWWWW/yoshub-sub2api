@@ -1,5 +1,6 @@
 export default {
   textTestMode: '发送下方测试消息，留空使用 hi',
+  sendingCustomMessage: '发送自定义测试消息',
   prompt: '测试消息',
   promptPlaceholder: '输入这次测试要发送的内容，例如：请只回复 21',
   promptHint: '留空使用原默认测试内容（普通文本测试为 hi）。最多 32 KiB。',

@@ -991,7 +991,9 @@ const handleEvent = (event: {
                       : t('admin.accounts.sendingTestMessage')
           : supportsImageTest.value
             ? t('admin.accounts.sendingImageRequest')
-            : t('admin.accounts.sendingTestMessage'),
+            : supportsTextParameters.value && testPrompt.value.trim()
+              ? t('accountTestParams.sendingCustomMessage')
+              : t('admin.accounts.sendingTestMessage'),
         'text-gray-400'
       )
       addLine('', 'text-gray-300')

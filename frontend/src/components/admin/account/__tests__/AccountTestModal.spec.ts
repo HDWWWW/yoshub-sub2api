@@ -92,6 +92,11 @@ function mountModal(account: Record<string, unknown> = {
 describe('AccountTestModal', () => {
   it('sends the exact OpenAI text and selected reasoning effort, resetting on reopen', async () => {
     getAvailableModels.mockResolvedValue([{ id: 'gpt-5.4', display_name: 'GPT-5.4' }])
+    global.fetch = vi.fn().mockImplementation(async () => createStreamResponse([
+      'data: {"type":"test_start","model":"gpt-5.4"}\n',
+      'data: {"type":"content","text":"21"}\n',
+      'data: {"type":"test_complete","success":true}\n'
+    ]))
     const wrapper = mountModal({ id: 71, name: 'OpenAI', platform: 'openai', type: 'oauth', status: 'active' })
     await wrapper.setProps({ show: true })
     await flushPromises()
@@ -102,11 +107,17 @@ describe('AccountTestModal', () => {
     expect(JSON.parse((global.fetch as any).mock.calls[0][1].body)).toEqual({
       model_id: 'gpt-5.4', prompt: '  请只回复 21\n保留空格  ', reasoning_effort: 'xhigh', mode: 'default'
     })
+    expect(wrapper.text()).toContain('accountTestParams.sendingCustomMessage')
+    expect(wrapper.text()).not.toContain('admin.accounts.sendingTestMessage')
     await wrapper.setProps({ show: false })
     await wrapper.setProps({ show: true })
     await flushPromises()
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
     expect((wrapper.find('#manual-test-effort').element as HTMLSelectElement).value).toBe('')
+    await wrapper.findAll('button').find(b => b.text().includes('admin.accounts.startTest'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('admin.accounts.sendingTestMessage')
+    expect(wrapper.text()).not.toContain('accountTestParams.sendingCustomMessage')
     wrapper.unmount()
   })
 
