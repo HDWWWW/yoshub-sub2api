@@ -2,6 +2,7 @@ import { apiClient } from '../client'
 
 export interface AccountRiskConfig {
   enabled: boolean
+  notify_enabled: boolean
   first_below_percent: number
   second_at_least_percent: number
   sustain_seconds: number
@@ -22,6 +23,7 @@ export interface AccountRiskLoad {
 export interface AccountRiskRule {
   group_id: number
   revision: number
+  webhook_status?: 'ready' | 'missing' | 'unavailable'
   config: AccountRiskConfig
   observation: {
     checked_at: string
@@ -37,7 +39,7 @@ export interface AccountRiskRule {
     input_tokens: number
     output_tokens: number
   }
-  events: { at: string; account_id: number; reason: string }[]
+  events: { id?: string; at: string; account_id: number; reason: string; notification?: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
 }
 export const accountRiskAPI = {
   async get(groupID: number): Promise<AccountRiskRule> {

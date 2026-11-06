@@ -24,6 +24,7 @@ var ErrAccountRiskConflict = errors.New("配置已被修改，请刷新后重试
 
 type AccountRiskConfig struct {
 	Enabled              bool   `json:"enabled"`
+	NotifyEnabled        bool   `json:"notify_enabled"`
 	FirstBelowPercent    int    `json:"first_below_percent"`
 	SecondAtLeastPercent int    `json:"second_at_least_percent"`
 	SustainSeconds       int    `json:"sustain_seconds"`
@@ -86,9 +87,13 @@ type AccountRiskObservation struct {
 }
 
 type AccountRiskEvent struct {
-	At        time.Time `json:"at"`
-	AccountID int64     `json:"account_id"`
-	Reason    string    `json:"reason"`
+	ID             string     `json:"id,omitempty"`
+	At             time.Time  `json:"at"`
+	AccountID      int64      `json:"account_id"`
+	AccountName    string     `json:"account_name,omitempty"`
+	Reason         string     `json:"reason"`
+	Notification   string     `json:"notification,omitempty"`
+	NotificationAt *time.Time `json:"notification_at,omitempty"`
 }
 
 type AccountRiskRule struct {
@@ -108,8 +113,9 @@ type AccountRiskPending struct {
 }
 
 type AccountRiskState struct {
-	Rules   map[int64]*AccountRiskRule `json:"rules"`
-	Pending *AccountRiskPending        `json:"pending,omitempty"`
+	Rules              map[int64]*AccountRiskRule `json:"rules"`
+	Pending            *AccountRiskPending        `json:"pending,omitempty"`
+	NextNotificationAt time.Time                  `json:"next_notification_at,omitempty"`
 }
 
 type AccountRiskStop func(groupID int64, account *Account) (bool, error)
@@ -144,6 +150,7 @@ type AccountRiskService struct {
 	groups    accountRiskGroups
 	loads     accountRiskLoads
 	probe     accountRiskProber
+	notifier  accountRiskNotifier
 	cfg       *config.Config
 	worker    string
 	cancel    context.CancelFunc
@@ -160,6 +167,8 @@ func (s *AccountRiskService) Start() {
 	s.startOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
+		s.wg.Add(1)
+		go s.notificationLoop(ctx)
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
@@ -193,15 +202,26 @@ func (s *AccountRiskService) Stop() {
 	}
 }
 
-func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountRiskRule, error) {
+func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountRiskView, error) {
 	state, err := s.store.Read(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if r := state.Rules[groupID]; r != nil {
-		return r, nil
+	r := state.Rules[groupID]
+	if r == nil {
+		r = &AccountRiskRule{GroupID: groupID, Config: DefaultAccountRiskConfig(), Events: []AccountRiskEvent{}, Observation: AccountRiskObservation{Mode: "disabled", Message: "检测未启用"}}
 	}
-	return &AccountRiskRule{GroupID: groupID, Config: DefaultAccountRiskConfig(), Events: []AccountRiskEvent{}, Observation: AccountRiskObservation{Mode: "disabled", Message: "检测未启用"}}, nil
+	v := &AccountRiskView{AccountRiskRule: r, WebhookStatus: "unavailable"}
+	if s.notifier != nil {
+		ready, err := s.notifier.RiskWebhookConfigured(ctx, groupID)
+		if err == nil {
+			v.WebhookStatus = "missing"
+			if ready {
+				v.WebhookStatus = "ready"
+			}
+		}
+	}
+	return v, nil
 }
 
 func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision int64, c AccountRiskConfig) error {
@@ -394,7 +414,7 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 			}
 			if changed {
 				reason := fmt.Sprintf("容量异常持续 %d 秒：首位 %.1f%% < %d%%，次位 %.1f%% ≥ %d%%，已关闭首位账号调度", r.Config.SustainSeconds, o.First.Percent, r.Config.FirstBelowPercent, o.Second.Percent, r.Config.SecondAtLeastPercent)
-				riskRecordStop(r, first.ID, now, reason)
+				riskRecordStop(r, first, now, reason)
 			} else {
 				riskReset(o, "waiting", "账号已变化，重新采样")
 			}
@@ -411,9 +431,13 @@ func riskAfter(now time.Time, seconds int) *time.Time {
 	v := now.Add(time.Duration(seconds) * time.Second)
 	return &v
 }
-func riskRecordStop(r *AccountRiskRule, id int64, now time.Time, reason string) {
+func riskRecordStop(r *AccountRiskRule, account *Account, now time.Time, reason string) {
 	riskReset(&r.Observation, "stopped", reason)
-	r.Events = append([]AccountRiskEvent{{At: now, AccountID: id, Reason: reason}}, r.Events...)
+	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: account.ID, AccountName: riskNotificationName(account.Name), Reason: reason}
+	if r.Config.NotifyEnabled {
+		event.Notification = "pending"
+	}
+	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	if len(r.Events) > 50 {
 		r.Events = r.Events[:50]
 	}
@@ -500,7 +524,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		}
 		if changed {
 			o.LastProbeResult = "完整回复不含期望内容，已关闭账号调度"
-			riskRecordStop(r, job.account.ID, now, o.LastProbeResult)
+			riskRecordStop(r, &job.account, now, o.LastProbeResult)
 		} else {
 			o.LastProbeResult = "账号已变化，本次结果作废"
 		}

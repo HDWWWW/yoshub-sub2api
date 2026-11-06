@@ -20,6 +20,11 @@
             <input v-model="draft.enabled" data-testid="risk-enabled" type="checkbox" class="rounded" />
             <span class="text-sm font-medium">{{ t('accountRisk.enabled') }}</span>
           </label>
+          <section class="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-600" data-testid="risk-notification-settings">
+            <label class="flex items-center gap-3"><input v-model="draft.notify_enabled" data-testid="risk-notify-enabled" type="checkbox" class="rounded" /><span class="text-sm font-medium">{{ t('accountRisk.notifyEnabled') }}</span></label>
+            <p class="text-xs text-gray-500">{{ t('accountRisk.notifyHint') }}</p>
+            <p class="text-xs" :class="view.webhook_status === 'ready' ? 'text-green-600' : 'text-amber-600'" data-testid="risk-webhook-status">{{ t(`accountRisk.webhook.${view.webhook_status || 'unavailable'}`) }}</p>
+          </section>
           <section class="space-y-3">
             <h3 class="text-sm font-semibold">{{ t('accountRisk.multiTitle') }}</h3>
             <p class="text-xs text-gray-500">{{ t('accountRisk.multiHint') }}</p>
@@ -59,7 +64,7 @@
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">
           <h3 class="font-semibold">{{ t('accountRisk.history') }}</h3>
-          <div v-for="(event, index) in view.events" :key="index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p></div>
+          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
         </section>
       </form>
     </div>
@@ -104,7 +109,7 @@ async function load() {
   view.value = null; draft.value = null; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config } } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, notify_enabled: data.config.notify_enabled ?? false } } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { if (current === generation) loading.value = false }
 }
@@ -113,12 +118,13 @@ async function refresh() {
   const current = generation
   refreshing.value = true
   // Refresh actual state without overwriting the draft or its revision guard.
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events; view.value.webhook_status = data.webhook_status } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { refreshing.value = false }
 }
 async function save() {
   if (!valid.value || !view.value || !draft.value || loading.value || saving.value) return
+  generation++
   saving.value = true; error.value = ''; saved.value = false
   try { view.value = await accountRiskAPI.save(groupID.value, view.value.revision, { ...draft.value }); draft.value = { ...view.value.config }; saved.value = true }
   catch (e) { error.value = extractApiErrorMessage(e, t('accountRisk.saveError')) }

@@ -213,7 +213,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	accountRefillStore := repository.NewAccountRefillStore(db)
 	accountRefillService := service.ProvideAccountRefillService(accountRefillStore, secretEncryptor, accountRepository, adminService, groupRepository, concurrencyService, proxyRepository)
 	accountRiskStore := repository.NewAccountRiskStore(db, accountRepository)
-	accountRiskService := service.ProvideAccountRiskService(accountRiskStore, accountRepository, groupRepository, concurrencyService, accountTestService, configConfig)
+	accountRiskService := service.ProvideAccountRiskService(accountRiskStore, accountRepository, groupRepository, concurrencyService, accountTestService, configConfig, accountRefillService)
 	accountAutoFastStore := repository.NewAccountAutoFastStore(db, accountRepository)
 	accountAutoFastService := service.ProvideAccountAutoFastService(accountAutoFastStore, accountRepository, groupRepository)
 	accountHandler := admin.ProvideAccountHandler(configConfig, adminService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, rateLimitService, accountUsageService, accountTestService, concurrencyService, crsSyncService, sessionLimitCache, rpmCache, compositeTokenCacheInvalidator, grokQuotaService, accountRefillService, accountRiskService, accountAutoFastService)
