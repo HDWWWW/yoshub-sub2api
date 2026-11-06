@@ -87,6 +87,7 @@ func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, sett
 		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
 	}
 	h := &OpenAIGatewayHandler{
+		cfg:                      cfg,
 		gatewayService:           gatewaySvc,
 		billingCacheService:      billingCacheSvc,
 		apiKeyService:            &service.APIKeyService{},
