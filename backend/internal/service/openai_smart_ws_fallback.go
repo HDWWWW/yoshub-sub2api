@@ -253,8 +253,19 @@ func (b *smartWSFallbackBody) observePayload(payload []byte) {
 	original := payload
 	// Keep only an observed usage snapshot, never infer tokens from partial text.
 	if gjson.GetBytes(payload, "usage").IsObject() || gjson.GetBytes(payload, "response.usage").IsObject() {
-		b.c.Set(smartWSHTTPPartialKey, &smartWSHTTPFailure{payload: append([]byte(nil), payload...),
-			request: b.request, headers: b.headers, started: b.observation.start, httpFallback: true})
+		model := gjson.GetBytes(b.request, "model").String()
+		observed := smartWSHTTPFailureResult(&http.Response{Header: b.headers}, payload, b.request, model, model,
+			gjson.GetBytes(b.request, "stream").Bool(), b.observation.start)
+		if previous, ok := b.c.Get(smartWSHTTPPartialKey); ok {
+			if previous, ok := previous.(*OpenAIForwardResult); ok && observed != nil {
+				usage := previous.Usage
+				mergeOpenAIUsageNonZero(&usage, observed.Usage)
+				observed.Usage = usage
+			}
+		}
+		if observed != nil {
+			b.c.Set(smartWSHTTPPartialKey, observed)
+		}
 	}
 	typ := gjson.GetBytes(payload, "type").String()
 	if typ == "" || typ == "response" {

@@ -157,16 +157,13 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 	if failure == nil {
 		if smartWSOutcomeUncertain(c) {
 			v, _ := c.Get(smartWSHTTPPartialKey)
-			if partial, ok := v.(*smartWSHTTPFailure); ok {
-				observed := smartWSHTTPFailureResult(&http.Response{Header: partial.headers}, partial.payload, partial.request,
-					gjson.GetBytes(request, "model").String(), gjson.GetBytes(partial.request, "model").String(),
-					gjson.GetBytes(request, "stream").Bool(), partial.started)
-				if observed != nil {
-					if result == nil {
-						result = observed
-					} else {
-						result.Usage = observed.Usage
-					}
+			if observed, ok := v.(*OpenAIForwardResult); ok && observed != nil {
+				if result == nil {
+					copy := *observed
+					copy.Model = gjson.GetBytes(request, "model").String()
+					result = &copy
+				} else {
+					mergeOpenAIUsageNonZero(&result.Usage, observed.Usage)
 				}
 			}
 		}

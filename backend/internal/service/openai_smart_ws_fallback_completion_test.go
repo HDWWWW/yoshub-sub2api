@@ -28,6 +28,7 @@ func TestSmartWSFallbackRequiresTerminal(t *testing.T) {
 			{"nonterminal_json", `{"id":"resp_partial","status":"in_progress","output":[],"usage":{"input_tokens":13,"output_tokens":2}}`, "application/json", false, false, true, false},
 			{"delta_then_eof", delta, "text/event-stream", true, false, true, false},
 			{"delta_then_done", delta + "data: [DONE]\n\n", "text/event-stream", true, false, true, false},
+			{"zero_usage_after_partial", delta + "data: " + `{"type":"response.in_progress","response":{"id":"resp_partial","status":"in_progress","usage":{"input_tokens":0,"output_tokens":0}}}` + "\n\ndata: [DONE]\n\n", "text/event-stream", true, false, true, false},
 			{"delta_then_done_json", delta + "data: [DONE]\n\n", "text/event-stream", false, false, true, false},
 			{"split_done_no_newline", delta + "data: [DONE]", "text/event-stream", true, true, true, false},
 			{"split_missing_type", delta + "data: [DONE]\r\n\r\n", "", false, true, true, false},
