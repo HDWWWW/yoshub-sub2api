@@ -232,7 +232,12 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 		responseHeaders = make(http.Header)
 	}
 	eventType := gjson.GetBytes(first, "type").String()
+	rememberUsage := func(message []byte) {
+		rememberSmartWSHTTPUsage(c, responseHeaders, raw, message, observation.start, true)
+	}
 	rememberFailure := func(message, tail []byte) {
+		rememberUsage(message)
+		rememberUsage(tail)
 		rememberSmartWSHTTPFailure(c, responseHeaders, raw, message, tail, observation.start)
 	}
 	if eventType == "error" || eventType == "response.failed" || gjson.GetBytes(first, "response.status").String() == "failed" {
@@ -256,7 +261,7 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 		responseHeaders.Set("X-Request-Id", responseID)
 	}
 	wsBody := &openAIHTTPWSBody{
-		dispatch: dispatch, observation: observation, onFailure: rememberFailure,
+		dispatch: dispatch, observation: observation, onFailure: rememberFailure, onUsage: rememberUsage,
 		ctx: req.Context(), lease: lease, first: first, readTimeout: s.openAIWSReadTimeout(),
 		onComplete: func(responseID string) {
 			if stateStore == nil {
@@ -316,6 +321,7 @@ type openAIHTTPWSBody struct {
 	terminal    bool
 	onComplete  func(string)
 	onFailure   func([]byte, []byte)
+	onUsage     func([]byte)
 	responseID  string
 	once        sync.Once
 }
@@ -368,6 +374,9 @@ func (b *openAIHTTPWSBody) Read(p []byte) (int, error) {
 			return 0, errors.New("missing upstream WebSocket event type")
 		}
 		terminal := normalizeOpenAIWSTerminalEvent(eventType)
+		if b.onUsage != nil {
+			b.onUsage(message)
+		}
 		b.observation.event(message)
 		if eventType == "error" || terminal == "response.failed" {
 			tail := readSmartWSFailedTail(b.ctx, b.lease, message, b.responseID)

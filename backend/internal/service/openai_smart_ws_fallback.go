@@ -251,21 +251,8 @@ func (b *smartWSFallbackBody) observePayload(payload []byte) {
 		return
 	}
 	original := payload
-	// Keep only an observed usage snapshot, never infer tokens from partial text.
-	if gjson.GetBytes(payload, "usage").IsObject() || gjson.GetBytes(payload, "response.usage").IsObject() {
-		model := gjson.GetBytes(b.request, "model").String()
-		observed := smartWSHTTPFailureResult(&http.Response{Header: b.headers}, payload, b.request, model, model,
-			gjson.GetBytes(b.request, "stream").Bool(), b.observation.start)
-		if previous, ok := b.c.Get(smartWSHTTPPartialKey); ok {
-			if previous, ok := previous.(*OpenAIForwardResult); ok && observed != nil {
-				usage := previous.Usage
-				mergeOpenAIUsageNonZero(&usage, observed.Usage)
-				observed.Usage = usage
-			}
-		}
-		if observed != nil {
-			b.c.Set(smartWSHTTPPartialKey, observed)
-		}
+	if len(b.failure) == 0 {
+		rememberSmartWSHTTPUsage(b.c, b.headers, b.request, payload, b.observation.start, false)
 	}
 	typ := gjson.GetBytes(payload, "type").String()
 	if typ == "" || typ == "response" {
@@ -304,6 +291,7 @@ func (b *smartWSFallbackBody) observePayload(payload []byte) {
 		if typ != "response.failed" {
 			return
 		}
+		rememberSmartWSHTTPUsage(b.c, b.headers, b.request, payload, b.observation.start, false)
 		b.observation.event(payload)
 		b.rememberFailure(b.failure, payload)
 		b.terminal = true

@@ -148,6 +148,36 @@ func rememberSmartWSHTTPFailure(c *gin.Context, headers http.Header, request, pa
 		tail: append([]byte(nil), tail...), request: request, headers: headers.Clone(), started: started})
 }
 
+// Keep observed usage at the transport boundary, including events a formatter
+// does not retain. Only the same response may update the immutable snapshot;
+// nonzero terminal usage remains authoritative over earlier observations.
+func rememberSmartWSHTTPUsage(c *gin.Context, headers http.Header, request, payload []byte, started time.Time, wsMode bool) {
+	if c == nil || (!gjson.GetBytes(payload, "usage").IsObject() && !gjson.GetBytes(payload, "response.usage").IsObject()) {
+		return
+	}
+	model := gjson.GetBytes(request, "model").String()
+	observed := smartWSHTTPFailureResult(&http.Response{Header: headers}, payload, request, model, model,
+		gjson.GetBytes(request, "stream").Bool(), started)
+	if observed == nil {
+		return
+	}
+	if value, ok := c.Get(smartWSHTTPPartialKey); ok {
+		if previous, ok := value.(*OpenAIForwardResult); ok && previous != nil {
+			if previous.ResponseID != "" && observed.ResponseID != "" && previous.ResponseID != observed.ResponseID {
+				return
+			}
+			usage := previous.Usage
+			parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
+			observed.Usage = usage
+			if observed.ResponseID == "" {
+				observed.ResponseID, observed.RequestID = previous.ResponseID, previous.RequestID
+			}
+		}
+	}
+	observed.OpenAIWSMode = wsMode
+	c.Set(smartWSHTTPPartialKey, observed)
+}
+
 func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, account *Account, request []byte, result *OpenAIForwardResult, err error) (*OpenAIForwardResult, error) {
 	if c == nil {
 		return result, err
@@ -183,6 +213,28 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 	observed := smartWSHTTPFailureResult(response, failure.payload, failure.request,
 		gjson.GetBytes(request, "model").String(), gjson.GetBytes(failure.request, "model").String(),
 		gjson.GetBytes(request, "stream").Bool(), failure.started, failure.tail)
+	if observed == nil || !openAIUsageHasTokens(&observed.Usage) {
+		value, _ := c.Get(smartWSHTTPPartialKey)
+		partial, _ := value.(*OpenAIForwardResult)
+		failureID := smartWSResponseID(failure.payload)
+		if id := smartWSResponseID(failure.tail); id != "" {
+			failureID = id
+		}
+		if partial != nil && (failureID == "" || partial.ResponseID == "" || failureID == partial.ResponseID) {
+			if observed != nil {
+				observed.Usage = partial.Usage
+			} else {
+				copy := *partial
+				copy.Model = gjson.GetBytes(request, "model").String()
+				copy.UpstreamTerminalEvent = "error"
+				if gjson.GetBytes(failure.payload, "type").String() == "response.failed" ||
+					gjson.GetBytes(failure.payload, "status").String() == "failed" || len(failure.tail) > 0 {
+					copy.UpstreamTerminalEvent = "response.failed"
+				}
+				observed = &copy
+			}
+		}
+	}
 	if observed != nil {
 		// The formatter may mark the bare error again. Apply the merged usage
 		// after formatting so a subsequent empty error cannot erase it.
