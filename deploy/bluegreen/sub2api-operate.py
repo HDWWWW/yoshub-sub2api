@@ -137,6 +137,7 @@ pid /tmp/nginx.pid;
 error_log /dev/stderr warn;
 events { worker_connections 16384; }
 http {
+    underscores_in_headers on;
     access_log off;
     resolver 127.0.0.11 valid=10s ipv6=off;
     include /etc/nginx/route.conf;
