@@ -144,6 +144,7 @@ docs/*
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/codex-credits.md
 !docs/smartws.md
+!docs/account-risk-detection.md
 !docs/legal/
 !docs/legal/*.md
 !docs/screenshots/

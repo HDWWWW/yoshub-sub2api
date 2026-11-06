@@ -362,6 +362,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("/refill", h.Admin.Account.GetAccountRefill)
+		accounts.GET("/risk-detection", h.Admin.Account.GetAccountRiskDetection)
+		accounts.PUT("/risk-detection", h.Admin.Account.UpdateAccountRiskDetection)
 		accounts.POST("/scheduling-metadata", h.Admin.Account.GetAccountSchedulingMetadata)
 		accounts.GET("/scheduling-preview", h.Admin.Account.GetAccountSchedulingPreview)
 		accounts.PUT("/refill", h.Admin.Account.UpdateAccountRefill)

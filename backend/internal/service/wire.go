@@ -869,6 +869,7 @@ func ProvideAccountRefillService(store AccountRefillStore, encryptor SecretEncry
 }
 
 var ProviderSet = wire.NewSet(
+	ProvideAccountRiskService,
 	ProvideAccountRefillService,
 	// Core services
 	ProvideAuthService,

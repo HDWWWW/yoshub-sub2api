@@ -895,6 +895,12 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
+	if risk := riskProbeForContext(ctx); risk != nil {
+		payload["input"] = []map[string]any{{"role": "user", "content": []map[string]any{{"type": "input_text", "text": risk.config.ProbePrompt}}}}
+		if risk.config.ReasoningEffort != "" {
+			payload["reasoning"] = map[string]any{"effort": risk.config.ReasoningEffort}
+		}
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event once. A task-invalid Agent Identity response may
@@ -960,6 +966,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if risk := riskProbeForContext(ctx); risk != nil {
+		return finishRiskProbeResponse(risk, resp, false)
+	}
 
 	if isOAuth && s.accountRepo != nil {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
@@ -2137,6 +2146,9 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	c.Writer.Flush()
 
 	payload := createOpenAIChatCompletionsTestPayload(testModelID, prompt)
+	if risk := riskProbeForContext(ctx); risk != nil && risk.config.ReasoningEffort != "" {
+		payload["reasoning_effort"] = risk.config.ReasoningEffort
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
@@ -2168,6 +2180,9 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if risk := riskProbeForContext(ctx); risk != nil {
+		return finishRiskProbeResponse(risk, resp, true)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -3298,6 +3313,9 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 
 // sendErrorAndEnd sends an error event and ends the stream
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
+	if riskProbeForContext(c.Request.Context()) != nil {
+		return errors.New("risk probe did not complete")
+	}
 	logAccountTestError(c, errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)

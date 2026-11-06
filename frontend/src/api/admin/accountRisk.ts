@@ -1,0 +1,49 @@
+import { apiClient } from '../client'
+
+export interface AccountRiskConfig {
+  enabled: boolean
+  first_below_percent: number
+  second_at_least_percent: number
+  sustain_seconds: number
+  probe_interval_seconds: number
+  probe_prompt: string
+  expected_text: string
+  model: string
+  reasoning_effort: string
+}
+export interface AccountRiskLoad {
+  account_id: number
+  name: string
+  priority: number
+  used: number
+  capacity: number
+  percent: number
+}
+export interface AccountRiskRule {
+  group_id: number
+  revision: number
+  config: AccountRiskConfig
+  observation: {
+    checked_at: string
+    mode: string
+    message: string
+    eligible_accounts: number
+    first?: AccountRiskLoad
+    second?: AccountRiskLoad
+    anomaly_since?: string
+    next_probe_at?: string
+    last_probe_at?: string
+    last_probe_result?: string
+    input_tokens: number
+    output_tokens: number
+  }
+  events: { at: string; account_id: number; reason: string }[]
+}
+export const accountRiskAPI = {
+  async get(groupID: number): Promise<AccountRiskRule> {
+    return (await apiClient.get<AccountRiskRule>('/admin/accounts/risk-detection', { params: { group_id: groupID } })).data
+  },
+  async save(groupID: number, revision: number, config: AccountRiskConfig): Promise<AccountRiskRule> {
+    return (await apiClient.put<AccountRiskRule>('/admin/accounts/risk-detection', { revision, config }, { params: { group_id: groupID } })).data
+  }
+}
