@@ -17,7 +17,7 @@ const smartWSObservationKey = "openai_smart_ws_observation"
 // Process-local, bounded samples. No account, prompt or credential is retained.
 type smartWSMetrics struct {
 	handshake401, handshake403, handshakeRejection, rejectionBypass, continuationUnavailable atomic.Int64
-	nativeConnections, incomplete                                                            atomic.Int64
+	nativeConnections, incomplete, backgroundAccepted                                        atomic.Int64
 	attempted, succeeded, failed, canceled                                                   atomic.Int64
 	handshakes, handshakeFailed, handshakeAuth, handshakeRateLimited, handshakeUnsupported   atomic.Int64
 	queueRejected, capacityRejected, fallback, upstreamError, transportError, uncertain      atomic.Int64
@@ -144,6 +144,8 @@ func (o *smartWSObservation) finish(ctx context.Context, result *OpenAIForwardRe
 			(o.terminal == "response.completed" || o.terminal == "response.done")
 		if !delivered && (errors.Is(err, context.Canceled) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || (result != nil && result.ClientDisconnect)) {
 			o.m.canceled.Add(1)
+		} else if o.terminal == "background.accepted" && err == nil {
+			o.m.backgroundAccepted.Add(1)
 		} else if o.terminal == "response.incomplete" {
 			o.m.incomplete.Add(1)
 			o.m.failed.Add(1)
@@ -183,8 +185,9 @@ func (p *openAIWSConnPool) SmartWSSnapshot() SmartWSSnapshot {
 	m := &p.smartMetrics
 	s := SmartWSSnapshot{Scope: "process", StartedAt: p.startedAt, Counters: map[string]int64{
 		"handshake_401": m.handshake401.Load(), "handshake_403": m.handshake403.Load(), "handshake_rejection": m.handshakeRejection.Load(), "rejection_bypass": m.rejectionBypass.Load(), "continuation_unavailable": m.continuationUnavailable.Load(),
-		"incomplete": m.incomplete.Load(),
-		"attempted":  m.attempted.Load(), "succeeded": m.succeeded.Load(), "failed": m.failed.Load(), "canceled": m.canceled.Load(),
+		"incomplete":          m.incomplete.Load(),
+		"background_accepted": m.backgroundAccepted.Load(),
+		"attempted":           m.attempted.Load(), "succeeded": m.succeeded.Load(), "failed": m.failed.Load(), "canceled": m.canceled.Load(),
 		"handshakes": m.handshakes.Load(), "handshake_failed": m.handshakeFailed.Load(), "handshake_auth": m.handshakeAuth.Load(), "handshake_rate_limited": m.handshakeRateLimited.Load(), "handshake_unsupported": m.handshakeUnsupported.Load(),
 		"queue_rejected": m.queueRejected.Load(), "capacity_rejected": m.capacityRejected.Load(), "safe_http_fallback": m.fallback.Load(), "upstream_terminal_error": m.upstreamError.Load(), "transport_error": m.transportError.Load(), "dispatch_uncertain": m.uncertain.Load(),
 		"reused": p.metrics.acquireReuseTotal.Load(), "acquired": p.metrics.acquireTotal.Load(), "queued": p.metrics.acquireQueueWaitTotal.Load(), "queue_wait_ms": p.metrics.acquireQueueWaitMs.Load(),

@@ -1678,14 +1678,17 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
-	if !usageOK {
+	backgroundAccepted := smartWSBackgroundAccepted(c)
+	if !usageOK && !backgroundAccepted {
 		if bodyLooksLikeSSE {
 			return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 		}
 		return nil, fmt.Errorf("parse response: invalid json response")
 	}
 	usage := &usageValue
-	logOpenAISuccessMissingUsage(ctx, c, account, resp, usage, "json", false)
+	if !backgroundAccepted {
+		logOpenAISuccessMissingUsage(ctx, c, account, resp, usage, "json", false)
+	}
 
 	// Replace model in response if needed
 	if originalModel != mappedModel {

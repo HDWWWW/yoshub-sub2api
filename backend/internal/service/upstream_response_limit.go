@@ -52,7 +52,9 @@ func ReadUpstreamResponseBody(reader io.Reader, cfg *config.Config, c *gin.Conte
 	if err != nil {
 		if errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			setOpsUpstreamError(c, http.StatusBadGateway, "upstream response too large", "")
-			if onTooLarge != nil {
+			// SmartWS owns its explicit uncertain-dispatch response. Writing a
+			// generic JSON error first would mix JSON and SSE at finalization.
+			if onTooLarge != nil && !smartWSOutcomeUncertain(c) {
 				onTooLarge(c)
 			}
 		}

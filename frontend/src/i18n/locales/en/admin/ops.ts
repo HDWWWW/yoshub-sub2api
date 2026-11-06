@@ -10,6 +10,7 @@ export default {
         handshaking: "Handshaking / limit",
         attempted: "Attempts",
         succeeded: "Server completed",
+        background_accepted: "Background accepted (not completed)",
         failed: "Final failure",
         canceled: "Client canceled",
         handshakes: "Handshakes",

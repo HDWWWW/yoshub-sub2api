@@ -50,7 +50,7 @@ const items = computed(() => {
     { key: 'active', value: d.active },
     { key: 'acquiring', value: `${d.acquiring} / ${d.limits.acquiring}` },
     { key: 'handshaking', value: `${d.handshaking} / ${d.limits.handshakes}` },
-    ...['attempted', 'succeeded', 'failed', 'incomplete', 'canceled', 'handshakes', 'handshake_failed', 'reused', 'safe_http_fallback', 'queue_rejected', 'capacity_rejected', 'upstream_terminal_error', 'transport_error', 'dispatch_uncertain', 'handshake_rate_limited', 'handshake_401', 'handshake_403', 'handshake_rejection', 'rejection_bypass', 'continuation_unavailable', 'handshake_unsupported', 'queued', 'queue_wait_ms'].map(key => ({ key, value: c[key] ?? 0 }))
+    ...['attempted', 'succeeded', 'background_accepted', 'failed', 'incomplete', 'canceled', 'handshakes', 'handshake_failed', 'reused', 'safe_http_fallback', 'queue_rejected', 'capacity_rejected', 'upstream_terminal_error', 'transport_error', 'dispatch_uncertain', 'handshake_rate_limited', 'handshake_401', 'handshake_403', 'handshake_rejection', 'rejection_bypass', 'continuation_unavailable', 'handshake_unsupported', 'queued', 'queue_wait_ms'].map(key => ({ key, value: c[key] ?? 0 }))
   ]
 })
 watch(() => props.refreshToken, async () => {

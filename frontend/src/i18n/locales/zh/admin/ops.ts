@@ -10,6 +10,7 @@ export default {
         handshaking: "握手中 / 上限",
         attempted: "请求尝试",
         succeeded: "服务端正常完成",
+        background_accepted: "后台任务已受理（未完成）",
         failed: "最终失败",
         canceled: "客户端取消",
         handshakes: "握手次数",

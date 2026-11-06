@@ -89,6 +89,7 @@ func mergeSmartWSCyberPolicyUsage(c *gin.Context, usage *OpenAIUsage) {
 const smartWSDispatchKey = "openai_smart_ws_dispatch"
 const smartWSFailureDeliveredKey = "openai_smart_ws_failure_delivered"
 const smartWSHTTPFailureKey = "openai_smart_ws_http_failure"
+const smartWSHTTPPartialKey = "openai_smart_ws_http_partial"
 
 type smartWSHTTPFailure struct {
 	payload, tail, request []byte
@@ -154,6 +155,21 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 	v, _ := c.Get(smartWSHTTPFailureKey)
 	failure, _ := v.(*smartWSHTTPFailure)
 	if failure == nil {
+		if smartWSOutcomeUncertain(c) {
+			v, _ := c.Get(smartWSHTTPPartialKey)
+			if partial, ok := v.(*smartWSHTTPFailure); ok {
+				observed := smartWSHTTPFailureResult(&http.Response{Header: partial.headers}, partial.payload, partial.request,
+					gjson.GetBytes(request, "model").String(), gjson.GetBytes(partial.request, "model").String(),
+					gjson.GetBytes(request, "stream").Bool(), partial.started)
+				if observed != nil {
+					if result == nil {
+						result = observed
+					} else {
+						result.Usage = observed.Usage
+					}
+				}
+			}
+		}
 		return finalizeSmartWSUncertainFailure(c, result, err)
 	}
 	// A pre-existing formatter can return a successful result for a JSON

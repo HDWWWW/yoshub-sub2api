@@ -60,6 +60,7 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 				PreviousResponseID string          `json:"previous_response_id"`
 				Model              string          `json:"model"`
 				Stream             bool            `json:"stream"`
+				Background         bool            `json:"background"`
 				Reasoning          json.RawMessage `json:"reasoning,omitempty"`
 				ServiceTier        json.RawMessage `json:"service_tier,omitempty"`
 			}
