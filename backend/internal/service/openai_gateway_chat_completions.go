@@ -380,7 +380,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		_ = resp.Body.Close()
 	}()
 
-	if resp.StatusCode >= 400 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
+	if resp.StatusCode >= 300 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
 		payload := s.readUpstreamErrorBody(resp)
 		return smartWSHTTPFailureResult(resp, payload, responsesBody, originalModel, upstreamModel, chatReq.Stream, startTime), s.writeSmartWSHTTPError(c, account, resp, payload, upstreamModel)
 	}

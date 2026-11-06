@@ -1635,6 +1635,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if err != nil {
 		return nil, err
 	}
+	if err := smartWSObservedFallbackError(c); err != nil {
+		return nil, err
+	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)

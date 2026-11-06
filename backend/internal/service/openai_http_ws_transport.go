@@ -44,6 +44,7 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 			return nil, err
 		}
 		previousID := gjson.GetBytes(raw, "previous_response_id").String()
+		observationRequest := raw
 		if int64(len(raw)) > requestLimit {
 			// The identifier may occur after a large input. Finalized gateway
 			// requests have GetBody backed by the already bounded HTTP payload;
@@ -56,7 +57,11 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 				return nil, err
 			}
 			var continuation struct {
-				PreviousResponseID string `json:"previous_response_id"`
+				PreviousResponseID string          `json:"previous_response_id"`
+				Model              string          `json:"model"`
+				Stream             bool            `json:"stream"`
+				Reasoning          json.RawMessage `json:"reasoning,omitempty"`
+				ServiceTier        json.RawMessage `json:"service_tier,omitempty"`
 			}
 			err = json.NewDecoder(copy).Decode(&continuation)
 			_ = copy.Close()
@@ -64,6 +69,10 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 				return nil, err
 			}
 			previousID = continuation.PreviousResponseID
+			observationRequest, err = json.Marshal(continuation)
+			if err != nil {
+				return nil, err
+			}
 		}
 		// A prior WS response can exist only on its originating connection.
 		// Never silently move such a continuation to a different transport.
@@ -76,16 +85,27 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 		observation.fallback = true
 		observation.dispatched = true
 		dispatch.state.Store(smartWSMayBeSent)
+		// 307/308 would otherwise resend this POST inside http.Client.Do,
+		// bypassing the dispatch state machine and account retry guard.
+		req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(req.Context()))
+		req.GetBody = nil
 		response, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			return response, smartWSUncertainError(err)
 		}
 		dispatch.state.Store(smartWSReceived)
-		if response != nil && response.StatusCode >= 400 {
+		if response != nil && response.StatusCode >= 300 {
 			observation.terminal = "error"
 			observation.errorObserved = true
 			observation.m.upstreamError.Add(1)
 			dispatch.state.Store(smartWSTerminal)
+		}
+		if response != nil && response.StatusCode >= 200 && response.StatusCode < 300 && response.Body != nil {
+			lineLimit := int64(defaultMaxLineSize)
+			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
+				lineLimit = int64(s.cfg.Gateway.MaxLineSize)
+			}
+			response.Body = newSmartWSFallbackBody(response.Body, response.Header, observationRequest, c, dispatch, observation, lineLimit, resolveUpstreamResponseReadLimit(s.cfg))
 		}
 		return response, nil
 	}

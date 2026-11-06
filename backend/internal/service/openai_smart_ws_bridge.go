@@ -36,6 +36,8 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 	}
 	dispatch.state.Store(smartWSMayBeSent)
 	observation.dispatched = true
+	request = request.WithContext(WithHTTPUpstreamRedirectsDisabled(request.Context()))
+	request.GetBody = nil
 	resp, err := s.doOpenAIUpstream(request, proxyURL, account)
 	if err != nil {
 		return nil, smartWSUncertainError(err)
@@ -45,7 +47,7 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 	stopCancel := context.AfterFunc(ctx, func() { _ = upstreamBody.Close() })
 	defer stopCancel()
 	dispatch.state.Store(smartWSReceived)
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
 		payload = s.redactAgentIdentitySensitiveBody(ctx, account, payload)
 		dispatch.state.Store(smartWSTerminal)

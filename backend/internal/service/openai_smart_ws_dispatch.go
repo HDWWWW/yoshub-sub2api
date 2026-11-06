@@ -27,6 +27,11 @@ func smartWSHTTPFailureResult(resp *http.Response, payload, request []byte, mode
 		hasUsage = hasUsage || gjson.GetBytes(frame, "response.usage").IsObject() || gjson.GetBytes(frame, "usage").IsObject()
 		parseOpenAIWSResponseUsageFromCompletedEvent(frame, &usage)
 		typ = gjson.GetBytes(frame, "type").String()
+		if typ == "" || typ == "response" {
+			if status := gjson.GetBytes(frame, "status").String(); status != "" {
+				typ = "response." + status
+			}
+		}
 		observer.ObserveOpenAI(frame, typ)
 		if responseID := smartWSResponseID(frame); responseID != "" {
 			id = responseID
@@ -45,6 +50,7 @@ func smartWSHTTPFailureResult(resp *http.Response, payload, request []byte, mode
 		UpstreamResponseServiceTier: observer.ServiceTier(),
 		ServiceTier:                 resolvedOpenAIUpstreamServiceTierFromObserver(observer, extractOpenAIServiceTierFromBody(request)),
 		ReasoningEffort:             extractOpenAIReasoningEffortFromBody(request, upstreamModel, model),
+		RequestedReasoningEffort:    CanonicalRequestedReasoningEffort(request, model, upstreamModel),
 		Stream:                      stream, OpenAIWSMode: isOpenAIHTTPWSResponse(resp), UpstreamTerminalEvent: typ,
 		ResponseHeaders: resp.Header.Clone(), Duration: time.Since(started),
 	}
@@ -88,11 +94,17 @@ type smartWSHTTPFailure struct {
 	payload, tail, request []byte
 	headers                http.Header
 	started                time.Time
+	httpFallback           bool
 }
 
 func smartWSResponseID(payload []byte) string {
 	if id := gjson.GetBytes(payload, "response.id").String(); id != "" {
 		return id
+	}
+	if gjson.GetBytes(payload, "status").Exists() {
+		if id := gjson.GetBytes(payload, "id").String(); id != "" {
+			return id
+		}
 	}
 	return gjson.GetBytes(payload, "response_id").String()
 }
@@ -136,7 +148,7 @@ func rememberSmartWSHTTPFailure(c *gin.Context, headers http.Header, request, pa
 }
 
 func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, account *Account, request []byte, result *OpenAIForwardResult, err error) (*OpenAIForwardResult, error) {
-	if c == nil || err == nil {
+	if c == nil {
 		return result, err
 	}
 	v, _ := c.Get(smartWSHTTPFailureKey)
@@ -144,7 +156,17 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 	if failure == nil {
 		return finalizeSmartWSUncertainFailure(c, result, err)
 	}
+	// A pre-existing formatter can return a successful result for a JSON
+	// body carrying status=failed. The observed upstream error owns the turn.
+	if err == nil {
+		err = smartWSStopFailure(openAIHTTPWSEventErrorStatus(failure.payload), failure.payload, failure.headers)
+	}
 	response := openAIHTTPWSErrorResponse(c.Request, openAIHTTPWSEventErrorStatus(failure.payload), failure.headers, failure.payload)
+	if failure.httpFallback {
+		// Retain HTTP billing attribution even though the fallback was selected
+		// by SmartWS. Only the transport decision was WS before its rejection.
+		response.Request = c.Request
+	}
 	observed := smartWSHTTPFailureResult(response, failure.payload, failure.request,
 		gjson.GetBytes(request, "model").String(), gjson.GetBytes(failure.request, "model").String(),
 		gjson.GetBytes(request, "stream").Bool(), failure.started, failure.tail)

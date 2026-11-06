@@ -141,7 +141,7 @@ func (o *smartWSObservation) finish(ctx context.Context, result *OpenAIForwardRe
 		// The formatter's completed result is the delivery snapshot; a later
 		// request-context cancellation must not turn that success into a cancel.
 		delivered := err == nil && result != nil && !result.ClientDisconnect && !o.errorObserved &&
-			(o.fallback || o.terminal == "response.completed" || o.terminal == "response.done")
+			(o.terminal == "response.completed" || o.terminal == "response.done")
 		if !delivered && (errors.Is(err, context.Canceled) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) || (result != nil && result.ClientDisconnect)) {
 			o.m.canceled.Add(1)
 		} else if o.terminal == "response.incomplete" {

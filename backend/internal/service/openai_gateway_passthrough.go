@@ -391,7 +391,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			// a failover so the handler switches to a healthy account.
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 		}
-		if resp.StatusCode >= 400 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
+		if resp.StatusCode >= 300 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
 			payload := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			return smartWSHTTPFailureResult(resp, payload, body, reqModel, upstreamPassthroughModel, reqStream, startTime), s.writeSmartWSHTTPError(c, account, resp, payload, upstreamPassthroughModel)
@@ -2363,6 +2363,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 ) (*openaiNonStreamingResultPassthrough, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		return nil, err
+	}
+	if err := smartWSObservedFallbackError(c); err != nil {
 		return nil, err
 	}
 	observer := upstreamResponseModelObserverFromContext(c)

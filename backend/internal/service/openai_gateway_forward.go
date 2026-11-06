@@ -1124,7 +1124,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		// Handle error response
-		if resp.StatusCode >= 400 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
+		if resp.StatusCode >= 300 && (isOpenAIHTTPWSResponse(resp) || smartWSHasDispatched(c)) {
 			payload := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			return smartWSHTTPFailureResult(resp, payload, body, originalModel, upstreamModel, reqStream, startTime), s.writeSmartWSHTTPError(c, account, resp, payload, upstreamModel)
