@@ -120,47 +120,8 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// ── 3. 基础鉴权（始终执行） ─────────────────────────────────
 
-		// disabled / 未知状态 → 无条件拦截（expired 和 quota_exhausted 留给计费阶段）
-		if !apiKey.IsActive() &&
-			apiKey.Status != service.StatusAPIKeyExpired &&
-			apiKey.Status != service.StatusAPIKeyQuotaExhausted {
-			MarkIngressRejected(c, IngressRejectAPIKeyDisabled)
-			AbortWithError(c, 401, "API_KEY_DISABLED", "API key is disabled")
-			return
-		}
-
-		// 检查 IP 限制（白名单/黑名单）
-		// 注意：错误信息故意模糊，避免暴露具体的 IP 限制机制
-		if len(apiKey.IPWhitelist) > 0 || len(apiKey.IPBlacklist) > 0 {
-			clientIP := ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL())
-			allowed, _ := ip.CheckIPRestrictionWithCompiledRules(clientIP, apiKey.CompiledIPWhitelist, apiKey.CompiledIPBlacklist)
-			if !allowed {
-				if clientIP == "" {
-					clientIP = "unknown"
-				}
-				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonIPRestriction)
-				MarkIngressRejected(c, IngressRejectIPRestricted)
-				AbortWithError(c, 403, "ACCESS_DENIED", fmt.Sprintf("Access denied. Your IP is %s", clientIP))
-				return
-			}
-		}
-
-		// 检查关联的用户
-		if apiKey.User == nil {
-			AbortWithError(c, 401, "USER_NOT_FOUND", "User associated with API key not found")
-			return
-		}
-
-		// 检查用户状态
-		if !apiKey.User.IsActive() {
-			MarkIngressRejected(c, IngressRejectUserInactive)
-			AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
-			return
-		}
-		if abortIfAPIKeyGroupUnavailable(c, apiKey) {
-			return
-		}
-		if abortIfAPIKeyGroupNotAllowed(c, apiKey) {
+		if accessErr := ValidateAPIKeyAccess(c, apiKey, cfg); accessErr != nil {
+			AbortWithError(c, accessErr.Status, accessErr.Code, accessErr.Message)
 			return
 		}
 		ctx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
@@ -446,4 +407,71 @@ func validateAPIKeyGroupAvailable(apiKey *service.APIKey) (string, string, bool)
 		return "GROUP_DISABLED", "API Key 所属分组已停用", false
 	}
 	return "", "", true
+}
+
+// APIKeyAccessError describes an authentication rejection without writing to
+// the response. Native WS turns reuse the HTTP rules after the upgrade.
+type APIKeyAccessError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *APIKeyAccessError) Error() string { return e.Message }
+
+// ValidateAPIKeyAccess checks key/user/group status, group membership and IP ACL.
+// It records the same ingress classification for HTTP and WS, but never aborts
+// or writes to the connection. Billing admission is checked separately.
+func ValidateAPIKeyAccess(c *gin.Context, apiKey *service.APIKey, cfg *config.Config) *APIKeyAccessError {
+	if apiKey == nil {
+		return &APIKeyAccessError{401, "INVALID_API_KEY", "Invalid API key"}
+	}
+	// disabled / 未知状态 → 无条件拦截（expired 和 quota_exhausted 留给计费阶段）
+	if !apiKey.IsActive() &&
+		apiKey.Status != service.StatusAPIKeyExpired &&
+		apiKey.Status != service.StatusAPIKeyQuotaExhausted {
+		MarkIngressRejected(c, IngressRejectAPIKeyDisabled)
+		return &APIKeyAccessError{401, "API_KEY_DISABLED", "API key is disabled"}
+	}
+
+	// 检查 IP 限制（白名单/黑名单）
+	// 注意：错误信息故意模糊，避免暴露具体的 IP 限制机制
+	if len(apiKey.IPWhitelist) > 0 || len(apiKey.IPBlacklist) > 0 {
+		clientIP := ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL())
+		allowed, _ := ip.CheckIPRestrictionWithCompiledRules(clientIP, apiKey.CompiledIPWhitelist, apiKey.CompiledIPBlacklist)
+		if !allowed {
+			if clientIP == "" {
+				clientIP = "unknown"
+			}
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonIPRestriction)
+			MarkIngressRejected(c, IngressRejectIPRestricted)
+			return &APIKeyAccessError{403, "ACCESS_DENIED", fmt.Sprintf("Access denied. Your IP is %s", clientIP)}
+		}
+	}
+
+	// 检查关联的用户
+	if apiKey.User == nil {
+		return &APIKeyAccessError{401, "USER_NOT_FOUND", "User associated with API key not found"}
+	}
+
+	// 检查用户状态
+	if !apiKey.User.IsActive() {
+		MarkIngressRejected(c, IngressRejectUserInactive)
+		return &APIKeyAccessError{401, "USER_INACTIVE", "User account is not active"}
+	}
+	if code, message, ok := validateAPIKeyGroupAvailable(apiKey); !ok {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
+		if code == "GROUP_DELETED" {
+			MarkIngressRejected(c, IngressRejectGroupDeleted)
+		} else {
+			MarkIngressRejected(c, IngressRejectGroupDisabled)
+		}
+		return &APIKeyAccessError{403, code, message}
+	}
+	if !validateAPIKeyGroupAllowed(apiKey) {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
+		MarkIngressRejected(c, IngressRejectGroupNotAllowed)
+		return &APIKeyAccessError{403, "GROUP_NOT_ALLOWED", "API Key 所属专属分组不再允许当前用户使用"}
+	}
+	return nil
 }
