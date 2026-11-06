@@ -213,6 +213,7 @@ func ProvideAccountHandler(
 	grokQuotaService *service.GrokQuotaService,
 	accountRefill *service.AccountRefillService,
 	accountRisk *service.AccountRiskService,
+	accountAutoFast *service.AccountAutoFastService,
 ) *AccountHandler {
 	handler := NewAccountHandler(
 		adminService,
@@ -232,6 +233,7 @@ func ProvideAccountHandler(
 	)
 	handler.accountRefill = accountRefill
 	handler.accountRisk = accountRisk
+	handler.accountAutoFast = accountAutoFast
 	handler.grokImportProber = grokQuotaService
 	handler.cfg = cfg
 	return handler

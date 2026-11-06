@@ -99,6 +99,7 @@ func provideCleanup(
 	accountExpiry *service.AccountExpiryService,
 	accountRefill *service.AccountRefillService,
 	accountRisk *service.AccountRiskService,
+	accountAutoFast *service.AccountAutoFastService,
 	cnProviderBalanceCheck *service.CNProviderBalanceCheckService,
 	codexVersionSync *service.OpenAICodexVersionSyncService,
 	claudeCodeVersionSync *service.ClaudeCodeVersionSyncService,
@@ -147,6 +148,7 @@ func provideCleanup(
 		parallelSteps := []cleanupStep{
 			{"AccountRefillService", func() error { accountRefill.Stop(); return nil }},
 			{"AccountRiskService", func() error { accountRisk.Stop(); return nil }},
+			{"AccountAutoFastService", func() error { accountAutoFast.Stop(); return nil }},
 			{"PluginManager", func() error {
 				if pluginManager != nil {
 					pluginManager.Stop()

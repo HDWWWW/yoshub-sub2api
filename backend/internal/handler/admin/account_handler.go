@@ -52,6 +52,7 @@ func NewOAuthHandler(oauthService *service.OAuthService) *OAuthHandler {
 type AccountHandler struct {
 	accountRefill           *service.AccountRefillService
 	accountRisk             *service.AccountRiskService
+	accountAutoFast         *service.AccountAutoFastService
 	claudeResetCredits      claudeResetReader
 	adminService            service.AdminService
 	oauthService            *service.OAuthService

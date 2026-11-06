@@ -9,6 +9,7 @@
             @create="showCreate = true"
           >
             <template #before>
+              <AccountAutoFast :groups="groups" :initial-group="params.group" @changed="handleManualRefresh" />
               <AccountRiskDetection :groups="groups" :initial-group="params.group" />
               <button class="btn btn-secondary" data-testid="open-account-scheduling" @click="showScheduling = true">{{ t('accountRefill.schedulingTitle') }}</button>
               <AstraPriorityControl />
@@ -541,6 +542,7 @@ import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrs
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountRetryDefaults from '@/components/admin/account/AccountRetryDefaults.vue'
 import AccountRiskDetection from '@/components/admin/account/AccountRiskDetection.vue'
+import AccountAutoFast from '@/components/admin/account/AccountAutoFast.vue'
 import AstraPriorityControl from '@/components/admin/account/AstraPriorityControl.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
