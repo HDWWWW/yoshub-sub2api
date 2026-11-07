@@ -72,13 +72,24 @@
           <div class="flex items-center justify-between gap-3"><h3 class="font-semibold">{{ t('accountRisk.status') }}</h3><button type="button" class="btn btn-secondary text-xs" :disabled="refreshing || loading || saving" @click="refresh">{{ t('common.refresh') }}</button></div>
           <p>{{ view.config.enabled ? t('accountRisk.active') : t('accountRisk.disabled') }} · {{ view.observation.message }}</p>
           <p v-if="view.config.enabled && stale" class="text-amber-600">{{ t('accountRisk.stale') }}</p>
-          <div v-if="view.observation.mode === 'capacity'" class="grid gap-2 sm:grid-cols-2">
+          <div v-if="view.observation.mode === 'capacity' && capacityAnomalies.length" class="space-y-2">
+            <div v-for="check in capacityAnomalies" :key="check.target.account_id" class="rounded bg-gray-50 p-3 dark:bg-dark-700" data-testid="risk-capacity-pair">
+              <div class="grid gap-2 sm:grid-cols-2">
+                <div v-for="(item, index) in [check.target, check.reference]" :key="index">
+                  <template v-if="item"><p>{{ index === 0 ? t('accountRisk.first') : t('accountRisk.second') }}: #{{ item.account_id }} {{ item.name }}</p><p class="font-mono">{{ item.used }} / {{ item.capacity }} · {{ item.percent.toFixed(1) }}%</p></template>
+                </div>
+              </div>
+              <p v-if="check.anomaly_since" class="mt-1 text-xs text-gray-500">{{ t('accountRisk.since') }} {{ formatTime(check.anomaly_since) }}</p>
+              <p v-if="check.next_probe_at" class="text-xs text-gray-500">{{ t('accountRisk.nextProbe') }} {{ formatTime(check.next_probe_at) }}</p>
+            </div>
+          </div>
+          <div v-else-if="view.observation.mode === 'capacity'" class="grid gap-2 sm:grid-cols-2">
             <div v-for="(item, index) in [view.observation.first, view.observation.second]" :key="index" class="rounded bg-gray-50 p-2 dark:bg-dark-700">
               <template v-if="item"><p>{{ index === 0 ? t('accountRisk.first') : t('accountRisk.second') }}: #{{ item.account_id }} {{ item.name }}</p><p class="font-mono">{{ item.used }} / {{ item.capacity }} · {{ item.percent.toFixed(1) }}%</p></template>
             </div>
           </div>
-          <p v-if="view.observation.anomaly_since">{{ t('accountRisk.since') }} {{ formatTime(view.observation.anomaly_since) }}</p>
-          <p v-if="view.observation.next_probe_at">{{ t('accountRisk.nextProbe') }} {{ formatTime(view.observation.next_probe_at) }}</p>
+          <p v-if="!capacityAnomalies.length && view.observation.anomaly_since">{{ t('accountRisk.since') }} {{ formatTime(view.observation.anomaly_since) }}</p>
+          <p v-if="!capacityAnomalies.length && view.observation.next_probe_at">{{ t('accountRisk.nextProbe') }} {{ formatTime(view.observation.next_probe_at) }}</p>
           <p v-if="view.observation.last_probe_at">{{ formatTime(view.observation.last_probe_at) }} · {{ view.observation.last_probe_result }}</p>
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">
@@ -105,6 +116,9 @@ const groupID = ref(0), error = ref(''), now = ref(Date.now())
 const view = ref<AccountRiskRule | null>(null), draft = ref<AccountRiskConfig | null>(null)
 const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const openAIGroups = computed(() => props.groups.filter(g => g.platform === 'openai'))
+const capacityAnomalies = computed(() => Object.values(view.value?.observation.capacity_checks ?? {})
+  .filter(check => check.reference && check.anomaly_since)
+  .sort((a, b) => Date.parse(a.anomaly_since!) - Date.parse(b.anomaly_since!) || a.target.account_id - b.target.account_id))
 const valid = computed(() => {
   const c = draft.value
   return !!c && Number.isInteger(c.first_below_percent) && c.first_below_percent >= 1 && c.first_below_percent <= c.second_at_least_percent &&

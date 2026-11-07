@@ -53,7 +53,7 @@ func (c AccountRiskConfig) Validate() error {
 		return errors.New("模型响应不一致的处理方式无效")
 	}
 	if c.FirstBelowPercent < 1 || c.FirstBelowPercent > 100 || c.SecondAtLeastPercent < 1 || c.SecondAtLeastPercent > 100 || c.FirstBelowPercent > c.SecondAtLeastPercent {
-		return errors.New("容量阈值须为 1–100%，第一账号阈值不能大于第二账号阈值")
+		return errors.New("容量阈值须为 1–100%，待检测账号阈值不能大于后位账号阈值")
 	}
 	if c.SustainSeconds < 1 || c.SustainSeconds > 3600 || c.ProbeIntervalSeconds < 10 || c.ProbeIntervalSeconds > 86400 {
 		return errors.New("持续时间须为 1–3600 秒，测试间隔须为 10–86400 秒")
@@ -96,7 +96,21 @@ type AccountRiskObservation struct {
 	Signature string `json:"signature,omitempty"`
 	Worker    string `json:"worker,omitempty"`
 	// Keep the probe cooldown across interruptions in the capacity anomaly.
-	ProbeSignature string `json:"probe_signature,omitempty"`
+	ProbeSignature string                              `json:"probe_signature,omitempty"`
+	CapacityChecks map[int64]*AccountRiskCapacityCheck `json:"capacity_checks,omitempty"`
+}
+
+// Each target has its own continuous sample window and probe cooldown. Keeping
+// these separate prevents a passing higher-priority account from hiding others.
+type AccountRiskCapacityCheck struct {
+	Target          AccountRiskLoad  `json:"target"`
+	Reference       *AccountRiskLoad `json:"reference,omitempty"`
+	AnomalySince    *time.Time       `json:"anomaly_since,omitempty"`
+	NextProbeAt     *time.Time       `json:"next_probe_at,omitempty"`
+	LastProbeAt     *time.Time       `json:"last_probe_at,omitempty"`
+	TargetSignature string           `json:"target_signature"`
+	Signature       string           `json:"signature,omitempty"`
+	Worker          string           `json:"worker,omitempty"`
 }
 
 type AccountRiskEvent struct {
@@ -312,11 +326,12 @@ func (s *AccountRiskService) candidates(ctx context.Context, groupID int64, now 
 }
 
 type accountRiskJob struct {
-	pending   AccountRiskPending
-	account   Account
-	config    AccountRiskConfig
-	signature string
-	reason    string
+	pending     AccountRiskPending
+	account     Account
+	config      AccountRiskConfig
+	signature   string
+	reason      string
+	referenceID int64
 }
 
 func riskAccountSignature(a *Account) string {
@@ -330,6 +345,13 @@ func riskReset(o *AccountRiskObservation, mode, message string) {
 	o.Signature = ""
 	o.Mode = mode
 	o.Message = message
+	if mode != "stopped" {
+		for _, check := range o.CapacityChecks {
+			check.AnomalySince = nil
+			check.Reference = nil
+			check.Signature = ""
+		}
+	}
 }
 
 func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountRiskJob, error) {
@@ -339,6 +361,9 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 			if r := state.Rules[state.Pending.GroupID]; r != nil {
 				r.Observation.LastProbeResult = "检测中断，未据此停调度"
 				r.Observation.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+				if check := r.Observation.CapacityChecks[state.Pending.AccountID]; check != nil {
+					check.NextProbeAt = r.Observation.NextProbeAt
+				}
 			}
 			state.Pending = nil
 		}
@@ -364,14 +389,16 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 				continue
 			}
 			o.EligibleAccounts = len(pool)
-			o.First = nil
-			o.Second = nil
 			if len(pool) == 0 {
+				o.First, o.Second = nil, nil
+				o.CapacityChecks = nil
 				riskReset(o, "waiting", "没有可调度账号")
 				o.NextProbeAt = nil
 				continue
 			}
 			if len(pool) == 1 {
+				o.Second = nil
+				o.CapacityChecks = nil
 				a := pool[0]
 				sig := riskAccountSignature(&a)
 				if o.Mode != "single" || o.Signature != sig {
@@ -388,58 +415,9 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 				o.Message = "正在发送单账号测试"
 				continue
 			}
-			first, second := &pool[0], &pool[1]
-			sig := riskAccountSignature(first) + riskAccountSignature(second)
-			if o.ProbeSignature != sig {
-				o.NextProbeAt = nil
-				o.ProbeSignature = sig
+			if next := s.tickCapacity(ctx, state, r, pool, previousAt, now); next != nil {
+				job = next
 			}
-			if first.SchedulingPriority() == second.SchedulingPriority() {
-				riskReset(o, "waiting", "前两账号优先级相同，不判定容量异常")
-				continue
-			}
-			if first.Concurrency <= 0 || second.Concurrency <= 0 {
-				riskReset(o, "waiting", "账号未设置有限并发容量")
-				continue
-			}
-			loads, err := s.loads.GetAccountsLoadBatchFresh(ctx, []AccountWithConcurrency{{ID: first.ID, MaxConcurrency: first.Concurrency}, {ID: second.ID, MaxConcurrency: second.Concurrency}})
-			if err != nil || loads[first.ID] == nil || loads[second.ID] == nil {
-				riskReset(o, "unavailable", "容量读取失败，本次不判定")
-				continue
-			}
-			toLoad := func(a *Account) *AccountRiskLoad {
-				n := loads[a.ID].CurrentConcurrency
-				return &AccountRiskLoad{AccountID: a.ID, Name: a.Name, Priority: a.SchedulingPriority(), Used: n, Capacity: a.Concurrency, Percent: 100 * float64(n) / float64(a.Concurrency)}
-			}
-			o.First = toLoad(first)
-			o.Second = toLoad(second)
-			matched := o.First.Percent < float64(r.Config.FirstBelowPercent) && o.Second.Percent >= float64(r.Config.SecondAtLeastPercent) && o.First.Used >= 0 && o.Second.Used >= 0
-			if !matched {
-				riskReset(o, "capacity", "容量正常，未连续满足触发条件")
-				continue
-			}
-			if o.AnomalySince == nil || o.Signature != sig || o.Worker != s.worker || now.Sub(previousAt) > 3*time.Second || now.Before(previousAt) {
-				start := now
-				o.AnomalySince = &start
-			}
-			o.Signature = sig
-			o.Worker = s.worker
-			o.Mode = "capacity"
-			o.Message = "容量异常持续观察中"
-			if now.Sub(*o.AnomalySince) < time.Duration(r.Config.SustainSeconds)*time.Second {
-				continue
-			}
-			if state.Pending != nil {
-				o.Message = "容量异常已确认，等待消息复测完成"
-				continue
-			}
-			if o.NextProbeAt != nil && o.NextProbeAt.After(now) {
-				o.Message = "容量异常持续，等待下次消息复测"
-				continue
-			}
-			reason := fmt.Sprintf("容量异常持续 %d 秒：首位 %.1f%% < %d%%，次位 %.1f%% ≥ %d%%", r.Config.SustainSeconds, o.First.Percent, r.Config.FirstBelowPercent, o.Second.Percent, r.Config.SecondAtLeastPercent)
-			job = reserveAccountRiskProbe(state, r, *first, sig, accountRiskProbeCapacity, reason, now)
-			o.Message = "容量异常已确认，正在按下方配置复测首位账号"
 		}
 		return nil
 	})
@@ -463,19 +441,21 @@ func (s *AccountRiskService) probeAccount(ctx context.Context, job *accountRiskJ
 	if err != nil {
 		return nil, err
 	}
-	if len(pool) == 0 || pool[0].ID != job.account.ID {
-		return nil, errors.New("account changed")
-	}
-	signature := riskAccountSignature(&pool[0])
 	if job.pending.Kind == accountRiskProbeCapacity {
-		if len(pool) < 2 {
-			return nil, errors.New("capacity pair changed")
+		for i := range pool {
+			if pool[i].ID != job.account.ID {
+				continue
+			}
+			for j := i + 1; j < len(pool); j++ {
+				if pool[j].ID == job.referenceID && pool[j].SchedulingPriority() != pool[i].SchedulingPriority() &&
+					riskAccountSignature(&pool[i])+riskAccountSignature(&pool[j]) == job.signature {
+					return &pool[i], nil
+				}
+			}
 		}
-		signature += riskAccountSignature(&pool[1])
-	} else if len(pool) != 1 {
-		return nil, errors.New("single account pool changed")
+		return nil, errors.New("capacity pair changed")
 	}
-	if signature != job.signature {
+	if len(pool) != 1 || pool[0].ID != job.account.ID || riskAccountSignature(&pool[0]) != job.signature {
 		return nil, errors.New("account identity or priority changed")
 	}
 	return &pool[0], nil
@@ -555,6 +535,10 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		o.LastProbeAt = &now
 		if o.ProbeSignature == job.signature {
 			o.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+		}
+		if check := o.CapacityChecks[job.account.ID]; job.pending.Kind == accountRiskProbeCapacity && check != nil && check.TargetSignature == riskAccountSignature(&job.account) {
+			check.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+			check.LastProbeAt = &now
 		}
 		o.InputTokens = result.InputTokens
 		o.OutputTokens = result.OutputTokens

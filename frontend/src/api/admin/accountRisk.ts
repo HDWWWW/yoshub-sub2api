@@ -23,6 +23,13 @@ export interface AccountRiskLoad {
   capacity: number
   percent: number
 }
+export interface AccountRiskCapacityCheck {
+  target: AccountRiskLoad
+  reference?: AccountRiskLoad
+  anomaly_since?: string
+  next_probe_at?: string
+  last_probe_at?: string
+}
 export interface AccountRiskRule {
   group_id: number
   revision: number
@@ -35,6 +42,7 @@ export interface AccountRiskRule {
     eligible_accounts: number
     first?: AccountRiskLoad
     second?: AccountRiskLoad
+    capacity_checks?: Record<string, AccountRiskCapacityCheck>
     anomaly_since?: string
     next_probe_at?: string
     last_probe_at?: string

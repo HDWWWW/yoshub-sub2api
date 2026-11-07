@@ -87,6 +87,7 @@ func (g *riskTestGroups) GetByID(_ context.Context, id int64) (*Group, error) {
 
 type riskTestLoads struct {
 	first, second int
+	byID          map[int64]int
 	err           error
 	missing       bool
 	slots         int
@@ -100,6 +101,13 @@ func (l *riskTestLoads) GetAccountsLoadBatchFresh(_ context.Context, as []Accoun
 			n := l.first
 			if i == 1 {
 				n = l.second
+			}
+			if l.byID != nil {
+				var ok bool
+				n, ok = l.byID[a.ID]
+				if !ok {
+					continue
+				}
 			}
 			m[a.ID] = &AccountLoadInfo{CurrentConcurrency: n}
 		}

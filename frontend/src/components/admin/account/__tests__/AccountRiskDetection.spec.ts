@@ -18,6 +18,27 @@ async function open() {
 }
 describe('account risk detection', () => {
   beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => structuredClone(baseline)); save.mockImplementation(async (group_id, revision, config) => ({ ...structuredClone(baseline), group_id, revision: revision + 1, config })) })
+  it('shows both low-load accounts when the third account is full', async () => {
+    const data = structuredClone(baseline)
+    data.config.enabled = true
+    data.observation.mode = 'capacity'
+    data.observation.eligible_accounts = 3
+    const reference = { account_id: 3, name: 'C', priority: 3, used: 100, capacity: 100, percent: 100 }
+    data.observation.capacity_checks = Object.fromEntries([1, 2].map(id => [id, {
+      target: { account_id: id, name: `Target ${id}`, priority: id, used: 30, capacity: 100, percent: 30 },
+      reference, anomaly_since: '2026-11-08T00:00:00Z', next_probe_at: id === 1 ? '2026-11-08T00:03:00Z' : undefined
+    }]))
+    get.mockResolvedValue(data)
+    const w = await open()
+    const pairs = w.findAll('[data-testid="risk-capacity-pair"]')
+    expect(pairs).toHaveLength(2)
+    expect(pairs[0]?.text()).toContain('#1 Target 1')
+    expect(pairs[1]?.text()).toContain('#2 Target 2')
+    expect(pairs.every(pair => pair.text().includes('#3 C'))).toBe(true)
+    expect(pairs[0]?.text()).toContain('accountRisk.nextProbe')
+    expect(pairs[1]?.text()).not.toContain('accountRisk.nextProbe')
+    w.unmount()
+  })
   it('loads selected OpenAI group and saves every custom control with revision', async () => {
     const w = await open()
     expect(get).toHaveBeenCalledWith(7)
