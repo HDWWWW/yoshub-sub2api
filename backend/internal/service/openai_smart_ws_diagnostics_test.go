@@ -1,0 +1,147 @@
+//go:build unit
+
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+)
+
+func TestSmartWSHandshakeDiagnosticsHTTPFailurePreservesResponseAndSecrets(t *testing.T) {
+	const upstreamBody = `{"error":{"code":"forbidden","type":"permission_error","message":"private-customer-input"}}`
+	s, account, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "cloudflare")
+		w.Header().Set("Cf-Ray", "a56a26360b697588-SEA")
+		w.Header().Set("X-Request-Id", "085687b9-4cac-4e7c-a959-dc15613ded24")
+		w.Header().Set("Via", "private-proxy-detail")
+		w.Header().Set("Set-Cookie", "private-cookie")
+		w.Header().Set("Retry-After", "30")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, upstreamBody)
+	})
+	core, logs := observer.New(zap.InfoLevel)
+	c, _ := forcedWSContext(t, "/v1/responses", 1, "private-thread")
+	ctx := logger.IntoContext(c.Request.Context(), zap.New(core).With(zap.String("request_id", "req-diagnostic")))
+	c.Request = c.Request.WithContext(ctx)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{"model":"test-model","input":"private-request-input","stream":true}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer private-access-token")
+	req.Header.Set("Session_id", "private-session")
+	req.Header.Set("X-Codex-Turn-State", "private-turn-state")
+	before := req.Header.Clone()
+	resp, err := s.doOpenAIHTTPOverWS(c, req, "", account)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, upstreamBody, string(body))
+	require.Equal(t, "30", resp.Header.Get("Retry-After"))
+	require.Equal(t, before, req.Header)
+	require.Zero(t, upstream.callCount, "diagnostics must not replay or fall back")
+	entries := logs.FilterMessage("smart_ws.handshake").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	require.Equal(t, zap.WarnLevel, entries[0].Level)
+	require.Equal(t, "req-diagnostic", fields["request_id"])
+	require.Equal(t, "http_adapter", fields["origin"])
+	require.Equal(t, "not_sent", fields["dispatch_state"])
+	require.Equal(t, "ws_forbidden", fields["reason"])
+	encoded, err := json.Marshal(fields)
+	require.NoError(t, err)
+	for _, secret := range []string{"private-access-token", "private-session", "private-turn-state", "private-request-input", "private-customer-input", "private-proxy-detail", "private-cookie"} {
+		require.NotContains(t, string(encoded), secret)
+	}
+	require.Contains(t, string(encoded), "a56a26360b697588-SEA")
+	require.Contains(t, string(encoded), `"error_code":"forbidden"`)
+	require.Contains(t, string(encoded), `"retry_after_seconds":30`)
+	require.True(t, (&OpsSystemLogSink{}).shouldIndex(&logger.LogEvent{Level: "warn", Message: entries[0].Message, Fields: fields}))
+}
+
+func TestSmartWSHandshakeDiagnosticsFingerprintScopeAndUntrustedValues(t *testing.T) {
+	var first, second smartWSHandshakeDiagnostics
+	value := http.Header{"Authorization": {"Bearer secret-token"}, "Session_id": {"private-session"}}
+	before := value.Clone()
+	fingerprint := first.fingerprint(value)
+	require.Len(t, fingerprint, 32)
+	require.Equal(t, fingerprint, first.fingerprint(value))
+	require.NotEqual(t, fingerprint, second.fingerprint(value))
+	value.Set("Session_id", "different-session")
+	require.NotEqual(t, fingerprint, first.fingerprint(value))
+	summary := first.headerSummary(before, smartWSDiagnosticRequestHeaders)
+	require.True(t, summary["authorization"].Present)
+	require.Equal(t, len("Bearer secret-token"), summary["authorization"].Bytes)
+	require.False(t, summary["x-codex-turn-state"].Present)
+	headers := http.Header{}
+	for _, name := range []string{"Server", "Cf-Ray", "Cf-Mitigated", "X-Request-Id", "X-OpenAI-Request-Id", "Via", "Retry-After", "Content-Type"} {
+		headers.Set(name, "Bearer secret-token private-session\r\nforged-log")
+	}
+	response := first.responseSummary(headers, []byte(`{"error":{"code":"secret-token","type":"private-session","message":"private-input"}}`))
+	encoded, err := json.Marshal(response)
+	require.NoError(t, err)
+	for _, secret := range []string{"secret-token", "private-session", "private-input", "forged-log"} {
+		require.NotContains(t, string(encoded), secret)
+	}
+	require.Equal(t, "unrecognized", response["error_code"])
+	require.Equal(t, "json", response["body_kind"])
+}
+
+func TestSmartWSHandshakeDiagnosticsSamplingAndAttribution(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	ctx := logger.IntoContext(context.Background(), zap.New(core))
+	pool := &openAIWSConnPool{}
+	proxyID := int64(88)
+	req := openAIWSAcquireRequest{Account: &Account{ID: 7, ProxyID: &proxyID}, WSURL: "wss://example.invalid/private-path?secret=query", ProxyURL: "http://private-user:private-password@proxy.invalid", Headers: http.Header{}}
+	for i := 0; i < 128; i++ {
+		pool.observeSmartWSHandshake(ctx, req, true, 0, nil, nil, time.Millisecond)
+	}
+	require.Len(t, logs.All(), 3, "first success and each 64th success only")
+	pool.observeSmartWSHandshake(ctx, req, false, 0, nil, context.DeadlineExceeded, time.Second)
+	pool.observeSmartWSHandshake(ctx, req, true, 0, nil, nil, time.Millisecond)
+	require.Len(t, logs.All(), 5, "retain failure and next successful handshake")
+	require.Equal(t, "timeout", logs.All()[3].ContextMap()["reason"])
+	fields := logs.All()[4].ContextMap()
+	require.Equal(t, int64(7), fields["account_id"])
+	require.Equal(t, int64(88), fields["proxy_id"])
+	require.Equal(t, "native_or_background", fields["origin"])
+	require.Equal(t, "connected", fields["result"])
+	require.True(t, (&OpsSystemLogSink{}).shouldIndex(&logger.LogEvent{Level: "info", Message: "smart_ws.handshake", Fields: fields}))
+	require.False(t, (&OpsSystemLogSink{}).shouldIndex(&logger.LogEvent{Level: "info", Message: "unrelated", Fields: fields}))
+	encoded, err := json.Marshal(fields)
+	require.NoError(t, err)
+	for _, secret := range []string{"private-user", "private-password", "private-path", "secret=query"} {
+		require.NotContains(t, string(encoded), secret)
+	}
+}
+
+func TestSmartWSHandshakeDiagnosticsConcurrent(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	ctx := logger.IntoContext(context.Background(), zap.New(core))
+	pool := &openAIWSConnPool{}
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pool.observeSmartWSHandshake(ctx, openAIWSAcquireRequest{}, false, 403, nil, &openAIWSHandshakeError{Err: errors.New("private-error")}, time.Millisecond)
+		}()
+	}
+	wg.Wait()
+	require.Len(t, logs.All(), 64)
+	scope := logs.All()[0].ContextMap()["fingerprint_scope"]
+	for _, entry := range logs.All() {
+		require.Equal(t, scope, entry.ContextMap()["fingerprint_scope"])
+	}
+}

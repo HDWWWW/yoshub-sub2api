@@ -182,6 +182,11 @@ func (s *OpsSystemLogSink) shouldIndex(event *logger.LogEvent) bool {
 	if strings.Contains(component, "audit") {
 		return true
 	}
+	// Successes are sampled at the handshake source. Retain them even when
+	// high-volume access-log persistence is disabled, for refusal comparisons.
+	if component == smartWSHandshakeLogComponent && event.Message == "smart_ws.handshake" {
+		return true
+	}
 	return false
 }
 

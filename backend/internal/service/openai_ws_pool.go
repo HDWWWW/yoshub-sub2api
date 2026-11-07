@@ -867,11 +867,12 @@ type openAIWSConnPool struct {
 	accounts sync.Map // key: int64(accountID), value: *openAIWSAccountPool
 	seq      atomic.Uint64
 
-	metrics      openAIWSPoolMetrics
-	gate         smartWSPoolGate
-	rejections   smartWSRejectionCache
-	smartMetrics smartWSMetrics
-	startedAt    time.Time
+	metrics              openAIWSPoolMetrics
+	gate                 smartWSPoolGate
+	rejections           smartWSRejectionCache
+	smartMetrics         smartWSMetrics
+	handshakeDiagnostics smartWSHandshakeDiagnostics
+	startedAt            time.Time
 
 	workerStopCh chan struct{}
 	workerWg     sync.WaitGroup
@@ -2184,7 +2185,9 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 		}
 	}()
 	p.smartMetrics.handshakes.Add(1)
+	dialStarted := time.Now()
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
+	p.observeSmartWSHandshake(ctx, req, conn != nil, status, handshakeHeaders, err, time.Since(dialStarted))
 	if err != nil {
 		p.smartMetrics.recordHandshakeFailure(status)
 		var handshakeErr *openAIWSHandshakeError
