@@ -280,7 +280,7 @@ func TestChannelMonitorV2EmptyRestrictedScopeReturnsEmptyMatrixForEveryGrouping(
 func TestChannelMonitorV2ErrorAggregationCountsFinalUserErrorsOnly(t *testing.T) {
 	query := strings.ToLower(channelMonitorV2ErrorAggregationSQL)
 	require.Contains(t, query, "not current_error.is_count_tokens")
-	require.Contains(t, query, "error_type = 'cyber_policy'")
+	require.Contains(t, query, "error_type in ('cyber_policy', 'bio_policy')")
 	require.Contains(t, query, "distinct on")
 	require.Contains(t, query, "candidate_ids")
 	require.Contains(t, query, "where bucket_start >= $1 and bucket_start < $2")

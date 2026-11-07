@@ -405,7 +405,7 @@ export default {
     compactionFilter: 'Request Kind',
     allCompactionTypes: 'All Requests',
     compactionOnly: 'Compaction Only',
-    cyber: 'Cyber',
+    cyber: 'Safety policy',
     live: 'Live',
     unknown: 'Unknown',
     in: 'In',
@@ -483,7 +483,7 @@ export default {
       categories: {
         auth: 'Auth failed', rate_limit: 'Rate limited', quota: 'Balance/Subscription',
         invalid_request: 'Invalid request', service_unavailable: 'Service unavailable',
-        upstream: 'Upstream error', internal: 'Platform error', other: 'Other', cyber: 'Cyber policy',
+        upstream: 'Upstream error', internal: 'Platform error', other: 'Other', cyber: 'Cyber policy', bio: 'Biological safety',
       },
       detail: {
         title: 'Error Request Detail',

@@ -102,7 +102,7 @@ func (r *contentModerationTestRepo) CountFlaggedByUserSince(ctx context.Context,
 		if log.UserID == nil || *log.UserID != userID || !log.Flagged || log.Action == ContentModerationActionHashBlock {
 			continue
 		}
-		if excludeCyberPolicy && log.Action == ContentModerationActionCyberPolicy {
+		if excludeCyberPolicy && (log.Action == ContentModerationActionCyberPolicy || log.Action == ContentModerationActionBioPolicy) {
 			continue
 		}
 		if log.CreatedAt.IsZero() || log.CreatedAt.Before(since) {

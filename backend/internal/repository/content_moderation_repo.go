@@ -196,7 +196,7 @@ func (r *contentModerationRepository) CountFlaggedByUserSince(ctx context.Contex
 	if userID <= 0 {
 		return 0, nil
 	}
-	// SQL 中的 'cyber_policy' 字面量须与 service.ContentModerationActionCyberPolicy 保持一致。
+	// SQL 策略字面量须与 service.ContentModerationActionCyberPolicy / BioPolicy 保持一致。
 	// 'cyber_log_only' matches service.ContentModerationModeCyberLogOnly; these
 	// events remain evidence but never become penalties after allowlist removal.
 	var count int
@@ -213,7 +213,7 @@ WHERE user_id = $1
   AND action <> 'hash_block'
   AND mode <> 'cyber_log_only'
   AND mode <> 'risk_control_log_only'
-  AND ($3::bool IS FALSE OR action <> 'cyber_policy')
+  AND ($3::bool IS FALSE OR action NOT IN ('cyber_policy', 'bio_policy'))
   AND created_at >= $2
   AND created_at > COALESCE((SELECT at FROM last_auto_ban), '-infinity'::timestamptz)
 `, userID, since, excludeCyberPolicy).Scan(&count)

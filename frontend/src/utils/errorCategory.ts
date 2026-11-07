@@ -26,6 +26,8 @@ export function mapErrorCategory(phase?: string | null, errType?: string | null)
           return 'invalid_request'
         case 'cyber_policy':
           return 'cyber'
+        case 'bio_policy':
+          return 'bio'
       }
   }
   return 'other'

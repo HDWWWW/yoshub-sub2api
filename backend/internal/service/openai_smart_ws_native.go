@@ -70,7 +70,9 @@ func (s *OpenAIGatewayService) smartWSNativeHandshakeFailure(ctx context.Context
 	}
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, dialErr.ResponseBody)
 	classification := classifySmartWSHandshake(dialErr.StatusCode, body)
-	if classification.accountFailure {
+	var usage OpenAIUsage
+	parseOpenAIWSResponseUsageFromCompletedEvent(body, &usage)
+	if !markOpenAICyberPolicyEvent(c, body, dialErr.StatusCode, &usage) && classification.accountFailure {
 		_ = s.handleOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, body, model)
 	}
 	message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(body))

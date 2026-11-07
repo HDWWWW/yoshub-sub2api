@@ -25,6 +25,9 @@ func (f smartWSHandshakeFailure) annotate(err *UpstreamFailoverError) {
 }
 
 func classifySmartWSHandshake(status int, body []byte) smartWSHandshakeFailure {
+	if hit, code, _ := detectOpenAICyberPolicy(body); hit {
+		return smartWSHandshakeFailure{code, false}
+	}
 	switch status {
 	case http.StatusUnauthorized:
 		return smartWSHandshakeFailure{"http_401", true}

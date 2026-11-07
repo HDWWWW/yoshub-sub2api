@@ -31,6 +31,7 @@ const (
 	NotificationEmailEventContentModerationViolation  = "content_moderation.violation_notice"
 	NotificationEmailEventContentModerationDisabled   = "content_moderation.account_disabled"
 	NotificationEmailEventCyberPolicyNotice           = "content_moderation.cyber_policy_notice"
+	NotificationEmailEventBioPolicyNotice             = "content_moderation.bio_policy_notice"
 	NotificationEmailEventOpsAlert                    = "ops.alert"
 	NotificationEmailEventOpsScheduledReport          = "ops.scheduled_report"
 
@@ -1032,6 +1033,7 @@ var notificationEmailEventOrder = []string{
 	NotificationEmailEventContentModerationViolation,
 	NotificationEmailEventContentModerationDisabled,
 	NotificationEmailEventCyberPolicyNotice,
+	NotificationEmailEventBioPolicyNotice,
 	NotificationEmailEventOpsAlert,
 	NotificationEmailEventOpsScheduledReport,
 }
@@ -1124,6 +1126,15 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Event:       NotificationEmailEventCyberPolicyNotice,
 		Label:       "Cyber policy notice",
 		Description: "Sent to users when an upstream request is blocked by cyber-security policy (cyber_policy).",
+		Category:    "risk_control",
+		Optional:    false,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
+			"triggered_at", "model", "group_name", "upstream_message"),
+	},
+	NotificationEmailEventBioPolicyNotice: {
+		Event:       NotificationEmailEventBioPolicyNotice,
+		Label:       "Biological safety policy notice",
+		Description: "Sent when the upstream provider rejects a request with bio_policy.",
 		Category:    "risk_control",
 		Optional:    false,
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
@@ -1402,6 +1413,26 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
   <tr><td style="width:128px;vertical-align:top;">上游说明</td><td style="overflow-wrap:anywhere;word-break:break-all;white-space:pre-wrap;">{{upstream_message}}</td></tr>
 </table>
 <p>如认为系误判，可调整请求措辞后重试，或申请获得授权的安全访问权限。</p>`),
+		},
+	},
+	NotificationEmailEventBioPolicyNotice: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Biological safety policy notice",
+			HTML: notificationEmailCard("#ef4444", "Biological safety policy notice", `
+<p>Hello {{recipient_name}},</p>
+<p>Your request was blocked by the upstream provider's biological safety policy (bio_policy).</p>
+<p>Triggered at: {{triggered_at}}<br>Model: {{model}}<br>Group: {{group_name}}</p>
+<p style="overflow-wrap:anywhere;white-space:pre-wrap;">{{upstream_message}}</p>
+<p>If you believe this is a mistake, contact the service administrator for review.</p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 生物安全策略拦截提醒",
+			HTML: notificationEmailCard("#ef4444", "生物安全策略拦截提醒", `
+<p>{{recipient_name}}，您好：</p>
+<p>您的请求被上游服务商的生物安全策略（bio_policy）拦截。</p>
+<p>触发时间：{{triggered_at}}<br>模型：{{model}}<br>所属分组：{{group_name}}</p>
+<p style="overflow-wrap:anywhere;white-space:pre-wrap;">{{upstream_message}}</p>
+<p>如认为系误判，请联系平台管理员核查。</p>`),
 		},
 	},
 	NotificationEmailEventOpsAlert: {

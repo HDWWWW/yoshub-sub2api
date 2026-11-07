@@ -40,6 +40,7 @@ const (
 	ContentModerationActionKeywordBlock = "keyword_block"
 	ContentModerationActionError        = "error"
 	ContentModerationActionCyberPolicy  = "cyber_policy" // cyber_policy 硬阻断的风控日志 action（封号计数排除按此值过滤）
+	ContentModerationActionBioPolicy    = "bio_policy"
 
 	contentModerationKeywordCategory = "keyword"
 
@@ -171,8 +172,8 @@ type ContentModerationConfig struct {
 	BlockedKeywords      []string                     `json:"blocked_keywords"`
 	KeywordBlockingMode  string                       `json:"keyword_blocking_mode"`
 	ModelFilter          ContentModerationModelFilter `json:"model_filter"`
-	// CyberPolicyExcludeFromBanCount 为 true 时，cyber_policy 命中不参与自动封号计数：
-	// 当次不判定封号，且历史 cyber 行在 CountFlaggedByUserSince 中被排除。
+	// CyberPolicyExcludeFromBanCount 为 true 时，cyber_policy / bio_policy 不参与自动封号计数：
+	// 当次不判定封号，且历史安全策略行在 CountFlaggedByUserSince 中被排除。
 	// 默认 false（计入，与历史行为一致；旧配置 JSON 无此字段时反序列化为 false）。
 	CyberPolicyExcludeFromBanCount bool `json:"cyber_policy_exclude_from_ban_count"`
 }
@@ -495,7 +496,7 @@ type ContentModerationRepository interface {
 	CreateLog(ctx context.Context, log *ContentModerationLog) error
 	ListLogs(ctx context.Context, filter ContentModerationLogFilter) ([]ContentModerationLog, *pagination.PaginationResult, error)
 	// CountFlaggedByUserSince 统计窗口内计入封号的违规次数（排除 hash_block；
-	// excludeCyberPolicy 为 true 时额外排除 cyber_policy 行）。
+	// excludeCyberPolicy 为 true 时额外排除 cyber_policy / bio_policy 行）。
 	CountFlaggedByUserSince(ctx context.Context, userID int64, since time.Time, excludeCyberPolicy bool) (int, error)
 	CleanupExpiredLogs(ctx context.Context, hitBefore time.Time, nonHitBefore time.Time) (*ContentModerationCleanupResult, error)
 	// UpdateLogEmailSent 回写邮件发送结果（F7：CreateLog 先行后补 EmailSent）。
@@ -3035,9 +3036,10 @@ func maskSecretTail(secret string) string {
 	return strings.Repeat("*", 8) + secret[len(secret)-4:]
 }
 
-// CyberPolicyRecordInput 是一次 cyber_policy 硬阻断的风控记录入参。
+// CyberPolicyRecordInput 是一次上游安全策略硬阻断的风控记录入参。
 type CyberPolicyRecordInput struct {
-	LogOnly         bool // Trusted platform user: retain evidence without penalties or notifications.
+	PolicyCode      string // Empty retains the legacy cyber_policy default.
+	LogOnly         bool   // Trusted platform user: retain evidence without penalties or notifications.
 	RequestID       string
 	UserID          int64
 	UserEmail       string
@@ -3054,12 +3056,16 @@ type CyberPolicyRecordInput struct {
 	UpstreamOutTok  int
 }
 
-// RecordCyberPolicyEvent 把一次 cyber_policy 硬阻断写入风控中心日志、计入违规计数、
+// RecordCyberPolicyEvent 把一次 cyber_policy / bio_policy 硬阻断写入风控日志、计入违规计数、
 // 并给用户发邮件。当前请求已由 gateway 透传给用户；本方法仅做事后记录/通知/计数。
 // 受 risk_control_enabled 总开关和内容审核 group/model scope 约束，
 // 不受内容审核 Enabled/Mode/sample 约束。
 func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, in CyberPolicyRecordInput) {
 	if s == nil || s.repo == nil {
+		return
+	}
+	policyCode := (CyberPolicyMark{Code: in.PolicyCode}).PolicyCode()
+	if policyCode == "" {
 		return
 	}
 	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
@@ -3102,14 +3108,14 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		Provider:        "openai",
 		Model:           in.Model,
 		Mode:            "post_upstream",
-		Action:          ContentModerationActionCyberPolicy,
+		Action:          policyCode,
 		Flagged:         true,
-		HighestCategory: "cyber_policy",
+		HighestCategory: policyCode,
 		HighestScore:    1.0,
 		Error:           trimRunes(redactContentModerationSecrets(errBody), maxModerationExcerptRunes*4),
 		CreatedAt:       time.Now(),
 	}
-	// 开关开时 cyber_policy 不参与封号计数：当次不判定（此处跳过），
+	// 开关开时两类上游安全策略均不参与封号计数：当次不判定（此处跳过），
 	// 历史行由 CountFlaggedByUserSince 的 excludeCyberPolicy 排除。
 	autoBanned := false
 	if in.LogOnly {
@@ -3148,6 +3154,10 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 
 func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log *ContentModerationLog) error {
 	siteName := s.siteName(ctx)
+	event := NotificationEmailEventCyberPolicyNotice
+	if log.Action == ContentModerationActionBioPolicy {
+		event = NotificationEmailEventBioPolicyNotice
+	}
 	if s.emailService.notificationEmailService != nil {
 		variables := map[string]string{
 			"triggered_at":     log.CreatedAt.UTC().Format(time.RFC3339),
@@ -3156,7 +3166,7 @@ func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log
 			"upstream_message": defaultContentModerationString(log.Error, "-"),
 		}
 		err := s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
-			Event:          NotificationEmailEventCyberPolicyNotice,
+			Event:          event,
 			RecipientEmail: log.UserEmail,
 			RecipientName:  emailRecipientName(log.UserEmail),
 			UserID:         contentModerationEmailUserID(log),
@@ -3173,5 +3183,8 @@ func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log
 		slog.Warn("template cyber policy email failed; falling back", "err", err.Error())
 	}
 	subject := fmt.Sprintf("[%s] 网络安全策略拦截 / Cyber Policy Notice", sanitizeEmailHeader(siteName))
+	if log.Action == ContentModerationActionBioPolicy {
+		subject = fmt.Sprintf("[%s] 生物安全策略拦截 / Biological Safety Policy Notice", sanitizeEmailHeader(siteName))
+	}
 	return s.emailService.SendEmail(ctx, log.UserEmail, subject, buildCyberPolicyNoticeEmailBody(siteName, log))
 }

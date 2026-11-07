@@ -18,7 +18,7 @@ func ClassifyChannelMonitorV2Error(input ChannelMonitorV2ErrorInput) string {
 	owner := strings.ToLower(strings.TrimSpace(input.ErrorOwner))
 	text := strings.ToLower(strings.Join([]string{input.ErrorType, input.ErrorSource, input.Message}, " "))
 
-	if errorType == "cyber_policy" || channelMonitorV2ContainsAny(text, "content policy", "content_policy", "safety policy", "moderation", "blocked keyword") {
+	if errorType == "cyber_policy" || errorType == "bio_policy" || channelMonitorV2ContainsAny(text, "content policy", "content_policy", "safety policy", "moderation", "blocked keyword") {
 		return "content_policy"
 	}
 	if input.StatusCode == 401 || input.UpstreamStatusCode == 401 || channelMonitorV2ContainsAny(text, "unauthorized", "invalid api key", "invalid_api_key", "authentication", "api_key_disabled") {

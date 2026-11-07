@@ -40,7 +40,7 @@ func TestSmartWSNativeFirstFramePreservesContinuationWithoutStickyBinding(t *tes
 // Use the public handlers, a real local WebSocket and the normal usage writer:
 // a service-only test cannot detect appended handler errors or dropped billing.
 func TestSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T) {
-	for _, code := range []string{"partial_failure", "cyber_policy"} {
+	for _, code := range []string{"partial_failure", service.OpenAIPolicyCyber, service.OpenAIPolicyBio} {
 		t.Run(code, func(t *testing.T) {
 			testSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t, code)
 		})
@@ -48,6 +48,7 @@ func TestSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T) {
 }
 
 func testSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T, code string) {
+	isPolicy := code == service.OpenAIPolicyCyber || code == service.OpenAIPolicyBio
 	for _, chat := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
 			for _, started := range []bool{false, true} {
@@ -126,19 +127,25 @@ func testSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T, co
 						require.EqualValues(t, 1, received.Load(), rec.Body.String())
 						require.Contains(t, rec.Body.String(), `"code":"`+code+`"`)
 						if !started || !stream {
-							require.Equal(t, http.StatusInternalServerError, rec.Code)
+							wantStatus := http.StatusInternalServerError
+							if isPolicy {
+								wantStatus = http.StatusBadRequest
+							}
+							require.Equal(t, wantStatus, rec.Code)
 							if paired {
 								require.JSONEq(t, bare, rec.Body.String())
 							} else {
 								require.JSONEq(t, failure, rec.Body.String())
 							}
 						} else {
+							require.Equal(t, http.StatusOK, rec.Code)
 							require.Equal(t, 1, strings.Count(rec.Body.String(), "local test failure"), rec.Body.String())
 							require.NotContains(t, rec.Body.String(), "All accounts")
 						}
-						if code == "cyber_policy" {
+						if isPolicy {
 							mark := service.GetOpsCyberPolicy(c)
 							require.NotNil(t, mark)
+							require.Equal(t, code, mark.Code)
 							require.Equal(t, 17, mark.UpstreamInTok)
 							require.Equal(t, 3, mark.UpstreamOutTok)
 							if chat && stream && started {
@@ -149,7 +156,7 @@ func testSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T, co
 						case usage := <-usageRepo.created:
 							require.Equal(t, 17, usage.InputTokens)
 							require.Equal(t, 3, usage.OutputTokens)
-							if code == "cyber_policy" {
+							if isPolicy {
 								require.Equal(t, service.RequestTypeCyberBlocked, usage.RequestType)
 							}
 						case <-time.After(time.Second):

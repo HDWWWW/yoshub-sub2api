@@ -604,11 +604,14 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		if contentType == "" {
 			contentType = "application/json"
 		}
-		c.Data(resp.StatusCode, contentType, body)
-		if cyberMsg == "" {
-			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
+		status := openAISafetyPolicyHTTPStatus(resp.StatusCode)
+		if !writeOpenAICompactSSEBridge(c, status, body) {
+			c.Data(status, contentType, body)
 		}
-		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
+		if cyberMsg == "" {
+			return nil, fmt.Errorf("openai %s: %d", code, resp.StatusCode)
+		}
+		return nil, fmt.Errorf("openai %s: %s", code, cyberMsg)
 	}
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)
@@ -853,13 +856,13 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		setOpsUpstreamError(c, resp.StatusCode, cyberMsg, truncateString(string(body), 2048))
 		clientMsg := cyberMsg
 		if clientMsg == "" {
-			clientMsg = "Request blocked by upstream cyber-security policy"
+			clientMsg = openAISafetyPolicyMessage(code)
 		}
 		writeError(c, resp.StatusCode, "invalid_request_error", clientMsg)
 		if cyberMsg == "" {
-			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
+			return nil, fmt.Errorf("openai %s: %d", code, resp.StatusCode)
 		}
-		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
+		return nil, fmt.Errorf("openai %s: %s", code, cyberMsg)
 	}
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)

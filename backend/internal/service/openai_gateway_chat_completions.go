@@ -390,6 +390,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		if err := openAIAccountContextError(ctx, account); err != nil {
 			return nil, err
 		}
+		if hit, _, _ := detectOpenAICyberPolicy(respBody); hit {
+			return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
+		}
 		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 			expectedTaskID := account.GetCredential("task_id")
 			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
@@ -444,8 +447,8 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		result.OpenAIWSMode = isOpenAIHTTPWSResponse(resp)
 	}
 
-	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
-	// 返回哨兵，使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
+	// 安全策略拒绝：标记与错误已发送，交由 handler 按标记中的实际 token 记录用量，
+	// 不 failover；丢弃 result 避免与正常成功路径重复计费。
 	if GetOpsCyberPolicy(c) != nil {
 		if handleErr == nil {
 			handleErr = errOpenAICyberPolicyForwarded
@@ -732,10 +735,10 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			})
 			clientMsg := msg
 			if clientMsg == "" {
-				clientMsg = "Request blocked by upstream cyber-security policy"
+				clientMsg = openAISafetyPolicyMessage(code)
 			}
 			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
-			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
+			return nil, fmt.Errorf("openai %s: %s", code, msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
 		if openAIStreamFailedEventShouldFailover(payload, message) {
@@ -982,7 +985,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					writeStreamHeaders()
 					clientMsg := msg
 					if clientMsg == "" {
-						clientMsg = "Request blocked by upstream cyber-security policy"
+						clientMsg = openAISafetyPolicyMessage(code)
 					}
 					if _, err := fmt.Fprint(c.Writer, buildChatStreamErrorSSE(code, clientMsg)); err == nil {
 						_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
@@ -1382,12 +1385,12 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 // writeChatCompletionsError writes an error response in OpenAI Chat Completions format.
 func writeChatCompletionsError(c *gin.Context, statusCode int, errType, message string) {
 	MarkResponseCommitted(c)
-	c.JSON(statusCode, gin.H{
-		"error": gin.H{
-			"type":    errType,
-			"message": message,
-		},
-	})
+	detail := gin.H{"type": errType, "message": message}
+	if mark := GetOpsCyberPolicy(c); mark != nil {
+		detail["code"] = mark.PolicyCode()
+		statusCode = openAISafetyPolicyHTTPStatus(statusCode)
+	}
+	c.JSON(statusCode, gin.H{"error": detail})
 }
 
 // buildChatStreamErrorSSE builds one SSE data frame carrying an OpenAI chat

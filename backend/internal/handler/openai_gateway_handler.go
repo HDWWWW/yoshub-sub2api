@@ -2565,7 +2565,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// checked directly and body-derived sessions use the coarse scope gate.
 	if cyberBlockKey := h.findBlockedCyberSessionForAPIKey(c, apiKey, firstMessage); cyberBlockKey != "" {
 		writeCyberSessionBlockedWSError(c.Request.Context(), wsConn)
-		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "session blocked by cyber-security policy")
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "session blocked by upstream safety policy")
 		h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, reqModel, cyberBlockKey)
 		return
 	}
@@ -4087,7 +4087,7 @@ func writeCyberSessionBlockedWSError(ctx context.Context, conn *coderws.Conn) {
 		},
 	})
 	if err != nil {
-		payload = []byte(`{"event_id":"evt_cyber_session_blocked","type":"error","error":{"type":"permission_error","code":"session_blocked_by_cyber_policy","message":"This session is blocked by cyber-security policy, please start a new session"}}`)
+		payload = []byte(`{"event_id":"evt_cyber_session_blocked","type":"error","error":{"type":"permission_error","code":"session_blocked_by_cyber_policy","message":"This session is blocked by upstream safety policy, please start a new session"}}`)
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -4101,6 +4101,7 @@ const cyberPolicyRecordedKey = "ops_cyber_recorded"
 // cyberPolicyOpsErrorMeta carries request-scoped fields captured outside the
 // async goroutine for building the cyber ops_error_logs entry.
 type cyberPolicyOpsErrorMeta struct {
+	ClientStatus    int
 	RequestID       string
 	ClientRequestID string
 	Platform        string
@@ -4120,10 +4121,14 @@ type cyberPolicyOpsErrorMeta struct {
 }
 
 // buildCyberPolicyOpsErrorEntry builds the ops_error_logs entry for an upstream
-// cyber_policy hit. StatusCode mirrors what the codex client actually received
-// (400 non-stream / 200 stream), per F6.
+// cyber_policy or bio_policy hit. Client and upstream HTTP statuses are recorded separately.
 func buildCyberPolicyOpsErrorEntry(meta cyberPolicyOpsErrorMeta, mark *service.CyberPolicyMark) *service.OpsInsertErrorLogInput {
 	rt := int16(service.RequestTypeCyberBlocked)
+	code := mark.PolicyCode()
+	status := meta.ClientStatus
+	if status == 0 {
+		status = mark.UpstreamStatus
+	}
 	entry := &service.OpsInsertErrorLogInput{
 		RequestID:         meta.RequestID,
 		ClientRequestID:   meta.ClientRequestID,
@@ -4136,16 +4141,20 @@ func buildCyberPolicyOpsErrorEntry(meta cyberPolicyOpsErrorMeta, mark *service.C
 		UserAgent:         meta.UserAgent,
 		APIKeyPrefix:      meta.APIKeyPrefix,
 		ErrorPhase:        "request",
-		ErrorType:         "cyber_policy",
+		ErrorType:         code,
 		Severity:          "P3",
-		StatusCode:        mark.UpstreamStatus,
+		StatusCode:        status,
 		IsBusinessLimited: true,
-		ErrorMessage:      "cyber_policy: " + mark.Message,
+		ErrorMessage:      code + ": " + mark.Message,
 		// 原始 body 直接入队；ops service 落库前统一走 sanitizeErrorBodyForStorage 脱敏与截断。
 		ErrorBody:   mark.Body,
 		ErrorSource: "upstream_http",
 		ErrorOwner:  "provider",
 		CreatedAt:   meta.CreatedAt,
+	}
+	if mark.UpstreamStatus > 0 {
+		upstreamStatus := mark.UpstreamStatus
+		entry.UpstreamStatusCode = &upstreamStatus
 	}
 	if meta.UserID > 0 {
 		entry.UserID = &meta.UserID
@@ -4164,7 +4173,7 @@ func buildCyberPolicyOpsErrorEntry(meta cyberPolicyOpsErrorMeta, mark *service.C
 }
 
 // 双语单串：网关客户端面向中英用户，且本错误无 i18n 协商通道。
-const cyberSessionBlockedClientMsg = "该会话已被网络安全策略屏蔽，请开启新会话 / This session is blocked by cyber-security policy, please start a new session"
+const cyberSessionBlockedClientMsg = "该会话已被上游安全策略屏蔽，请开启新会话 / This session is blocked by upstream safety policy, please start a new session"
 
 // buildCyberSessionBlockedOpsEntry builds the ops_error_logs entry for a request
 // rejected locally by the cyber session block (F5a). Distinct error_type from
@@ -4343,7 +4352,7 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 }
 
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
-// 并在 forward 返回错误时写一条 tokens=0 用量行。标记由 gateway 服务层在透传 cyber 后设置；
+// 并在 forward 返回错误时按上游实际 token 写用量行。标记由 gateway 透传安全策略错误后设置；
 // 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行，
 // 避免与正常 RecordUsage(forward 成功路径)重复。每请求至多记录一次。
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string) {
@@ -4413,6 +4422,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
 	}
 	opsMeta := cyberPolicyOpsErrorMeta{
+		ClientStatus:    c.Writer.Status(),
 		RequestID:       requestID,
 		ClientRequestID: clientRequestID,
 		Platform:        platform,
@@ -4443,6 +4453,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		defer cancel()
 		if cmSvc != nil {
 			cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
+				PolicyCode:      mark.PolicyCode(),
 				LogOnly:         cyberLogOnly,
 				RequestID:       requestID,
 				UserID:          userID,

@@ -267,105 +267,109 @@ func TestPassthroughLifecycle_LaterTurnRateLimitPreservesErrorWithoutReplay(t *t
 }
 
 func TestPassthroughLifecycle_CyberTerminalEventsMarkBeforeAfterTurn(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	for _, policyCode := range []string{OpenAIPolicyCyber, OpenAIPolicyBio} {
+		t.Run(policyCode, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name        string
-		events      []string
-		wantBody    string
-		wantMessage string
-		wantInput   int
-		wantOutput  int
-	}{
-		{
-			name: "error",
-			events: []string{
-				`{"type":"error","error":{"code":"cyber_policy","message":"blocked by error event"},"usage":{"input_tokens":5,"output_tokens":1}}`,
-				`{"type":"response.failed","response":{"id":"resp_error","error":{"code":"cyber_policy","message":"blocked by paired failed event"},"usage":{"input_tokens":9,"output_tokens":2}}}`,
-			},
-			wantBody:    `"type":"error"`,
-			wantMessage: "blocked by error event",
-			wantInput:   9,
-			wantOutput:  2,
-		},
-		{
-			name: "usage_only_in_failed_tail",
-			events: []string{
-				`{"type":"error","error":{"code":"cyber_policy","message":"blocked by error event"}}`,
-				`{"type":"response.failed","response":{"id":"resp_error","error":{"code":"cyber_policy","message":"blocked by paired failed event"},"usage":{"input_tokens":9,"output_tokens":2}}}`,
-			},
-			wantBody:    `"type":"error"`,
-			wantMessage: "blocked by error event",
-			wantInput:   9,
-			wantOutput:  2,
-		},
-		{
-			name: "response_failed",
-			events: []string{
-				`{"type":"response.failed","response":{"id":"resp_failed","error":{"code":"cyber_policy","message":"blocked by failed event"},"usage":{"input_tokens":9,"output_tokens":2}}}`,
-			},
-			wantBody:    `"type":"response.failed"`,
-			wantMessage: "blocked by failed event",
-			wantInput:   9,
-			wantOutput:  2,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			controlCtx, cancelControl := context.WithCancelCause(context.Background())
-			defer cancelControl(context.Canceled)
-			upstream := newStagedPassthroughConn()
-			for _, event := range tt.events {
-				upstream.Send(event)
-			}
-
-			markSeen := make(chan CyberPolicyMark, 1)
-			afterTurnCalls := atomic.Int32{}
-			server, serverErr := startPassthroughLifecycleServerWithHooks(
-				t,
-				controlCtx,
-				newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream),
-				passthroughLifecycleAccount(),
-				func(c *gin.Context) *OpenAIWSIngressHooks {
-					return &OpenAIWSIngressHooks{AfterTurn: func(_ int, _ *OpenAIForwardResult, _ error) {
-						afterTurnCalls.Add(1)
-						if mark := GetOpsCyberPolicy(c); mark != nil {
-							select {
-							case markSeen <- *mark:
-							default:
-							}
-						}
-					}}
+			tests := []struct {
+				name        string
+				events      []string
+				wantBody    string
+				wantMessage string
+				wantInput   int
+				wantOutput  int
+			}{
+				{
+					name: "error",
+					events: []string{
+						`{"type":"error","error":{"code":"cyber_policy","message":"blocked by error event"},"usage":{"input_tokens":5,"output_tokens":1}}`,
+						`{"type":"response.failed","response":{"id":"resp_error","error":{"code":"cyber_policy","message":"blocked by paired failed event"},"usage":{"input_tokens":9,"output_tokens":2}}}`,
+					},
+					wantBody:    `"type":"error"`,
+					wantMessage: "blocked by error event",
+					wantInput:   9,
+					wantOutput:  2,
 				},
-			)
-			defer server.Close()
-			clientConn := dialPassthroughLifecycleClient(t, server)
-			defer func() { _ = clientConn.CloseNow() }()
-
-			for range tt.events {
-				_, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-				require.NoError(t, err)
+				{
+					name: "usage_only_in_failed_tail",
+					events: []string{
+						`{"type":"error","error":{"code":"cyber_policy","message":"blocked by error event"}}`,
+						`{"type":"response.failed","response":{"id":"resp_error","error":{"code":"cyber_policy","message":"blocked by paired failed event"},"usage":{"input_tokens":9,"output_tokens":2}}}`,
+					},
+					wantBody:    `"type":"error"`,
+					wantMessage: "blocked by error event",
+					wantInput:   9,
+					wantOutput:  2,
+				},
+				{
+					name: "response_failed",
+					events: []string{
+						`{"type":"response.failed","response":{"id":"resp_failed","error":{"code":"cyber_policy","message":"blocked by failed event"},"usage":{"input_tokens":9,"output_tokens":2}}}`,
+					},
+					wantBody:    `"type":"response.failed"`,
+					wantMessage: "blocked by failed event",
+					wantInput:   9,
+					wantOutput:  2,
+				},
 			}
 
-			select {
-			case mark := <-markSeen:
-				require.Equal(t, "cyber_policy", mark.Code)
-				require.Equal(t, tt.wantMessage, mark.Message)
-				require.Contains(t, mark.Body, tt.wantBody)
-				require.Equal(t, http.StatusOK, mark.UpstreamStatus)
-				require.Equal(t, tt.wantInput, mark.UpstreamInTok)
-				require.Equal(t, tt.wantOutput, mark.UpstreamOutTok)
-			case <-time.After(3 * time.Second):
-				t.Fatal("cyber mark was not visible to AfterTurn")
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					controlCtx, cancelControl := context.WithCancelCause(context.Background())
+					defer cancelControl(context.Canceled)
+					upstream := newStagedPassthroughConn()
+					for _, event := range tt.events {
+						upstream.Send(strings.ReplaceAll(event, "cyber_policy", policyCode))
+					}
+
+					markSeen := make(chan CyberPolicyMark, 1)
+					afterTurnCalls := atomic.Int32{}
+					server, serverErr := startPassthroughLifecycleServerWithHooks(
+						t,
+						controlCtx,
+						newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream),
+						passthroughLifecycleAccount(),
+						func(c *gin.Context) *OpenAIWSIngressHooks {
+							return &OpenAIWSIngressHooks{AfterTurn: func(_ int, _ *OpenAIForwardResult, _ error) {
+								afterTurnCalls.Add(1)
+								if mark := GetOpsCyberPolicy(c); mark != nil {
+									select {
+									case markSeen <- *mark:
+									default:
+									}
+								}
+							}}
+						},
+					)
+					defer server.Close()
+					clientConn := dialPassthroughLifecycleClient(t, server)
+					defer func() { _ = clientConn.CloseNow() }()
+
+					for range tt.events {
+						_, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+						require.NoError(t, err)
+					}
+
+					select {
+					case mark := <-markSeen:
+						require.Equal(t, policyCode, mark.Code)
+						require.Equal(t, tt.wantMessage, mark.Message)
+						require.Contains(t, mark.Body, tt.wantBody)
+						require.Equal(t, http.StatusOK, mark.UpstreamStatus)
+						require.Equal(t, tt.wantInput, mark.UpstreamInTok)
+						require.Equal(t, tt.wantOutput, mark.UpstreamOutTok)
+					case <-time.After(3 * time.Second):
+						t.Fatal("cyber mark was not visible to AfterTurn")
+					}
+					require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+					select {
+					case <-serverErr:
+					case <-time.After(3 * time.Second):
+						t.Fatal("cyber passthrough test did not exit")
+					}
+					require.Equal(t, int32(1), afterTurnCalls.Load(), "error/response.failed pair must complete and record once")
+				})
 			}
-			require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
-			select {
-			case <-serverErr:
-			case <-time.After(3 * time.Second):
-				t.Fatal("cyber passthrough test did not exit")
-			}
-			require.Equal(t, int32(1), afterTurnCalls.Load(), "error/response.failed pair must complete and record once")
 		})
 	}
 }
@@ -417,32 +421,36 @@ func TestPassthroughLifecycle_NonCyberFailureKeepsAccountSideEffects(t *testing.
 }
 
 func TestPassthroughLifecycle_CyberSkipsFailureAccountSideEffects(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	controlCtx, cancelControl := context.WithCancelCause(context.Background())
-	defer cancelControl(context.Canceled)
-	upstream := newStagedPassthroughConn()
-	upstream.Send(`{"type":"response.failed","response":{"id":"resp_cyber_auth","error":{"type":"authentication_error","code":"cyber_policy","status_code":401,"message":"request blocked"}}}`)
-	repo := &openAIStream403AccountRepo{}
-	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
-	svc.rateLimitService = NewRateLimitService(repo, nil, svc.cfg, nil, nil)
-	account := passthroughLifecycleAccount()
+	for _, policyCode := range []string{OpenAIPolicyCyber, OpenAIPolicyBio} {
+		t.Run(policyCode, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			controlCtx, cancelControl := context.WithCancelCause(context.Background())
+			defer cancelControl(context.Canceled)
+			upstream := newStagedPassthroughConn()
+			upstream.Send(strings.ReplaceAll(`{"type":"response.failed","response":{"id":"resp_cyber_auth","error":{"type":"authentication_error","code":"cyber_policy","status_code":401,"message":"request blocked"}}}`, "cyber_policy", policyCode))
+			repo := &openAIStream403AccountRepo{}
+			svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
+			svc.rateLimitService = NewRateLimitService(repo, nil, svc.cfg, nil, nil)
+			account := passthroughLifecycleAccount()
 
-	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
-	defer server.Close()
-	clientConn := dialPassthroughLifecycleClient(t, server)
-	defer func() { _ = clientConn.CloseNow() }()
+			server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+			defer server.Close()
+			clientConn := dialPassthroughLifecycleClient(t, server)
+			defer func() { _ = clientConn.CloseNow() }()
 
-	event, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "response.failed", gjson.GetBytes(event, "type").String())
-	require.Zero(t, repo.setErrorCalls, "cyber_policy is request-scoped and must not cool down the account")
-	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+			event, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+			require.NoError(t, err)
+			require.Equal(t, "response.failed", gjson.GetBytes(event, "type").String())
+			require.Zero(t, repo.setErrorCalls, "cyber_policy is request-scoped and must not cool down the account")
+			require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 
-	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
-	select {
-	case <-serverErr:
-	case <-time.After(3 * time.Second):
-		t.Fatal("cyber side-effect test did not exit")
+			require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+			select {
+			case <-serverErr:
+			case <-time.After(3 * time.Second):
+				t.Fatal("cyber side-effect test did not exit")
+			}
+		})
 	}
 }
 

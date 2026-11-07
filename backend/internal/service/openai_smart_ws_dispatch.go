@@ -410,7 +410,12 @@ func smartWSUncertainError(err error) error {
 }
 
 func smartWSStopFailure(status int, body []byte, headers http.Header) *UpstreamFailoverError {
-	return &UpstreamFailoverError{StatusCode: status, ResponseBody: body, ResponseHeaders: headers, NextAccountAction: NextAccountStop}
+	failure := &UpstreamFailoverError{StatusCode: status, ResponseBody: body, ResponseHeaders: headers, NextAccountAction: NextAccountStop}
+	if hit, code, _ := detectOpenAICyberPolicy(body); hit {
+		failure.Scope = GatewayFailureScopeRequest
+		failure.Reason = GatewayFailureReason(code)
+	}
+	return failure
 }
 
 func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Account, resp *http.Response, payload []byte, upstreamModel ...string) error {
@@ -437,7 +442,8 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	appendOpsUpstreamError(c, event)
 	var usage OpenAIUsage
 	parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
-	if !markOpenAICyberPolicyEvent(c, payload, resp.StatusCode, &usage) {
+	isPolicy := markOpenAICyberPolicyEvent(c, payload, resp.StatusCode, &usage)
+	if !isPolicy {
 		if !isOpenAIHTTPWSResponse(resp) {
 			// A safe pre-dispatch fallback may have produced an actual HTTP
 			// business response. Preserve its original account policy.
@@ -464,7 +470,13 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 		contentType = "text/plain; charset=utf-8"
 	}
 	MarkResponseCommitted(c)
-	c.Data(resp.StatusCode, contentType, payload)
+	downstreamStatus := resp.StatusCode
+	if isPolicy {
+		downstreamStatus = openAISafetyPolicyHTTPStatus(downstreamStatus)
+	}
+	if !isPolicy || !writeOpenAICompactSSEBridge(c, downstreamStatus, payload) {
+		c.Data(downstreamStatus, contentType, payload)
+	}
 	c.Set(smartWSFailureDeliveredKey, true)
 	failure := smartWSStopFailure(resp.StatusCode, payload, resp.Header)
 	if isHandshake {

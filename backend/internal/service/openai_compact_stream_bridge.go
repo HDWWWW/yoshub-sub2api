@@ -101,7 +101,11 @@ func writeOpenAICompactSSEFailure(c *gin.Context, statusCode int, errorBody []by
 	if message == "" {
 		message = "Upstream compact request failed with HTTP " + strconv.Itoa(statusCode)
 	}
-	writeOpenAICompactSSEFailureMessage(c, statusCode, "upstream_error", message)
+	errorCode := "upstream_error"
+	if hit, code, _ := detectOpenAICyberPolicy(errorBody); hit {
+		errorCode = code
+	}
+	writeOpenAICompactSSEFailureMessage(c, statusCode, errorCode, message)
 }
 
 // writeOpenAICompactSSEFailureMessage 写出 response.failed 终止事件。Codex 对

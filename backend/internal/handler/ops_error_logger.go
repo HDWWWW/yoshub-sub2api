@@ -2041,7 +2041,7 @@ func inferResponsesFailedOpsErrorType(code string) string {
 	switch strings.TrimSpace(code) {
 	case "rate_limit_exceeded":
 		return "rate_limit_error"
-	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "content_policy":
+	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "bio_policy", "content_policy":
 		return "permission_error"
 	case "invalid_request", "context_length_exceeded":
 		return "invalid_request_error"
@@ -2063,7 +2063,7 @@ func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
 	switch strings.TrimSpace(parsed.Code) {
 	case "rate_limit_exceeded":
 		return http.StatusTooManyRequests
-	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "content_policy":
+	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "bio_policy", "content_policy":
 		return http.StatusForbidden
 	case "invalid_request", "context_length_exceeded":
 		return http.StatusBadRequest

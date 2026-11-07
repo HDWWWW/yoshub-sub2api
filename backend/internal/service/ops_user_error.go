@@ -58,6 +58,8 @@ func MapUserErrorCategory(phase, errType string) string {
 			return "invalid_request"
 		case "cyber_policy":
 			return "cyber"
+		case "bio_policy":
+			return "bio"
 		}
 	}
 	return "other"
@@ -84,6 +86,8 @@ func CategoryToFilter(category string) (phases []string, errorTypes []string) {
 		return nil, []string{"invalid_request_error"}
 	case "cyber":
 		return []string{"request"}, []string{"cyber_policy"}
+	case "bio":
+		return []string{"request"}, []string{"bio_policy"}
 	default:
 		return nil, nil
 	}

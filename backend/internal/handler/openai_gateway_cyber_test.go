@@ -234,3 +234,20 @@ func TestBuildCyberPolicyOpsErrorEntry_StatusCode(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildBioPolicyOpsErrorEntryPreservesClientAndUpstreamStatus(t *testing.T) {
+	for _, status := range []int{200, 502} {
+		mark := &service.CyberPolicyMark{
+			Code: service.OpenAIPolicyBio, Message: "biological risk", UpstreamStatus: status,
+			Body: `{"error":{"code":"bio_policy"}}`,
+		}
+		entry := buildCyberPolicyOpsErrorEntry(cyberPolicyOpsErrorMeta{ClientStatus: 400}, mark)
+		require.Equal(t, 400, entry.StatusCode)
+		require.NotNil(t, entry.UpstreamStatusCode)
+		require.Equal(t, status, *entry.UpstreamStatusCode)
+		require.Equal(t, service.OpenAIPolicyBio, entry.ErrorType)
+		require.Equal(t, "request", entry.ErrorPhase)
+		require.Equal(t, "bio_policy: biological risk", entry.ErrorMessage)
+		require.Contains(t, entry.ErrorBody, `"code":"bio_policy"`)
+	}
+}

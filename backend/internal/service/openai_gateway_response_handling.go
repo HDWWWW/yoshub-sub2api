@@ -1678,6 +1678,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
+	if policyErr := s.writeOpenAINonStreamingSafetyPolicyError(resp, c, account, body, &usageValue); policyErr != nil {
+		return nil, policyErr
+	}
 	backgroundAccepted := smartWSBackgroundAccepted(c)
 	if !usageOK && !backgroundAccepted {
 		if bodyLooksLikeSSE {
@@ -1757,11 +1760,15 @@ func bodyHasSSEFraming(body []byte) bool {
 
 func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	bodyText := string(body)
+	usage := s.parseSSEUsageFromBody(bodyText)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
 		if isOpenAIHTTPWSResponse(resp) {
 			failureResponse := openAIHTTPWSErrorResponse(c.Request, openAIHTTPWSEventErrorStatus(terminalPayload), resp.Header, terminalPayload)
 			return nil, s.writeSmartWSHTTPError(c, account, failureResponse, terminalPayload, mappedModel)
+		}
+		if policyErr := s.writeOpenAINonStreamingSafetyPolicyError(resp, c, account, terminalPayload, usage); policyErr != nil {
+			return nil, policyErr
 		}
 		msg := extractOpenAISSEErrorMessage(terminalPayload)
 		if msg == "" {
@@ -1777,7 +1784,6 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	}
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
-	usage := s.parseSSEUsageFromBody(bodyText)
 	if ok {
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
@@ -1996,6 +2002,25 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 		updated = next
 	}
 	return updated, !bytes.Equal(updated, payload)
+}
+
+// Handle explicit safety refusals before generic protocol validation or model
+// fallback. A buffered failed event is a client error even if upstream used 200.
+func (s *OpenAIGatewayService) writeOpenAINonStreamingSafetyPolicyError(resp *http.Response, c *gin.Context, account *Account, payload []byte, usage *OpenAIUsage) error {
+	if hit, _, _ := detectOpenAICyberPolicy(payload); !hit {
+		return nil
+	}
+	payload = s.redactAgentIdentitySensitiveBody(c.Request.Context(), account, payload)
+	markOpenAICyberPolicyEvent(c, payload, resp.StatusCode, usage)
+	mark := GetOpsCyberPolicy(c)
+	message := mark.Message
+	if message == "" {
+		message = openAISafetyPolicyMessage(mark.PolicyCode())
+	}
+	setOpsUpstreamError(c, resp.StatusCode, message, truncateString(string(payload), 2048))
+	MarkResponseCommitted(c)
+	writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, message)
+	return errOpenAICyberPolicyForwarded
 }
 
 func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.Response, c *gin.Context, message string) error {

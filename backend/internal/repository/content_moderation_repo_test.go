@@ -92,7 +92,7 @@ func TestContentModerationRepositoryCountFlaggedByUserSince_ExcludesCyberPolicyW
 
 	repo := NewContentModerationRepository(db)
 	since := time.Now().Add(-time.Hour)
-	mock.ExpectQuery(regexp.QuoteMeta("AND ($3::bool IS FALSE OR action <> 'cyber_policy')")).
+	mock.ExpectQuery(regexp.QuoteMeta("AND ($3::bool IS FALSE OR action NOT IN ('cyber_policy', 'bio_policy'))")).
 		WithArgs(int64(1001), since, true).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
 

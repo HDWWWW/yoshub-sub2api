@@ -100,7 +100,7 @@ func failureIdentifierStatus(identifier string) int {
 	case "invalid_request", "invalid_request_error", "bad_request_error", "invalid_argument", "invalid_value",
 		"unsupported_value", "invalid_prompt", "context_length_exceeded", "string_above_max_length",
 		"previous_response_not_found", "thinking_signature_invalid", "invalid_encrypted_content",
-		"cyber_policy", "content_policy_violation":
+		"cyber_policy", "bio_policy", "content_policy_violation":
 		return http.StatusBadRequest
 	case "authentication_error", "invalid_api_key", "token_expired":
 		return http.StatusUnauthorized
