@@ -19,12 +19,20 @@ import (
 
 const AccountRiskSettingKey = "account_risk_detection_v1"
 
+const (
+	accountRiskProbeCapacity = "capacity_probe"
+	accountRiskProbeSingle   = "single_probe"
+)
+
 var ErrAccountRiskBusy = errors.New("风控检测正在更新，请稍后重试")
 var ErrAccountRiskConflict = errors.New("配置已被修改，请刷新后重试")
 
 type AccountRiskConfig struct {
 	Enabled              bool   `json:"enabled"`
 	NotifyEnabled        bool   `json:"notify_enabled"`
+	CapacityNotifyOnly   bool   `json:"capacity_notify_only"`
+	ProbeNotifyOnly      bool   `json:"probe_notify_only"`
+	ModelMismatchAction  string `json:"model_mismatch_action"`
 	FirstBelowPercent    int    `json:"first_below_percent"`
 	SecondAtLeastPercent int    `json:"second_at_least_percent"`
 	SustainSeconds       int    `json:"sustain_seconds"`
@@ -36,11 +44,14 @@ type AccountRiskConfig struct {
 }
 
 func DefaultAccountRiskConfig() AccountRiskConfig {
-	return AccountRiskConfig{FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
+	return AccountRiskConfig{ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
 		ProbePrompt: "请只回复数字 21，不要输出其他内容。", ExpectedText: "21", Model: "gpt-6.1-sol", ReasoningEffort: "high"}
 }
 
 func (c AccountRiskConfig) Validate() error {
+	if !slices.Contains([]string{"", "off", "stop", "notify_only"}, c.ModelMismatchAction) {
+		return errors.New("模型响应不一致的处理方式无效")
+	}
 	if c.FirstBelowPercent < 1 || c.FirstBelowPercent > 100 || c.SecondAtLeastPercent < 1 || c.SecondAtLeastPercent > 100 || c.FirstBelowPercent > c.SecondAtLeastPercent {
 		return errors.New("容量阈值须为 1–100%，第一账号阈值不能大于第二账号阈值")
 	}
@@ -84,6 +95,8 @@ type AccountRiskObservation struct {
 	// Changes of identity, capacity, order, worker or sample continuity reset the timer.
 	Signature string `json:"signature,omitempty"`
 	Worker    string `json:"worker,omitempty"`
+	// Keep the probe cooldown across interruptions in the capacity anomaly.
+	ProbeSignature string `json:"probe_signature,omitempty"`
 }
 
 type AccountRiskEvent struct {
@@ -92,6 +105,9 @@ type AccountRiskEvent struct {
 	AccountID      int64      `json:"account_id"`
 	AccountName    string     `json:"account_name,omitempty"`
 	Reason         string     `json:"reason"`
+	Kind           string     `json:"kind,omitempty"`
+	Action         string     `json:"action,omitempty"`
+	Occurrences    int        `json:"occurrences,omitempty"`
 	Notification   string     `json:"notification,omitempty"`
 	NotificationAt *time.Time `json:"notification_at,omitempty"`
 }
@@ -110,6 +126,7 @@ type AccountRiskPending struct {
 	AccountID int64     `json:"account_id"`
 	Revision  int64     `json:"revision"`
 	ExpiresAt time.Time `json:"expires_at"`
+	Kind      string    `json:"kind,omitempty"`
 }
 
 type AccountRiskState struct {
@@ -126,6 +143,7 @@ type AccountRiskStore interface {
 
 type accountRiskAccounts interface {
 	ListByGroup(context.Context, int64) ([]Account, error)
+	GetByID(context.Context, int64) (*Account, error)
 }
 type accountRiskGroups interface {
 	GetByID(context.Context, int64) (*Group, error)
@@ -145,22 +163,23 @@ type accountRiskProber interface {
 }
 
 type AccountRiskService struct {
-	store     AccountRiskStore
-	accounts  accountRiskAccounts
-	groups    accountRiskGroups
-	loads     accountRiskLoads
-	probe     accountRiskProber
-	notifier  accountRiskNotifier
-	cfg       *config.Config
-	worker    string
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	startOnce sync.Once
-	stopOnce  sync.Once
+	store            AccountRiskStore
+	accounts         accountRiskAccounts
+	groups           accountRiskGroups
+	loads            accountRiskLoads
+	probe            accountRiskProber
+	notifier         accountRiskNotifier
+	notificationWake chan struct{}
+	cfg              *config.Config
+	worker           string
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	startOnce        sync.Once
+	stopOnce         sync.Once
 }
 
 func NewAccountRiskService(store AccountRiskStore, accounts AccountRepository, groups GroupRepository, loads *ConcurrencyService, probe *AccountTestService, cfg *config.Config) *AccountRiskService {
-	return &AccountRiskService{store: store, accounts: accounts, groups: groups, loads: loads, probe: probe, cfg: cfg, worker: uuid.NewString()}
+	return &AccountRiskService{store: store, accounts: accounts, groups: groups, loads: loads, probe: probe, cfg: cfg, worker: uuid.NewString(), notificationWake: make(chan struct{}, 1)}
 }
 
 func (s *AccountRiskService) Start() {
@@ -297,6 +316,7 @@ type accountRiskJob struct {
 	account   Account
 	config    AccountRiskConfig
 	signature string
+	reason    string
 }
 
 func riskAccountSignature(a *Account) string {
@@ -314,7 +334,7 @@ func riskReset(o *AccountRiskObservation, mode, message string) {
 
 func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountRiskJob, error) {
 	var job *accountRiskJob
-	err := s.store.Update(ctx, func(state *AccountRiskState, stop AccountRiskStop) error {
+	err := s.store.Update(ctx, func(state *AccountRiskState, _ AccountRiskStop) error {
 		if state.Pending != nil && !state.Pending.ExpiresAt.After(now) {
 			if r := state.Rules[state.Pending.GroupID]; r != nil {
 				r.Observation.LastProbeResult = "检测中断，未据此停调度"
@@ -359,19 +379,21 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 				}
 				riskReset(o, "single", "单账号定时检测")
 				o.Signature = sig
+				o.ProbeSignature = sig
 				o.First = &AccountRiskLoad{AccountID: a.ID, Name: a.Name, Priority: a.SchedulingPriority(), Capacity: a.Concurrency}
 				if state.Pending != nil || o.NextProbeAt == nil || o.NextProbeAt.After(now) {
 					continue
 				}
-				pending := AccountRiskPending{ID: uuid.NewString(), GroupID: id, AccountID: a.ID, Revision: r.Revision, ExpiresAt: now.Add(120 * time.Second)}
-				state.Pending = &pending
-				o.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+				job = reserveAccountRiskProbe(state, r, a, sig, accountRiskProbeSingle, "", now)
 				o.Message = "正在发送单账号测试"
-				job = &accountRiskJob{pending: pending, account: a, config: r.Config, signature: sig}
 				continue
 			}
-			o.NextProbeAt = nil
 			first, second := &pool[0], &pool[1]
+			sig := riskAccountSignature(first) + riskAccountSignature(second)
+			if o.ProbeSignature != sig {
+				o.NextProbeAt = nil
+				o.ProbeSignature = sig
+			}
 			if first.SchedulingPriority() == second.SchedulingPriority() {
 				riskReset(o, "waiting", "前两账号优先级相同，不判定容量异常")
 				continue
@@ -391,7 +413,6 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 			}
 			o.First = toLoad(first)
 			o.Second = toLoad(second)
-			sig := riskAccountSignature(first) + riskAccountSignature(second)
 			matched := o.First.Percent < float64(r.Config.FirstBelowPercent) && o.Second.Percent >= float64(r.Config.SecondAtLeastPercent) && o.First.Used >= 0 && o.Second.Used >= 0
 			if !matched {
 				riskReset(o, "capacity", "容量正常，未连续满足触发条件")
@@ -408,16 +429,17 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 			if now.Sub(*o.AnomalySince) < time.Duration(r.Config.SustainSeconds)*time.Second {
 				continue
 			}
-			changed, err := stop(id, first)
-			if err != nil {
-				return err
+			if state.Pending != nil {
+				o.Message = "容量异常已确认，等待消息复测完成"
+				continue
 			}
-			if changed {
-				reason := fmt.Sprintf("容量异常持续 %d 秒：首位 %.1f%% < %d%%，次位 %.1f%% ≥ %d%%，已关闭首位账号调度", r.Config.SustainSeconds, o.First.Percent, r.Config.FirstBelowPercent, o.Second.Percent, r.Config.SecondAtLeastPercent)
-				riskRecordStop(r, first, now, reason)
-			} else {
-				riskReset(o, "waiting", "账号已变化，重新采样")
+			if o.NextProbeAt != nil && o.NextProbeAt.After(now) {
+				o.Message = "容量异常持续，等待下次消息复测"
+				continue
 			}
+			reason := fmt.Sprintf("容量异常持续 %d 秒：首位 %.1f%% < %d%%，次位 %.1f%% ≥ %d%%", r.Config.SustainSeconds, o.First.Percent, r.Config.FirstBelowPercent, o.Second.Percent, r.Config.SecondAtLeastPercent)
+			job = reserveAccountRiskProbe(state, r, *first, sig, accountRiskProbeCapacity, reason, now)
+			o.Message = "容量异常已确认，正在按下方配置复测首位账号"
 		}
 		return nil
 	})
@@ -425,6 +447,38 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 		return nil, err
 	}
 	return job, nil
+}
+
+func reserveAccountRiskProbe(state *AccountRiskState, r *AccountRiskRule, account Account, signature, kind, reason string, now time.Time) *accountRiskJob {
+	pending := AccountRiskPending{ID: uuid.NewString(), GroupID: r.GroupID, AccountID: account.ID, Revision: r.Revision, ExpiresAt: now.Add(120 * time.Second), Kind: kind}
+	state.Pending = &pending
+	r.Observation.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+	return &accountRiskJob{pending: pending, account: account, config: r.Config, signature: signature, reason: reason}
+}
+
+// A capacity probe belongs to the same ordered pair that triggered it. A
+// single-account probe remains valid only while that account is the sole target.
+func (s *AccountRiskService) probeAccount(ctx context.Context, job *accountRiskJob, now time.Time) (*Account, error) {
+	pool, err := s.candidates(ctx, job.pending.GroupID, now)
+	if err != nil {
+		return nil, err
+	}
+	if len(pool) == 0 || pool[0].ID != job.account.ID {
+		return nil, errors.New("account changed")
+	}
+	signature := riskAccountSignature(&pool[0])
+	if job.pending.Kind == accountRiskProbeCapacity {
+		if len(pool) < 2 {
+			return nil, errors.New("capacity pair changed")
+		}
+		signature += riskAccountSignature(&pool[1])
+	} else if len(pool) != 1 {
+		return nil, errors.New("single account pool changed")
+	}
+	if signature != job.signature {
+		return nil, errors.New("account identity or priority changed")
+	}
+	return &pool[0], nil
 }
 
 func riskAfter(now time.Time, seconds int) *time.Time {
@@ -453,11 +507,7 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 		err = errors.New("configuration changed")
 	}
 	if err == nil {
-		var pool []Account
-		pool, err = s.candidates(ctx, job.pending.GroupID, time.Now())
-		if err == nil && (len(pool) != 1 || pool[0].ID != job.account.ID || riskAccountSignature(&pool[0]) != job.signature) {
-			err = errors.New("account changed")
-		}
+		_, err = s.probeAccount(ctx, job, time.Now())
 	}
 	if err == nil {
 		var slot *AcquireResult
@@ -491,7 +541,8 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 }
 
 func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJob, result AccountRiskProbeResult, probeErr error, now time.Time) error {
-	return s.store.Update(ctx, func(state *AccountRiskState, stop AccountRiskStop) error {
+	recorded := false
+	err := s.store.Update(ctx, func(state *AccountRiskState, stop AccountRiskStop) error {
 		if state.Pending == nil || state.Pending.ID != job.pending.ID {
 			return nil
 		}
@@ -502,32 +553,56 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		}
 		o := &r.Observation
 		o.LastProbeAt = &now
-		o.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+		if o.ProbeSignature == job.signature {
+			o.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+		}
 		o.InputTokens = result.InputTokens
 		o.OutputTokens = result.OutputTokens
 		if probeErr != nil || !result.Completed {
 			o.LastProbeResult = "检测未完成（网络、上游错误或账号繁忙），未据此停调度"
 			return nil
 		}
+		account, err := s.probeAccount(ctx, job, now)
+		if err != nil {
+			o.LastProbeResult = "账号或分组已变化，本次结果作废"
+			return nil
+		}
 		if strings.Contains(result.Text, r.Config.ExpectedText) {
 			o.LastProbeResult = "回复包含期望内容，检测通过"
 			return nil
 		}
-		pool, err := s.candidates(ctx, r.GroupID, now)
-		if err != nil || len(pool) != 1 || pool[0].ID != job.account.ID || riskAccountSignature(&pool[0]) != job.signature {
-			o.LastProbeResult = "账号或分组已变化，本次结果作废"
+		kind, notifyOnly := accountRiskProbeSingle, r.Config.ProbeNotifyOnly
+		reason := "完整回复不含期望内容"
+		if job.pending.Kind == accountRiskProbeCapacity {
+			kind, notifyOnly = accountRiskProbeCapacity, r.Config.CapacityNotifyOnly
+			reason = job.reason + "；消息复测完整回复不含期望内容"
+		}
+		if notifyOnly {
+			o.LastProbeResult = reason + "，仅提醒，未停止调度"
+			event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: account.ID, AccountName: riskNotificationName(account.Name), Reason: o.LastProbeResult, Kind: kind, Action: "notify_only", Notification: "pending"}
+			r.Events = append([]AccountRiskEvent{event}, r.Events...)
+			if len(r.Events) > 50 {
+				r.Events = r.Events[:50]
+			}
+			recorded = true
 			return nil
 		}
-		changed, err := stop(r.GroupID, &pool[0])
+		changed, err := stop(r.GroupID, account)
 		if err != nil {
 			return err
 		}
 		if changed {
-			o.LastProbeResult = "完整回复不含期望内容，已关闭账号调度"
-			riskRecordStop(r, &job.account, now, o.LastProbeResult)
+			o.LastProbeResult = reason + "，已关闭账号调度"
+			riskRecordStop(r, account, now, o.LastProbeResult)
+			r.Events[0].Kind, r.Events[0].Action = kind, "stop"
+			recorded = true
 		} else {
 			o.LastProbeResult = "账号已变化，本次结果作废"
 		}
 		return nil
 	})
+	if err == nil && recorded {
+		s.wakeNotifications()
+	}
+	return err
 }

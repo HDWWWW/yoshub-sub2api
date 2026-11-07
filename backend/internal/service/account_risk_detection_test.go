@@ -63,6 +63,15 @@ func (a *riskTestAccounts) ListByGroup(context.Context, int64) ([]Account, error
 	return a.pool, a.err
 }
 
+func (a *riskTestAccounts) GetByID(_ context.Context, id int64) (*Account, error) {
+	for _, account := range a.pool {
+		if account.ID == id {
+			return &account, a.err
+		}
+	}
+	return nil, a.err
+}
+
 type riskTestGroups struct {
 	reverse  bool
 	inactive bool
@@ -103,13 +112,17 @@ func (l *riskTestLoads) AcquireAccountSlot(context.Context, int64, int) (*Acquir
 }
 
 type riskTestProbe struct {
-	calls  int
-	result AccountRiskProbeResult
-	err    error
+	calls         int
+	result        AccountRiskProbeResult
+	err           error
+	lastConfig    AccountRiskConfig
+	lastAccountID int64
 }
 
-func (p *riskTestProbe) RunRiskProbe(context.Context, *Account, AccountRiskConfig) (AccountRiskProbeResult, error) {
+func (p *riskTestProbe) RunRiskProbe(_ context.Context, account *Account, config AccountRiskConfig) (AccountRiskProbeResult, error) {
 	p.calls++
+	p.lastConfig = config
+	p.lastAccountID = account.ID
 	return p.result, p.err
 }
 
@@ -132,8 +145,11 @@ func TestAccountRiskContinuousCapacity(t *testing.T) {
 		require.Nil(t, job)
 		require.Empty(t, store.stopped)
 	}
-	_, err := s.tick(context.Background(), now.Add(10*time.Second))
+	job, err := s.tick(context.Background(), now.Add(10*time.Second))
 	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Empty(t, store.stopped, "capacity alone must never stop scheduling")
+	require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(11*time.Second)))
 	require.Equal(t, []int64{1}, store.stopped)
 	require.Contains(t, store.state.Rules[7].Events[0].Reason, "59.0%")
 }
@@ -184,8 +200,14 @@ func TestAccountRiskResetsAndNeverStopsOnUnknown(t *testing.T) {
 			case "unlimited":
 				accounts.pool[0].Concurrency = 0
 			}
-			_, err := s.tick(ctx, tick)
+			job, err := s.tick(ctx, tick)
 			require.NoError(t, err)
+			if kind == "CAS change" {
+				require.NotNil(t, job)
+				require.NoError(t, s.finishProbe(ctx, job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, tick.Add(time.Second)))
+			} else {
+				require.Nil(t, job)
+			}
 			require.Empty(t, store.stopped)
 		})
 	}

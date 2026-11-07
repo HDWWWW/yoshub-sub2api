@@ -3,6 +3,9 @@ import { apiClient } from '../client'
 export interface AccountRiskConfig {
   enabled: boolean
   notify_enabled: boolean
+  capacity_notify_only: boolean
+  probe_notify_only: boolean
+  model_mismatch_action: 'off' | 'stop' | 'notify_only'
   first_below_percent: number
   second_at_least_percent: number
   sustain_seconds: number
@@ -39,7 +42,7 @@ export interface AccountRiskRule {
     input_tokens: number
     output_tokens: number
   }
-  events: { id?: string; at: string; account_id: number; reason: string; notification?: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
+  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'stop' | 'notify_only'; occurrences?: number; notification?: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
 }
 export const accountRiskAPI = {
   async get(groupID: number): Promise<AccountRiskRule> {

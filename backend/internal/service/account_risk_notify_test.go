@@ -46,10 +46,17 @@ func TestAccountRiskNotificationCapacityAndDefaultOff(t *testing.T) {
 		s.notifier = n
 		store.state.Rules[7].Config.NotifyEnabled = enabled
 		accounts.pool[0].Name = "priority account"
+		var job *accountRiskJob
 		for sec := 0; sec <= 10; sec++ {
-			_, err := s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+			current, err := s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
 			require.NoError(t, err)
+			if current != nil {
+				job = current
+			}
 		}
+		require.NotNil(t, job)
+		require.Empty(t, store.stopped)
+		require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(11*time.Second)))
 		require.Equal(t, []int64{1}, store.stopped)
 		require.Empty(t, n.messages, "no network sends inside the stop transaction")
 		require.NoError(t, s.deliverNotification(context.Background(), now.Add(11*time.Second)))

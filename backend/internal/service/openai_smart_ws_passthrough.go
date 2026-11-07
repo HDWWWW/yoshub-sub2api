@@ -16,13 +16,15 @@ import (
 // the client, not upstream completion alone, determines the final outcome.
 type smartWSNativeObserver struct {
 	openaiwsv2.FrameConn
-	s        *OpenAIGatewayService
-	c        *gin.Context
-	dispatch *smartWSDispatch
-	mu       sync.Mutex
-	current  *smartWSObservation
-	turns    int
-	openedAt time.Time
+	s         *OpenAIGatewayService
+	c         *gin.Context
+	account   *Account
+	riskModel *upstreamResponseModelObserver
+	dispatch  *smartWSDispatch
+	mu        sync.Mutex
+	current   *smartWSObservation
+	turns     int
+	openedAt  time.Time
 }
 
 func (w *smartWSNativeObserver) WriteFrame(ctx context.Context, typ coderws.MessageType, payload []byte) error {
@@ -37,6 +39,13 @@ func (w *smartWSNativeObserver) WriteFrame(ctx context.Context, typ coderws.Mess
 				"upstream connection reached maximum lifetime; new turn was not dispatched", nil)
 		}
 		w.current = w.s.beginSmartWSObservation(nil)
+		sentModel := gjson.GetBytes(payload, "model").String()
+		if sentModel == "" && w.c != nil {
+			// Follow-up frames may inherit the session model. The policy adapter
+			// records the effective model before dispatching each accepted turn.
+			sentModel = w.c.GetString(OpsUpstreamModelKey)
+		}
+		w.riskModel = w.s.newAccountRiskModelObserver(ctx, w.c, w.account, sentModel)
 		w.current.reused = w.turns > 0
 		w.current.dispatched = true
 		w.turns++
@@ -53,10 +62,14 @@ func (w *smartWSNativeObserver) ReadFrame(ctx context.Context) (coderws.MessageT
 	if err == nil {
 		w.mu.Lock()
 		w.current.event(payload)
+		riskModel := w.riskModel
 		if w.current != nil {
 			w.dispatch.state.Store(smartWSReceived)
 		}
 		w.mu.Unlock()
+		if riskModel != nil {
+			riskModel.ObserveOpenAI(payload, gjson.GetBytes(payload, "type").String())
+		}
 	}
 	return typ, payload, err
 }

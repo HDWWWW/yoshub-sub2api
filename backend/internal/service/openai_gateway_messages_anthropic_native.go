@@ -50,6 +50,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	SetOpsUpstreamModel(c, upstreamModel)
 	if upstreamModel != originalModel {
 		rewritten, err := sjson.SetBytes(body, "model", upstreamModel)
 		if err != nil {

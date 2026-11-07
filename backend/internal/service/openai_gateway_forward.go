@@ -25,7 +25,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		returnErr = stopSmartWSReplay(c, returnErr)
 		finishSmartWSObservation(c, result, returnErr)
 	}()
-	beginUpstreamResponseModelObservation(c)
+	s.beginAccountRiskModelObservation(ctx, c, account)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")

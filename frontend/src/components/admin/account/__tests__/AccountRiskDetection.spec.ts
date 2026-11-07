@@ -8,7 +8,7 @@ vi.mock('@/api/admin/accountRisk', () => ({ accountRiskAPI: { get, save } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const baseline: AccountRiskRule = {
   group_id: 7, revision: 3,
-  config: { enabled: false, notify_enabled: false, first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
+  config: { enabled: false, notify_enabled: false, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
@@ -26,7 +26,7 @@ describe('account risk detection', () => {
     await w.get('[data-testid="risk-notify-enabled"]').setValue(true)
     for (const [field, value] of Object.entries({ first: 55, second: 95, duration: 17, interval: 420, model: 'gpt-6-astra', effort: 'xhigh', prompt: 'Compute three times seven', expected: '21' })) await w.get(`[data-testid="risk-${field}"]`).setValue(value)
     await w.get('form').trigger('submit'); await flushPromises()
-    expect(save).toHaveBeenCalledWith(7, 3, { enabled: true, notify_enabled: true, first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
+    expect(save).toHaveBeenCalledWith(7, 3, { enabled: true, notify_enabled: true, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
     expect(w.get('[role="status"]').text()).toContain('saved'); w.unmount()
   })
   it.each([['first', 0], ['second', 101], ['duration', 0], ['interval', 9], ['prompt', ''], ['expected', ''], ['model', '']])('blocks invalid %s', async (field, value) => {
@@ -76,9 +76,42 @@ describe('account risk detection', () => {
   })
   it('defaults a legacy missing notification setting to off', async () => {
     const old = structuredClone(baseline)
-    Reflect.deleteProperty(old.config, 'notify_enabled'); get.mockResolvedValue(old)
+    Reflect.deleteProperty(old.config, 'notify_enabled'); Reflect.deleteProperty(old.config, 'model_mismatch_action'); get.mockResolvedValue(old)
+    Reflect.deleteProperty(old.config, 'capacity_notify_only'); Reflect.deleteProperty(old.config, 'probe_notify_only')
     const w = await open(); await w.get('form').trigger('submit'); await flushPromises()
-    expect(save.mock.calls[0]?.[2].notify_enabled).toBe(false); w.unmount()
+    expect(save.mock.calls[0]?.[2].notify_enabled).toBe(false)
+    expect(save.mock.calls[0]?.[2].capacity_notify_only).toBe(false)
+    expect(save.mock.calls[0]?.[2].probe_notify_only).toBe(false)
+    expect(save.mock.calls[0]?.[2].model_mismatch_action).toBe('off'); w.unmount()
+  })
+  it.each(['stop', 'notify_only', 'off'])('saves model mismatch action %s independently of legacy notifications', async action => {
+    const w = await open()
+    await w.get('[data-testid="risk-enabled"]').setValue(true)
+    await w.get('[data-testid="risk-model-mismatch-action"]').setValue(action)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ enabled: true, notify_enabled: false, model_mismatch_action: action })
+    await w.get('[data-testid="risk-group"]').setValue(8); await flushPromises()
+    expect((w.get('[data-testid="risk-model-mismatch-action"]').element as HTMLSelectElement).value).toBe('off')
+    w.unmount()
+  })
+  it('labels a notify-only event without implying scheduling was stopped', async () => {
+    get.mockResolvedValue({ ...structuredClone(baseline), events: [{ at: new Date().toISOString(), account_id: 1, reason: 'model mismatch', action: 'notify_only', kind: 'model_mismatch', occurrences: 3, notification: 'sent' }] })
+    const w = await open()
+    expect(w.get('[data-testid="risk-event-action"]').text()).toBe('accountRisk.action.notify_only')
+    expect(w.text()).toContain('accountRisk.occurrences')
+    w.unmount()
+  })
+  it.each([[true, false], [false, true], [true, true]])('saves capacity-only notification %s and scheduled-only notification %s independently', async (capacity, probe) => {
+    const w = await open()
+    await w.get('[data-testid="risk-capacity-notify-only"]').setValue(capacity)
+    await w.get('[data-testid="risk-probe-notify-only"]').setValue(probe)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ capacity_notify_only: capacity, probe_notify_only: probe, notify_enabled: false, model_mismatch_action: 'off' })
+    get.mockResolvedValueOnce({ ...structuredClone(baseline), config: save.mock.calls[0]?.[2] })
+    await w.get('[data-testid="risk-group"]').setValue(8); await flushPromises()
+    expect((w.get('[data-testid="risk-capacity-notify-only"]').element as HTMLInputElement).checked).toBe(capacity)
+    expect((w.get('[data-testid="risk-probe-notify-only"]').element as HTMLInputElement).checked).toBe(probe)
+    w.unmount()
   })
   it('a stale refresh cannot overwrite a newly saved notification setting', async () => {
     vi.useFakeTimers(); const w = await open()

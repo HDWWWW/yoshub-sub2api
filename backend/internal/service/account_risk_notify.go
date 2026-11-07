@@ -73,6 +73,13 @@ func riskNotificationName(name string) string {
 	return string(runes)
 }
 
+func (s *AccountRiskService) wakeNotifications() {
+	select {
+	case s.notificationWake <- struct{}{}:
+	default:
+	}
+}
+
 func (s *AccountRiskService) notificationLoop(ctx context.Context) {
 	defer s.wg.Done()
 	ticker := time.NewTicker(time.Second)
@@ -82,6 +89,8 @@ func (s *AccountRiskService) notificationLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			_ = s.deliverNotification(ctx, time.Now().UTC())
+		case <-s.notificationWake:
 			_ = s.deliverNotification(ctx, time.Now().UTC())
 		}
 	}
@@ -108,7 +117,7 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 						e.Notification = "unknown"
 					}
 				}
-				if e.Notification == "pending" && (!r.Config.Enabled || !r.Config.NotifyEnabled) {
+				if e.Notification == "pending" && !riskEventNotificationEnabled(r.Config, *e) {
 					e.Notification = "cancelled"
 				}
 			}
@@ -142,7 +151,14 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 	if g, err := s.groups.GetByID(sendCtx, groupID); err == nil && g != nil {
 		groupName = riskNotificationName(g.Name)
 	}
-	content := fmt.Sprintf("SUB2API 风控检测告警\n分组：#%d %s\n账号：#%d %s\n时间：%s\n原因：%s\n处理：已关闭此账号调度，现有请求继续完成。", groupID, groupName, event.AccountID, event.AccountName, event.At.Format(time.RFC3339), event.Reason)
+	action := "已关闭此账号调度，现有请求继续完成。"
+	if event.Action == "notify_only" {
+		action = "仅通知，未因本次异常停止账号调度。"
+	}
+	content := fmt.Sprintf("SUB2API 风控检测告警\n分组：#%d %s\n账号：#%d %s\n时间：%s\n原因：%s\n处理：%s", groupID, groupName, event.AccountID, event.AccountName, event.At.Format(time.RFC3339), event.Reason, action)
+	if event.Occurrences > 1 {
+		content += fmt.Sprintf("\n合并异常次数：%d", event.Occurrences)
+	}
 	status := "failed"
 	if s.notifier != nil && s.notifier.SendRiskNotification(sendCtx, groupID, content) == nil {
 		status = "sent"

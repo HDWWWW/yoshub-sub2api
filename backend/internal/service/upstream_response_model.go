@@ -14,7 +14,8 @@ const (
 
 // upstreamResponseModelObserver tracks one forwarding attempt (or one WS turn).
 // A terminal declaration wins over an earlier declaration; otherwise the first
-// declaration is retained. Observation never affects the forwarding path.
+// declaration is retained. An optional risk hook can stop future scheduling;
+// the in-flight response and its model audit are still forwarded normally.
 //
 // Billing normally ignores the observed model as well; the only exception is a
 // channel explicitly configured with billing_model_source = response_model,
@@ -29,6 +30,7 @@ type upstreamResponseModelObserver struct {
 	first    string
 	terminal string
 	conflict bool
+	onModel  func(string)
 
 	// firstTier holds the first non-terminal tier declaration; it is discarded
 	// when later non-terminal declarations disagree. terminalTier comes from a
@@ -42,6 +44,9 @@ func (o *upstreamResponseModelObserver) Observe(model string, terminal bool) {
 	model = normalizeObservedUpstreamResponseModel(model)
 	if model == "" {
 		return
+	}
+	if o.onModel != nil {
+		o.onModel(model)
 	}
 	current := o.Model()
 	if current != "" && !strings.EqualFold(current, model) {
@@ -188,6 +193,9 @@ func (o *upstreamResponseModelObserver) Conflict() bool {
 func beginUpstreamResponseModelObservation(c *gin.Context) *upstreamResponseModelObserver {
 	observer := &upstreamResponseModelObserver{}
 	if c != nil {
+		if callback, ok := c.Get(accountRiskModelObserverKey); ok {
+			observer.onModel, _ = callback.(func(string))
+		}
 		c.Set(upstreamResponseModelObserverContextKey, observer)
 	}
 	return observer

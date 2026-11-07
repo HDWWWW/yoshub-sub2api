@@ -459,6 +459,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/responses")
 	SetOpsUpstreamModel(c, model)
+	riskModelObserver := s.newAccountRiskModelObserver(ctx, c, account, model)
 	sent := time.Now()
 	resp, lease, proxyURL, err := s.doExcelBPSRequest(requestCtx, c, account, scope, upstreamBody, token, accountID, requestAcquire)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(sent).Milliseconds())
@@ -694,6 +695,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				ms := int(time.Since(start).Milliseconds())
 				result.FirstTokenMs = &ms
 			}
+			riskModelObserver.ObserveOpenAI(payload, kind)
 			switch kind {
 			case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
 				bridgeFailure = basispoints.ParseBridgeFailure(payload)

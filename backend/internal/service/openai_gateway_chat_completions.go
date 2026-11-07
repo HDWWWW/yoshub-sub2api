@@ -81,7 +81,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	rememberOpenCodeInboundBody(c, body)
 	wsScope, _ := resolveOpenAIWSExecutionScope(c, body, getAPIKeyIDFromContext(c))
 	c.Set(openAIHTTPWSExecutionScopeKey, wsScope)
-	beginUpstreamResponseModelObservation(c)
+	s.beginAccountRiskModelObservation(ctx, c, account)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")

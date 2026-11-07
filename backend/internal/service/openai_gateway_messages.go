@@ -43,7 +43,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		body = sanitized
 	}
 	rememberOpenCodeInboundBody(c, body)
-	beginUpstreamResponseModelObservation(c)
+	s.beginAccountRiskModelObservation(ctx, c, account)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if s.shouldUseExcelBPSCompat(ctx, account, body, defaultMappedModel) {
 		return s.forwardExcelBPSCompat(ctx, c, account, body, defaultMappedModel, true)
@@ -331,6 +331,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	SetOpsUpstreamModel(c, upstreamModel)
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
 	grokCacheIdentity := ""
 	if account.Platform == PlatformGrok {
@@ -839,6 +840,13 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 	prior := newOpenAICompatPriorModelAudit(account)
 	recordPrior := func(event *apicompat.ResponsesStreamEvent) {
 		prior.record(event)
+		// Buffered compatibility requests detect the first model declaration
+		// while retaining their existing final-model audit rules.
+		if observer := upstreamResponseModelObserverFromContext(c); observer != nil && observer.onModel != nil && event != nil && event.Response != nil {
+			if model := normalizeObservedUpstreamResponseModel(event.Response.Model); model != "" {
+				observer.onModel(model)
+			}
+		}
 	}
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)

@@ -38,7 +38,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	if s == nil || account == nil {
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
-	responseModelObserver := &upstreamResponseModelObserver{}
+	responseModelObserver := s.newAccountRiskModelObserver(ctx, c, account, mappedModel)
 	observation := s.beginSmartWSObservation(nil)
 	defer func() { observation.finish(ctx, forwardResult, forwardErr) }()
 

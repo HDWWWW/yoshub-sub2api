@@ -66,7 +66,7 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 		ResponseHeaders: cloneHeader(resp.Header), ServiceTier: extractOpenAIServiceTierFromBody(body),
 		ReasoningEffort:          extractOpenAIReasoningEffortFromBody(body, upstreamModel, model),
 		RequestedReasoningEffort: CanonicalRequestedReasoningEffort(body, model, upstreamModel)}
-	modelObserver := &upstreamResponseModelObserver{}
+	modelObserver := s.newAccountRiskModelObserver(ctx, c, account, upstreamModel)
 	imageCounter := newOpenAIImageOutputCounter()
 	replayCollector := &openAIWSToolCallReplayCollector{}
 	defer func() {

@@ -1881,7 +1881,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		return nil, writeExcelOAuthRouteError(c)
 	}
 	direct := usesCodexDirectImages(upstreamModel) && !isOpenAIImagesForceResponses(ctx)
-	beginUpstreamResponseModelObservation(c)
+	s.beginAccountRiskModelObservation(ctx, c, account)
 	SetOpsUpstreamModel(c, upstreamModel)
 	uploadParts := make([]string, 0, len(parsed.Uploads))
 	for _, upload := range parsed.Uploads {

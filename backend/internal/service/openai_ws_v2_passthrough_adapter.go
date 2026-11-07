@@ -1188,7 +1188,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			cancel()
 		},
 	}
-	nativeObserver := &smartWSNativeObserver{FrameConn: relayUpstreamFrameConn, s: s, c: c, dispatch: beginSmartWSDispatch(c)}
+	nativeObserver := &smartWSNativeObserver{FrameConn: relayUpstreamFrameConn, s: s, c: c, account: account, dispatch: beginSmartWSDispatch(c)}
 	defer func() { nativeObserver.finish(ctx, returnErr); returnErr = stopSmartWSReplay(c, returnErr) }()
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())

@@ -25,6 +25,17 @@
             <p class="text-xs text-gray-500">{{ t('accountRisk.notifyHint') }}</p>
             <p class="text-xs" :class="view.webhook_status === 'ready' ? 'text-green-600' : 'text-amber-600'" data-testid="risk-webhook-status">{{ t(`accountRisk.webhook.${view.webhook_status || 'unavailable'}`) }}</p>
           </section>
+          <section class="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-600" data-testid="risk-model-mismatch-settings">
+            <label class="block">
+              <span class="input-label">{{ t('accountRisk.modelMismatchTitle') }}</span>
+              <select v-model="draft.model_mismatch_action" class="input" data-testid="risk-model-mismatch-action">
+                <option value="off">{{ t('accountRisk.modelMismatchOff') }}</option>
+                <option value="stop">{{ t('accountRisk.modelMismatchStop') }}</option>
+                <option value="notify_only">{{ t('accountRisk.modelMismatchNotifyOnly') }}</option>
+              </select>
+            </label>
+            <p class="text-xs text-gray-500">{{ t('accountRisk.modelMismatchHint') }}</p>
+          </section>
           <section class="space-y-3">
             <h3 class="text-sm font-semibold">{{ t('accountRisk.multiTitle') }}</h3>
             <p class="text-xs text-gray-500">{{ t('accountRisk.multiHint') }}</p>
@@ -33,10 +44,18 @@
               <label><span class="input-label">{{ t('accountRisk.secondThreshold') }}</span><input v-model.number="draft.second_at_least_percent" class="input" data-testid="risk-second" type="number" min="1" max="100" step="1" required /></label>
               <label><span class="input-label">{{ t('accountRisk.duration') }}</span><input v-model.number="draft.sustain_seconds" class="input" data-testid="risk-duration" type="number" min="1" max="3600" step="1" required /></label>
             </div>
+            <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
+              <input v-model="draft.capacity_notify_only" data-testid="risk-capacity-notify-only" type="checkbox" class="rounded" />
+              <span class="text-sm">{{ t('accountRisk.capacityNotifyOnly') }}</span>
+            </label>
           </section>
           <section class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-600">
             <h3 class="text-sm font-semibold">{{ t('accountRisk.singleTitle') }}</h3>
             <p class="text-xs text-gray-500">{{ t('accountRisk.singleHint') }}</p>
+            <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
+              <input v-model="draft.probe_notify_only" data-testid="risk-probe-notify-only" type="checkbox" class="rounded" />
+              <span class="text-sm">{{ t('accountRisk.probeNotifyOnly') }}</span>
+            </label>
             <div class="grid gap-3 sm:grid-cols-3">
               <label><span class="input-label">{{ t('accountRisk.interval') }}</span><input v-model.number="draft.probe_interval_seconds" class="input" data-testid="risk-interval" type="number" min="10" max="86400" step="1" required /></label>
               <label><span class="input-label">{{ t('accountRisk.model') }}</span><input v-model="draft.model" class="input" data-testid="risk-model" list="risk-model-options" maxlength="200" required /><datalist id="risk-model-options"><option value="gpt-6.1-sol" /><option value="gpt-6-astra" /><option value="gpt-5.4" /></datalist></label>
@@ -64,7 +83,7 @@
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">
           <h3 class="font-semibold">{{ t('accountRisk.history') }}</h3>
-          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
+          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.action" class="text-xs" data-testid="risk-event-action">{{ t(`accountRisk.action.${event.action}`) }}</p><p v-if="(event.occurrences || 0) > 1" class="text-xs">{{ t('accountRisk.occurrences', { count: event.occurrences }) }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
         </section>
       </form>
     </div>
@@ -109,7 +128,7 @@ async function load() {
   view.value = null; draft.value = null; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, notify_enabled: data.config.notify_enabled ?? false } } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_notify_only: data.config.probe_notify_only ?? false, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { if (current === generation) loading.value = false }
 }
