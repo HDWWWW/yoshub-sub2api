@@ -49,7 +49,7 @@ CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxie
 	}
 	_, err := client.Proxy.Create().SetName("manual").SetProtocol("http").SetHost("192.0.2.1").SetPort(8080).Save(context.Background())
 	require.NoError(t, err)
-	for _, file := range []string{"250_yoshub_proxy_binding_limits.sql", "251_ovh_ipv6_egress.sql", "252_ovh_ipv6_reserved.sql"} {
+	for _, file := range []string{"250_yoshub_proxy_binding_limits.sql", "251_ovh_ipv6_egress.sql", "252_ovh_ipv6_reserved.sql", "256_content_moderation_ipv6.sql"} {
 		source, err := os.ReadFile(filepath.Join("..", "..", "migrations", file))
 		require.NoError(t, err)
 		_, err = db.Exec(string(source))

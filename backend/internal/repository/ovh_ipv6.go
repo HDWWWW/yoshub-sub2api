@@ -183,7 +183,7 @@ func (r *proxyRepository) SyncOVHIPv6(ctx context.Context) error {
 	}
 	rows, err := r.sql.QueryContext(ctx, `SELECT proxy_id,lease_id,state FROM yoshub_ovh_ipv6_leases
         WHERE (NOT confirmed OR state='retiring') AND next_attempt_at<=NOW()
-          AND (owner_account_id IS NOT NULL OR state IN ('reserved','retiring'))
+          AND (owner_account_id IS NOT NULL OR owner_moderation_key IS NOT NULL OR state IN ('reserved','retiring'))
         ORDER BY next_attempt_at LIMIT 100`)
 	if err != nil {
 		return err

@@ -24,6 +24,7 @@ export interface ContentModerationConfig {
   base_url: string
   model: string
   proxy_id: number | null
+  auto_assign_ipv6?: boolean
   api_key_configured: boolean
   api_key_masked: string
   api_key_count: number
@@ -69,6 +70,8 @@ export interface ContentModerationAPIKeyStatus {
   last_http_status: number
   last_tested: boolean
   configured: boolean
+  proxy_id?: number
+  managed_ipv6?: string
 }
 
 export interface TestContentModerationAPIKeysPayload {
@@ -80,6 +83,7 @@ export interface TestContentModerationAPIKeysPayload {
   timeout_ms?: number
   // null/undefined 沿用已保存配置的代理；0 强制直连；>0 指定代理
   proxy_id?: number
+  auto_assign_ipv6?: boolean
   prompt?: string
   images?: string[]
 }
@@ -109,6 +113,7 @@ export interface UpdateContentModerationConfig {
   model?: string
   // undefined 不修改；0 清除（直连）；>0 指定代理
   proxy_id?: number
+  auto_assign_ipv6?: boolean
   api_key?: string
   api_keys?: string[]
   api_keys_mode?: 'append' | 'replace'
@@ -218,7 +223,7 @@ export interface ContentModerationLog {
 }
 
 export type UpdateModerationEngineConfig = Pick<UpdateContentModerationConfig,
-  'base_url' | 'model' | 'proxy_id' | 'api_keys' | 'api_keys_mode' | 'delete_api_key_hashes' |
+  'base_url' | 'model' | 'proxy_id' | 'auto_assign_ipv6' | 'api_keys' | 'api_keys_mode' | 'delete_api_key_hashes' |
   'clear_api_key' | 'timeout_ms' | 'retry_count' | 'thresholds'>
 
 export interface ListContentModerationLogsParams {
@@ -262,12 +267,19 @@ export async function getConfig(): Promise<ContentModerationConfig> {
 export async function updateConfig(
   payload: UpdateContentModerationConfig
 ): Promise<ContentModerationConfig> {
-  const { data } = await apiClient.put<ContentModerationConfig>('/admin/risk-control/config', payload)
+  const { data } = await apiClient.put<ContentModerationConfig>('/admin/risk-control/config', payload, { timeout: 300000 })
   return data
 }
 
 export async function getStatus(): Promise<ContentModerationRuntimeStatus> {
   const { data } = await apiClient.get<ContentModerationRuntimeStatus>('/admin/risk-control/status')
+  return data
+}
+
+export async function allocateAPIKeyIPv6(engine: ModerationEngine, keyHash: string): Promise<ContentModerationConfig> {
+  const { data } = await apiClient.post<ContentModerationConfig>('/admin/risk-control/api-keys/allocate-ipv6', {
+    engine, key_hash: keyHash,
+  }, { timeout: 60000 })
   return data
 }
 
@@ -311,6 +323,7 @@ export const riskControlAPI = {
   updateConfig,
   getStatus,
   testAPIKeys,
+  allocateAPIKeyIPv6,
   listLogs,
   unbanUser,
   deleteFlaggedHash,

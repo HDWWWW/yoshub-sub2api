@@ -14,6 +14,7 @@ const {
   getGroups,
   getProxies,
   testAPIKeys,
+  allocateAPIKeyIPv6,
   showError,
   showSuccess,
 } = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ const {
   getGroups: vi.fn(),
   getProxies: vi.fn(),
   testAPIKeys: vi.fn(),
+  allocateAPIKeyIPv6: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
 }))
@@ -36,6 +38,7 @@ vi.mock('@/api/admin', () => ({
       getStatus,
       listLogs,
       testAPIKeys,
+      allocateAPIKeyIPv6,
       deleteFlaggedHash: vi.fn(),
       clearFlaggedHashes: vi.fn(),
       unbanUser: vi.fn(),
@@ -202,6 +205,7 @@ describe('admin RiskControlView', () => {
     showError.mockReset()
     showSuccess.mockReset()
     testAPIKeys.mockReset()
+    allocateAPIKeyIPv6.mockReset()
 
     getConfig.mockResolvedValue(baseConfig())
     getStatus.mockResolvedValue(runtimeStatus())
@@ -253,6 +257,75 @@ describe('admin RiskControlView', () => {
     await flushPromises()
     expect(keyPanel().text()).toContain(profiles[activeEngine].api_key_statuses[0].masked)
     expect(keyPanel().text()).not.toContain(profiles[otherEngine].api_key_statuses[0].masked)
+    expect(updateConfig).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('assigns an existing key without saving drafts, then displays its dedicated IPv6', async () => {
+    const key: ContentModerationAPIKeyStatus = {
+      index: 0, key_hash: 'a'.repeat(64), masked: '********abcd', status: 'ok', failure_count: 0,
+      success_count: 1, last_error: '', last_latency_ms: 120, last_http_status: 200, last_tested: true, configured: true,
+    }
+    const config = { ...baseConfig(), engine: 'openai' as const, api_key_count: 1, api_key_configured: true, api_key_statuses: [key] }
+    getConfig.mockResolvedValue(config)
+    getStatus.mockResolvedValue({ ...runtimeStatus(), api_key_statuses: [key] })
+    let complete!: (value: ContentModerationConfig) => void
+    allocateAPIKeyIPv6.mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await wrapper.get('[data-test="audit-model"]').setValue('unsaved-model')
+    let finishStaleStatus!: (value: unknown) => void
+    getStatus.mockImplementationOnce(() => new Promise(resolve => { finishStaleStatus = resolve }))
+    await findButtonByText(wrapper, 'admin.riskControl.refreshStatus').trigger('click')
+    const button = wrapper.get<HTMLButtonElement>('[data-allocate-ipv6]')
+    await button.trigger('click')
+    expect(button.element.disabled).toBe(true)
+    expect(allocateAPIKeyIPv6).toHaveBeenCalledTimes(1)
+    expect(allocateAPIKeyIPv6).toHaveBeenCalledWith('openai', key.key_hash)
+    complete({ ...config, api_key_statuses: [{ ...key, managed_ipv6: '2001:db8::a', proxy_id: 42 }] })
+    await flushPromises()
+    finishStaleStatus({ ...runtimeStatus(), api_key_statuses: [key] })
+    await flushPromises()
+    expect(wrapper.get('[data-test="audit-key-ipv6"]').text()).toContain('2001:db8::a')
+    expect(wrapper.find('[data-allocate-ipv6]').exists()).toBe(false)
+    expect((wrapper.get('[data-test="audit-model"]').element as HTMLInputElement).value).toBe('unsaved-model')
+    expect(updateConfig).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('saves automatic IPv6 independently per engine and prevents testing unsaved keys', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig(), engine: 'openai', engine_configs: { openai: baseConfig(), typesafe: baseConfig() } })
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await wrapper.get('[data-test="audit-auto-ipv6"]').setValue(true)
+    await wrapper.get('textarea[autocomplete="new-password"]').setValue('new-key')
+    expect(findButtonByText(wrapper, 'admin.riskControl.testInputApiKeys').element.disabled).toBe(true)
+    wrapper.findComponent('[data-test="audit-engine-select"]').vm.$emit('update:modelValue', 'typesafe')
+    await flushPromises()
+    expect((wrapper.get('[data-test="audit-auto-ipv6"]').element as HTMLInputElement).checked).toBe(false)
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+    expect(updateConfig.mock.calls[0]![0].engine_configs).toMatchObject({
+      openai: { auto_assign_ipv6: true, api_keys: ['new-key'] }, typesafe: { auto_assign_ipv6: false },
+    })
+    wrapper.unmount()
+  })
+
+  it('refreshes committed bindings after an allocation timeout', async () => {
+    const key: ContentModerationAPIKeyStatus = { index:0, key_hash:'b'.repeat(64), masked:'********efgh', status:'unknown', failure_count:0, success_count:0, last_error:'', last_latency_ms:0, last_http_status:0, last_tested:false, configured:true }
+    const config = { ...baseConfig(), engine:'openai' as const, api_key_count:1, api_key_configured:true, api_key_statuses:[key] }
+    getConfig.mockResolvedValueOnce(config).mockResolvedValue({ ...config, api_key_statuses:[{ ...key, managed_ipv6:'2001:db8::b', proxy_id:43 }] })
+    getStatus.mockResolvedValue({ ...runtimeStatus(), api_key_statuses:[key] })
+    allocateAPIKeyIPv6.mockRejectedValue(new Error('timeout'))
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon:true, Select:true, Toggle:true, Pagination:true, ModelWhitelistSelector:ModelWhitelistSelectorStub, ProxySelector:true } } })
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await wrapper.get('[data-allocate-ipv6]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="audit-key-ipv6"]').text()).toContain('2001:db8::b')
+    expect(allocateAPIKeyIPv6).toHaveBeenCalledTimes(1)
     expect(updateConfig).not.toHaveBeenCalled()
     wrapper.unmount()
   })
