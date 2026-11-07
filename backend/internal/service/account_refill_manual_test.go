@@ -32,6 +32,32 @@ func (p *manualRefillProvider) Identity(ctx context.Context, token string) (*Ref
 func manualRequest() ManualAccountRefillRequest {
 	return ManualAccountRefillRequest{RequestID: fmt.Sprintf("%d:%s", time.Now().UnixMilli(), uuid.NewString()), Plan: "pro20x", Revision: 1}
 }
+func TestManualForceRefillBypassesBlockedOrdersAndDeduplicates(t *testing.T) {
+	s, store, p, _ := failureRefillHarness(t)
+	seedStalledRefill(t, store, "review", time.Now())
+	ctx := context.Background()
+	r := manualRequest()
+	require.Error(t, s.Manual(ctx, r))
+	r.Force = true
+	require.NoError(t, s.Manual(ctx, r))
+	require.NoError(t, s.Manual(ctx, r))
+	v, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	require.Len(t, v.Jobs, 2)
+	require.True(t, v.Jobs[0].Force)
+	require.Equal(t, "强制手动补号", v.Jobs[0].Reason)
+	require.Equal(t, "review", v.Jobs[1].Status)
+	require.False(t, v.Jobs[1].BudgetReleased)
+	require.Equal(t, 120.0, v.Usage[time.Now().In(refillTimezone).Format("2006-01-02")].Points)
+	r.Force = false
+	require.Error(t, s.Manual(ctx, r), "cannot change the intent of an accepted key")
+	require.Empty(t, p.orders, "the endpoint only reserves; the worker purchases")
+	r = manualRequest()
+	r.Force = true
+	store.mutate(t, func(v *accountRefillState) { v.Config.DailyMaxPoints = 120 })
+	require.ErrorContains(t, s.Manual(ctx, r), "预算")
+	require.Empty(t, p.orders)
+}
 func TestManualRefillUsesSavedSnapshotWithAutomationOffAndDeduplicates(t *testing.T) {
 	s, store, provider, accounts := refillHarness(t)
 	s.provider = &manualRefillProvider{provider, 500}

@@ -199,6 +199,9 @@ func (h *AccountHandler) ManualAccountRefill(c *gin.Context) {
 		response.BadRequest(c, "手动补号参数无效")
 		return
 	}
+	if req.Force {
+		middleware.SetAuditAction(c, "admin.accounts.refill.manual_force")
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
 	defer cancel()
 	if err := svc.Manual(ctx, req); err != nil {

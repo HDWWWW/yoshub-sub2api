@@ -21,12 +21,16 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
+  daily_schedule?: { enabled: boolean; time: string; quantity: number }
 	rotation_enabled: boolean
 	rotation: { plan: string; count: number }[]
   notifications: { refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
   immediate_failure_retry?: boolean | null
+  timeout_retry_enabled?: boolean | null
+  timeout_retry_notify?: boolean | null
+  timeout_retry_minutes?: number | null
   mode: string
   group_id: number
   delivery_group_ids: number[]
@@ -58,6 +62,9 @@ export interface RefillConfig {
   delivery: RefillDeliveryConfig
 }
 export interface RefillJob {
+  daily_batch_id?: string
+  force?: boolean
+  timeout_retry_of?: string
   rotation_generation?: number
   expiry_target?: { account_id: number; source_expires_at: number }
   manual_request_id?: string
@@ -82,6 +89,7 @@ export interface RefillJob {
   next_attempt_at: string
 }
 export interface ManualRefillRequest {
+	force?: boolean
 	group_id?: number
   request_id: string
   plan: string
@@ -93,6 +101,7 @@ export interface RefillCapacityObservation {
   no_capacity?: boolean
 }
 export interface RefillView {
+  daily_schedule_status?: { next_at: string; last_at: string; last_quantity: number; last_batch_id?: string; retry_at: string; message: string }
 	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_plan: string }[]
 	rotation_cursor: number
 	next_plan: string

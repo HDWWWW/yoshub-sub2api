@@ -113,6 +113,7 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
+	DailyScheduleStatus       AccountRefillDailyScheduleStatus `json:"daily_schedule_status"`
 	Rules                     []AccountRefillRuleSummary       `json:"rules"`
 	RotationCursor            int                              `json:"rotation_cursor"`
 	NextPlan                  string                           `json:"next_plan"`
@@ -172,7 +173,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	if err != nil {
 		return nil, err
 	}
-	return &AccountRefillView{WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
+	return &AccountRefillView{DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state),
@@ -212,7 +213,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			return err
 		}
 	}
-	if c.Enabled {
+	if c.Enabled || refillDailyScheduleEnabled(c) {
 		if err := s.validateGroups(ctx, c); err != nil {
 			return err
 		}
@@ -231,6 +232,12 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		}
 		if revision != state.Revision {
 			return errors.New("配置已被其他页面修改，请刷新后再保存")
+		}
+		if c.DailySchedule == nil {
+			c.DailySchedule = state.Config.DailySchedule
+		}
+		if err := c.Validate(); err != nil {
+			return err
 		}
 		if state.Config.GroupID > 0 && c.GroupID != state.Config.GroupID {
 			return errors.New("请通过分组选择器切换规则，不能覆盖其他分组的规则")
@@ -320,7 +327,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			state.Catalog = nil
 			state.CatalogAt = nil
 		}
-		if c.Enabled && state.EncryptedToken == "" {
+		if (c.Enabled || refillDailyScheduleEnabled(c)) && state.EncryptedToken == "" {
 			return errors.New("启用前请配置号商 API Key")
 		}
 		if c.Mode != state.Config.Mode || c.IntervalMinutes != state.Config.IntervalMinutes || c.IntervalQuantity != state.Config.IntervalQuantity {
@@ -341,6 +348,15 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			enabled := *state.Config.ImmediateFailureRetry
 			c.ImmediateFailureRetry = &enabled
 		}
+		if c.TimeoutRetryEnabled == nil {
+			c.TimeoutRetryEnabled = state.Config.TimeoutRetryEnabled
+		}
+		if c.TimeoutRetryMinutes == nil {
+			c.TimeoutRetryMinutes = state.Config.TimeoutRetryMinutes
+		}
+		if c.TimeoutRetryNotify == nil {
+			c.TimeoutRetryNotify = state.Config.TimeoutRetryNotify
+		}
 		if c.Delivery.SameAccountRetryCount == nil && state.Config.Delivery.SameAccountRetryCount != nil {
 			count := *state.Config.Delivery.SameAccountRetryCount
 			c.Delivery.SameAccountRetryCount = &count
@@ -349,6 +365,7 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			enabled := *state.Config.Delivery.OpenAIResponsesFlattenNamespaces
 			c.Delivery.OpenAIResponsesFlattenNamespaces = &enabled
 		}
+		configureRefillDailySchedule(&state, c, time.Now())
 		state.Config = c
 		reconcileRefillFailureReplacements(&state)
 		state.Revision++
@@ -415,11 +432,12 @@ func (s *AccountRefillService) evaluate(ctx context.Context, state *accountRefil
 	state.Evaluation = evaluateAccountRefill(state.Config, accounts, loads, jobs, now, refillPlannedPurchasePlans(state)...)
 	evaluateRefillExpiryDemands(state, jobs, claims, now)
 	limitAccountRefillEvaluation(state.Config, &state.Evaluation, jobs)
+	applyRefillTimeoutRetry(state, jobs, now)
 	return nil
 }
 
 func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
-	return s.store.WithLock(ctx, func(raw string, save func(string) error) error {
+	return s.store.WithLock(ctx, func(raw string, save func(string) error) (runErr error) {
 		state, err := decodeAccountRefillState(raw)
 		if err != nil {
 			return err
@@ -429,6 +447,12 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		now := time.Now()
 		persist := func() error { return saveRefillState(&state, save) }
+		var timeoutNotice *refillTimeoutNotice
+		defer func() {
+			if !preview && runErr == nil {
+				runErr = s.notifyRefillTimeoutRetry(ctx, &state, timeoutNotice, now, persist)
+			}
+		}()
 		if !preview {
 			if err := s.checkDisabledRefillNotification(ctx, &state, now, persist); err != nil {
 				return err
@@ -438,8 +462,22 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			if err := s.notifyRefillDelayed(ctx, &state, now, persist); err != nil {
 				return err
 			}
+			// Evaluate locally so supplier backoff cannot hide a due timeout.
+			if state.EncryptedWebhook != "" && refillTimeoutNotifyEnabled(state.Config) && refillTimeoutCandidate(&state, state.Jobs, now) != nil {
+				if err := s.evaluate(ctx, &state, now); err == nil {
+					timeoutNotice = captureRefillTimeoutNotice(&state)
+				}
+			}
+			// Daily purchases are independent of normal monitoring, time windows
+			// and supplier review. Reserve the entire batch atomically first.
+			if reserved, err := s.runRefillDailySchedule(ctx, &state, now, persist); err != nil || reserved {
+				return err
+			}
 		}
 		if now.Before(state.ProviderRetryAt) {
+			if timeoutNotice != nil {
+				state.Message = "号商限流或暂不可用，等待退避结束后重试"
+			}
 			return nil
 		}
 		var token string
@@ -469,7 +507,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				return nil
 			}
 		}
-		if !preview && (now.Before(state.NextCheckAt) || !state.Config.MonitorEnabled) {
+		if !preview && ((now.Before(state.NextCheckAt) && !refillTimeoutCheckDue(&state, now)) || !state.Config.MonitorEnabled) {
 			return nil
 		}
 		state.NextCheckAt = now.Add(time.Duration(state.Config.CheckSeconds) * time.Second)
@@ -479,6 +517,10 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		if err := s.evaluate(ctx, &state, now); err != nil {
 			state.Message = err.Error()
 			return persist()
+		}
+		if !preview {
+			state.TimeoutCheckedAt = now
+			timeoutNotice = captureRefillTimeoutNotice(&state)
 		}
 		reconcileRefillFailureReplacements(&state)
 		if time.Now().Before(state.ProviderRetryAt) {
@@ -520,7 +562,9 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = "推送已暂停，保留在途任务并暂停新增补号"
 			return persist()
 		}
-		if !refillInWindow(state.Config, now) {
+		timeoutRetryID := state.Evaluation.TimeoutRetryJobID
+		timeoutRetry := timeoutRetryID != ""
+		if !timeoutRetry && !refillInWindow(state.Config, now) {
 			state.Message = "当前不在补号时段，继续处理在途任务"
 			return persist()
 		}
@@ -536,7 +580,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = err.Error()
 			return persist()
 		}
-		if state.Config.Mode == "interval" {
+		if state.Config.Mode == "interval" && !timeoutRetry {
 			if state.NextIntervalAt.IsZero() {
 				state.NextIntervalAt = now.Add(time.Duration(state.Config.IntervalMinutes) * time.Minute)
 			}
@@ -565,12 +609,18 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}
 		replacement := nextRefillFailureReplacement(&state)
+		if timeoutRetry {
+			replacement = -1
+		}
 		immediateReplacement := replacement >= 0 && refillImmediateFailureRetryEnabled(state.Config)
-		if !immediateReplacement && now.Sub(state.LastSubmitAt) < time.Duration(state.Config.CooldownSeconds)*time.Second {
+		if !timeoutRetry && !immediateReplacement && now.Sub(state.LastSubmitAt) < time.Duration(state.Config.CooldownSeconds)*time.Second {
 			state.Message = "补号冷却中，等待下次检查"
 			return persist()
 		}
 		plan := nextRefillPurchasePlan(&state)
+		if timeoutRetry {
+			plan = state.Evaluation.TimeoutRetryPlan
+		}
 		var quote *RefillQuote
 		for i := range catalog.Items {
 			q := &catalog.Items[i]
@@ -618,11 +668,12 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return persist()
 		}
 		s.invalidateCapacityObservations(state.Config, state.Evaluation)
-		if state.Config.Mode == "interval" {
+		timeoutNotice = captureRefillTimeoutNotice(&state)
+		if state.Config.Mode == "interval" && !timeoutRetry {
 			state.Evaluation.Needed = refillMin(state.IntervalRemaining, refillMax(0, state.Config.MaxReady-state.Evaluation.Ready-state.Evaluation.Pending), refillMax(0, state.Config.MaxInFlight-state.Evaluation.Pending))
 			state.Evaluation.Reason = "定时补号"
 		}
-		if state.Evaluation.Needed <= 0 {
+		if state.Evaluation.Needed <= 0 || state.Evaluation.TimeoutRetryJobID != timeoutRetryID {
 			reconcileRefillFailureReplacements(&state)
 			state.Message = state.Evaluation.Reason
 			return persist()
@@ -641,10 +692,16 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			ExpiryGraceMinutes: &graceMinutes,
 			GroupID:            state.Config.GroupID, Concurrency: state.Config.importConcurrencyForPlan(plan), DeliveryGroupIDs: slices.Clone(state.Config.DeliveryGroupIDs), DeliveryConfig: state.Config.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
+		if timeoutRetry {
+			job.TimeoutRetryOf = timeoutRetryID
+			job.ReasonDetail = refillTimeoutReasonDetail(&state)
+		}
 		if replacement >= 0 {
 			linkRefillFailureReplacement(&state, replacement, &job)
 		}
-		claimRefillExpiryDemand(&state, &job, replacement)
+		if !timeoutRetry {
+			claimRefillExpiryDemand(&state, &job, replacement)
+		}
 		state.Jobs = append([]AccountRefillJob{job}, state.Jobs...)
 		state.Jobs = trimAccountRefillJobs(state.Jobs, now)
 		usage.Count++
@@ -656,10 +713,10 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}
 		state.LastSubmitAt = now
-		if replacement < 0 {
+		if replacement < 0 && !timeoutRetry {
 			advanceRefillRotation(&state)
 		}
-		if state.Config.Mode == "interval" {
+		if state.Config.Mode == "interval" && !timeoutRetry {
 			state.IntervalRemaining = refillMax(0, state.IntervalRemaining-1)
 		}
 		state.Message = "已预留预算，正在提交补号"
@@ -781,12 +838,12 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 	if !refillProviderStatusKnown(remote.Status) {
 		j.Status = "supplier_unknown"
 		j.ResultReady = false
-		j.Error = "号商返回未知状态，保留原任务继续核对，暂停新增补号"
+		j.Error = "号商返回未知状态，保留原任务继续核对；号池无健康储备时按超时重试规则补号"
 		j.NextAttemptAt = now.Add(time.Minute)
 		return persist()
 	}
 	if remote.Status == "review" {
-		j.Error = "号商要求人工核对，保留原任务并暂停新增补号"
+		j.Error = "号商要求人工核对，保留原任务；号池无健康储备时按超时重试规则补号"
 		j.NextAttemptAt = now.Add(time.Minute)
 	}
 	if remote.Status == "failed" {

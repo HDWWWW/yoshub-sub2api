@@ -36,6 +36,10 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
+	DailySchedule             *AccountRefillDailySchedule            `json:"daily_schedule,omitempty"`
+	TimeoutRetryEnabled       *bool                                  `json:"timeout_retry_enabled,omitempty"`
+	TimeoutRetryNotify        *bool                                  `json:"timeout_retry_notify,omitempty"`
+	TimeoutRetryMinutes       *int                                   `json:"timeout_retry_minutes,omitempty"`
 	ImmediateFailureRetry     *bool                                  `json:"immediate_failure_retry,omitempty"`
 	ForecastEnabled           *bool                                  `json:"forecast_enabled,omitempty"`
 	RotationEnabled           bool                                   `json:"rotation_enabled"`
@@ -95,7 +99,8 @@ type AccountRefillDeliveryConfig struct {
 }
 
 func DefaultAccountRefillConfig() AccountRefillConfig {
-	return AccountRefillConfig{Notifications: AccountRefillNotificationConfig{LowBalanceThreshold: 100}, MonitorEnabled: true, Mode: "capacity", DeliveryGroupIDs: []int64{}, PushEnabled: true, MaxInFlight: 1, IntervalMinutes: 60, IntervalQuantity: 1,
+	timeoutEnabled, timeoutMinutes := true, defaultRefillTimeoutRetryMinutes
+	return AccountRefillConfig{TimeoutRetryEnabled: &timeoutEnabled, TimeoutRetryMinutes: &timeoutMinutes, Notifications: AccountRefillNotificationConfig{LowBalanceThreshold: 100}, MonitorEnabled: true, Mode: "capacity", DeliveryGroupIDs: []int64{}, PushEnabled: true, MaxInFlight: 1, IntervalMinutes: 60, IntervalQuantity: 1,
 		Plan: "pro5x", MinReady: 1, MaxReady: 20, LeadMinutes: 30,
 		MinRemaining5h: 15, MinRemaining7d: 15, TargetConcurrency: 85, ConcurrencySustainSeconds: 30, ImportExpiryGraceMinutes: 60, CheckSeconds: 60,
 		CooldownSeconds: 300, DailyMaxCount: 50, DailyMaxPoints: 3000, MaxUnitPrice: 60,
@@ -104,6 +109,12 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
+	if err := validateRefillDailySchedule(c.DailySchedule); err != nil {
+		return err
+	}
+	if c.TimeoutRetryMinutes != nil && (*c.TimeoutRetryMinutes < 1 || *c.TimeoutRetryMinutes > 1440) {
+		return errors.New("补号超时重试时间须为 1–1440 分钟")
+	}
 	for plan, concurrency := range c.PlanImportConcurrency {
 		if (plan != "pro5x" && plan != "pro20x") || concurrency < 1 || concurrency > 10000 {
 			return errors.New("套餐账号并发仅支持 Pro5x 和 Pro20x，须为 1–10000")
@@ -158,7 +169,7 @@ func (c AccountRefillConfig) Validate() error {
 	if _, err := NormalizeAccountProxyMode(d.ProxyMode, d.ProxyID, false); err != nil {
 		return err
 	}
-	if !slices.Contains([]string{"rental", "fixed"}, d.ExpiryMode) || (d.ExpiryMode == "fixed" && (d.FixedExpiresAt == nil || (c.Enabled && *d.FixedExpiresAt <= time.Now().Unix()))) {
+	if !slices.Contains([]string{"rental", "fixed"}, d.ExpiryMode) || (d.ExpiryMode == "fixed" && (d.FixedExpiresAt == nil || ((c.Enabled || refillDailyScheduleEnabled(c)) && *d.FixedExpiresAt <= time.Now().Unix()))) {
 		return errors.New("指定截止时间必须在未来")
 	}
 	for k, v := range d.ModelMapping {
@@ -166,7 +177,7 @@ func (c AccountRefillConfig) Validate() error {
 			return errors.New("模型映射须包含有效的来源和目标模型")
 		}
 	}
-	if c.Enabled && (!d.Schedulable || d.Status != StatusActive) {
+	if (c.Enabled || refillDailyScheduleEnabled(c)) && (!d.Schedulable || d.Status != StatusActive) {
 		return errors.New("自动补号须将新账号设为正常且允许调度，避免持续补入不可用账号")
 	}
 	return nil
@@ -187,6 +198,9 @@ func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {
 }
 
 type AccountRefillJob struct {
+	DailyBatchID           string                      `json:"daily_batch_id,omitempty"`
+	Force                  bool                        `json:"force,omitempty"`
+	TimeoutRetryOf         string                      `json:"timeout_retry_of,omitempty"`
 	RotationGeneration     int64                       `json:"rotation_generation,omitempty"`
 	ExpiryTarget           *AccountRefillExpiryTarget  `json:"expiry_target,omitempty"`
 	Mode                   string                      `json:"mode,omitempty"`
@@ -249,25 +263,29 @@ type AccountRefillAccount struct {
 }
 
 type AccountRefillEvaluation struct {
-	ExpiryTargets    []AccountRefillExpiryTarget `json:"expiry_targets,omitempty"`
-	Error            string                      `json:"error,omitempty"`
-	CheckedAt        time.Time                   `json:"checked_at"`
-	Ready            int                         `json:"ready"`
-	Healthy          int                         `json:"healthy"`
-	Expiring         int                         `json:"expiring"`
-	Pending          int                         `json:"pending"`
-	InUse            int                         `json:"in_use"`
-	Capacity         int                         `json:"capacity"`
-	PendingCapacity  int                         `json:"pending_capacity"`
-	ForecastAccounts int                         `json:"forecast_accounts"`
-	ForecastCapacity int                         `json:"forecast_capacity"`
-	ForecastReady    int                         `json:"forecast_ready"`
-	Needed           int                         `json:"needed"`
-	Reason           string                      `json:"reason"`
-	Accounts         []AccountRefillAccount      `json:"accounts"`
+	TimeoutRetryJobID string `json:"timeout_retry_job_id,omitempty"`
+	TimeoutRetryPlan  string `json:"timeout_retry_plan,omitempty"`
+	timeoutRetryJob   *AccountRefillJob
+	ExpiryTargets     []AccountRefillExpiryTarget `json:"expiry_targets,omitempty"`
+	Error             string                      `json:"error,omitempty"`
+	CheckedAt         time.Time                   `json:"checked_at"`
+	Ready             int                         `json:"ready"`
+	Healthy           int                         `json:"healthy"`
+	Expiring          int                         `json:"expiring"`
+	Pending           int                         `json:"pending"`
+	InUse             int                         `json:"in_use"`
+	Capacity          int                         `json:"capacity"`
+	PendingCapacity   int                         `json:"pending_capacity"`
+	ForecastAccounts  int                         `json:"forecast_accounts"`
+	ForecastCapacity  int                         `json:"forecast_capacity"`
+	ForecastReady     int                         `json:"forecast_ready"`
+	Needed            int                         `json:"needed"`
+	Reason            string                      `json:"reason"`
+	Accounts          []AccountRefillAccount      `json:"accounts"`
 }
 
 type accountRefillState struct {
+	DailyScheduleStatus  AccountRefillDailyScheduleStatus   `json:"daily_schedule_status"`
 	RotationGeneration   int64                              `json:"rotation_generation,omitempty"`
 	ExpiryDemands        []accountRefillExpiryDemand        `json:"expiry_demands,omitempty"`
 	ExpiryCheckedAt      time.Time                          `json:"expiry_checked_at,omitempty"`
@@ -292,6 +310,10 @@ type accountRefillState struct {
 	CatalogAt            *time.Time                         `json:"catalog_at,omitempty"`
 	Evaluation           AccountRefillEvaluation            `json:"evaluation"`
 	NextCheckAt          time.Time                          `json:"next_check_at"`
+	TimeoutCheckedAt     time.Time                          `json:"timeout_checked_at"`
+	TimeoutNoticeKey     string                             `json:"timeout_notice_key,omitempty"`
+	TimeoutNoticeContent string                             `json:"timeout_notice_content,omitempty"`
+	TimeoutNoticeRetryAt time.Time                          `json:"timeout_notice_retry_at"`
 	LastSubmitAt         time.Time                          `json:"last_submit_at"`
 	DemandSince          *time.Time                         `json:"demand_since,omitempty"`
 	Usage                map[string]AccountRefillDailyUsage `json:"usage"`

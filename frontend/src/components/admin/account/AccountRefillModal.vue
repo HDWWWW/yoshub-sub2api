@@ -41,6 +41,25 @@
               <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.immediate_failure_retry" type="checkbox" data-testid="refill-immediate-failure-retry" />{{ t('accountRefill.immediateFailureRetry') }}</label>
               <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.immediateFailureRetryHint') }}</p>
             </div>
+            <div class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.timeout_retry_enabled" type="checkbox" data-testid="refill-timeout-retry-enabled" />{{ t('accountRefill.timeoutRetryEnabled') }}</label>
+              <label class="block sm:max-w-xs"><span class="input-label">{{ t('accountRefill.timeoutRetryMinutes') }}</span><input v-model.number="form.timeout_retry_minutes" type="number" min="1" max="1440" step="1" required class="input" data-testid="refill-timeout-retry-minutes" /></label>
+              <label class="flex items-center gap-2 text-sm"><input v-model="form.timeout_retry_notify" type="checkbox" data-testid="refill-timeout-retry-notify" />{{ t('accountRefill.timeoutRetryNotify') }}</label>
+              <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryNotifyHint') }}</p>
+              <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryHint') }}</p>
+            </div>
+            <div v-if="form.daily_schedule" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.daily_schedule.enabled" type="checkbox" data-testid="refill-daily-enabled" />{{ t('accountRefill.dailyEnabled') }}</label>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <label><span class="input-label">{{ t('accountRefill.dailyTime') }}</span><input v-model="form.daily_schedule.time" type="time" required class="input" data-testid="refill-daily-time" /></label>
+                <label><span class="input-label">{{ t('accountRefill.dailyQuantity') }}</span><input v-model.number="form.daily_schedule.quantity" type="number" min="1" max="100" step="1" required class="input" data-testid="refill-daily-quantity" /></label>
+              </div>
+              <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.dailyHint') }}</p>
+              <div v-if="view.config.daily_schedule?.enabled && view.daily_schedule_status" class="space-y-1 text-xs text-gray-500" data-testid="refill-daily-status">
+                <p>{{ t('accountRefill.dailyNext') }}: {{ date(view.daily_schedule_status.next_at) }}</p>
+                <p>{{ view.daily_schedule_status.message }}</p>
+              </div>
+            </div>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.mode') }}</span><select v-model="form.mode" class="input"><option v-for="mode in ['capacity', 'fixed', 'interval']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
               <label v-if="!form.rotation_enabled"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="form.plan" class="input"><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
@@ -157,7 +176,11 @@
         <p v-if="dirty || conflict" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
         <p v-if="!view.token_configured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
         <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain') }}</p>
-        <button type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual">{{ t(manualPending ? 'accountRefill.manualRetry' : 'accountRefill.manualSubmit') }}</button>
+        <div class="flex flex-wrap gap-3">
+          <button type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : 'accountRefill.manualSubmit') }}</button>
+          <button type="button" class="btn btn-secondary" :disabled="manualForceDisabled" data-testid="manual-refill-force" @click="submitManual(true)">{{ t('accountRefill.manualForce') }}</button>
+        </div>
+        <p class="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{{ t('accountRefill.manualForceHint') }}</p>
       </div>
       <div v-if="activeTab === 'progress'" class="space-y-5">
         <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
@@ -308,6 +331,7 @@ const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 
 const manualQuote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && q.enabled))
 const manualGroups = computed(() => view.value?.config.delivery_group_ids.map(id => groups.value.find(g => g.id === id)?.name || `#${id}`).join('、'))
 const manualDisabled = computed(() => busy.value || !view.value || (!manualPending.value && (dirty.value || conflict.value || !view.value.token_configured || !view.value.config.push_enabled)))
+const manualForceDisabled = computed(() => busy.value || !view.value || dirty.value || conflict.value || !view.value.token_configured || !view.value.config.push_enabled)
 const keyDays = computed(() => { const at = view.value?.key?.expires_at; return at && !at.startsWith('0001') ? (Date.parse(at) - now.value) / 86400000 : null })
 const keyRemaining = computed(() => keyDays.value === null ? '' : keyDays.value <= 0 ? t('accountRefill.expired') : t('accountRefill.keyRemaining', { days: Math.floor(keyDays.value * 10) / 10 }))
 const fixedExpiry = computed({ get: () => form.value?.delivery.fixed_expires_at ? new Date(form.value.delivery.fixed_expires_at * 1000 + 8 * 3600000).toISOString().slice(0, 16) : '', set: v => { if (form.value) form.value.delivery.fixed_expires_at = v ? Math.floor(Date.parse(`${v}:00+08:00`) / 1000) : null } })
@@ -370,6 +394,10 @@ function accept(data: RefillView, reset: boolean) {
   data.config.delivery.openai_responses_flatten_namespaces ??= false
   data.config.forecast_enabled ??= true
   data.config.immediate_failure_retry ??= true
+  data.config.timeout_retry_enabled ??= true
+  data.config.timeout_retry_notify ??= true
+  data.config.timeout_retry_minutes ??= 10
+  data.config.daily_schedule ??= { enabled: false, time: '08:00', quantity: 1 }
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}
@@ -423,6 +451,13 @@ async function refresh(reset: boolean) {
 }
 async function save() {
   if (!form.value || busy.value || conflict.value) return
+  if (!Number.isInteger(form.value.timeout_retry_minutes) || form.value.timeout_retry_minutes! < 1 || form.value.timeout_retry_minutes! > 1440) {
+    error.value = t('accountRefill.timeoutRetryInvalid'); activeTab.value = 'rules'; return
+  }
+  const daily = form.value.daily_schedule
+  if (daily && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(daily.time) || !Number.isInteger(daily.quantity) || daily.quantity < 1 || daily.quantity > 100)) {
+    error.value = t('accountRefill.dailyInvalid'); activeTab.value = 'rules'; return
+  }
   let parsed: unknown
   try { parsed = JSON.parse(mapping.value); if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(v => typeof v !== 'string')) throw new Error() }
   catch { error.value = t('accountRefill.mappingError'); activeTab.value = 'delivery'; return }
@@ -453,9 +488,9 @@ function restoreManualRequest() {
     }
   } catch { /* Invalid session data cannot initiate a purchase. */ }
 }
-async function submitManual() {
-  if (manualDisabled.value) return
-  const request = manualPending.value || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value }
+async function submitManual(force = false) {
+  if (force ? manualForceDisabled.value : manualDisabled.value) return
+  const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(force ? { force: true } : {}) }
   try { sessionStorage.setItem(manualStorageKey, JSON.stringify(request)) }
   catch { error.value = t('accountRefill.manualStorageError'); return }
   manualPending.value = request; busy.value = true; error.value = ''; generation++
@@ -466,7 +501,8 @@ async function submitManual() {
       app.showSuccess(t('accountRefill.manualAccepted'))
     }
   } catch (e) {
-    const status = (e as { response?: { status?: number } }).response?.status
+    const failure = e as { status?: number; response?: { status?: number } }
+    const status = failure.status ?? failure.response?.status
     if (status === 400 || status === 401 || status === 403) clearManualRequest()
     error.value = message(e)
   } finally { busy.value = false }

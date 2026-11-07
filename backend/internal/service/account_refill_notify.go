@@ -305,7 +305,7 @@ func (s *AccountRefillService) notifyRefillDelayed(ctx context.Context, state *a
 		if err := persist(); err != nil {
 			return err
 		}
-		content := fmt.Sprintf("Sub2API 自动补号超时提醒\n结果：下单已满 5 分钟，账号仍未成功导入\n套餐：%s\n当前状态：%s\n投递分组 ID：%v\n号商任务：%s\n已等待：%s\n请检查号商进度和交付导入状态；继续处理原任务，不因超时另下新单。每个任务只提醒一次。\n时间：%s",
+		content := fmt.Sprintf("Sub2API 自动补号超时提醒\n结果：下单已满 5 分钟，账号仍未成功导入\n套餐：%s\n当前状态：%s\n投递分组 ID：%v\n号商任务：%s\n已等待：%s\n继续核对原任务；是否另补账号按本组超时重试规则判断。本条延迟提醒每个任务只发送一次。\n时间：%s",
 			j.Plan, j.Status, j.DeliveryGroupIDs, refillSupplierTaskID(*j), now.Sub(j.CreatedAt).Round(time.Second), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 		s.sendRefillNotification(ctx, state, content)
 		if err := persist(); err != nil {

@@ -13,8 +13,14 @@ func refillImmediateFailureRetryEnabled(c AccountRefillConfig) bool {
 // A confirmed failure supplies the plan for an existing demand slot. It never
 // adds demand or submits from a second worker. Old terminal jobs are not replayed.
 func markRefillFailureReplacement(state *accountRefillState, job *AccountRefillJob) {
-	if job.ManualRequestID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
+	if job.ManualRequestID != "" || job.DailyBatchID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
 		return
+	}
+	for _, other := range state.Jobs {
+		if other.TimeoutRetryOf == job.ID {
+			job.Error += "；已创建超时补单，不重复安排失败重补"
+			return
+		}
 	}
 	if job.RotationGeneration != state.RotationGeneration {
 		job.Error += "；轮转规则已重设，取消原轮次重补"
@@ -35,7 +41,7 @@ func markRefillFailureReplacement(state *accountRefillState, job *AccountRefillJ
 	}
 	// The failed reservation already consumed this interval's quantity. Return
 	// exactly that slot, instead of creating a separate replacement allowance.
-	if job.Mode == "interval" && state.Config.Mode == "interval" {
+	if job.Mode == "interval" && state.Config.Mode == "interval" && job.TimeoutRetryOf == "" {
 		state.IntervalRemaining++
 	}
 }

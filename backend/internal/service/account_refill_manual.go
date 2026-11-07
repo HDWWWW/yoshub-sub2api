@@ -17,6 +17,7 @@ import (
 const manualRefillRequestLifetime = 24 * time.Hour
 
 type ManualAccountRefillRequest struct {
+	Force     bool   `json:"force,omitempty"`
 	GroupID   int64  `json:"group_id,omitempty"`
 	RequestID string `json:"request_id"`
 	Plan      string `json:"plan"`
@@ -77,7 +78,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		// the original accepted order, even if configuration changed afterwards.
 		for _, j := range state.Jobs {
 			if j.ID == jobID || j.ManualRequestID == request.RequestID {
-				if j.Plan != request.Plan || (j.ConfigRevision != 0 && j.ConfigRevision != request.Revision) {
+				if j.Plan != request.Plan || j.Force != request.Force || (j.ConfigRevision != 0 && j.ConfigRevision != request.Revision) {
 					return invalidManualRefill("同一请求不能修改套餐或配置版本，请核对原任务")
 				}
 				return nil
@@ -125,11 +126,11 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			if j.pending() {
 				pending++
 			}
-			if refillNeedsAttention(j.Status) {
+			if !request.Force && refillNeedsAttention(j.Status) {
 				return invalidManualRefill("请先在消费与进度中处理需要核对的原任务")
 			}
 		}
-		if pending >= c.MaxInFlight {
+		if !request.Force && pending >= c.MaxInFlight {
 			return invalidManualRefill("已达到在途任务上限，请等待交付或调整规则")
 		}
 		if err := s.validateGroups(ctx, c); err != nil {
@@ -201,12 +202,16 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		state.Catalog, state.Wallet, state.Key = catalog, wallet, key
 		state.CatalogAt, state.IdentityAt = &now, &now
 		grace := c.ImportExpiryGraceMinutes
-		job := AccountRefillJob{ID: jobID, ManualRequestID: request.RequestID, ConfigRevision: request.Revision,
+		job := AccountRefillJob{ID: jobID, ManualRequestID: request.RequestID, ConfigRevision: request.Revision, Force: request.Force,
 			Status: "submitting", Reason: "手动补号", Plan: request.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ReasonDetail:       "管理员手动提交 1 个账号，沿用提交时保存的推送设置。",
 			ExpiryGraceMinutes: &grace, GroupID: c.GroupID, Concurrency: c.importConcurrencyForPlan(request.Plan),
 			DeliveryGroupIDs: slices.Clone(c.DeliveryGroupIDs), DeliveryConfig: c.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
+		if request.Force {
+			job.Reason = "强制手动补号"
+			job.ReasonDetail = "管理员强制购买 1 个账号，忽略原任务待核对和在途上限；原订单继续核对，可能仍会交付并计费。"
+		}
 		state.Jobs = trimAccountRefillJobs(append([]AccountRefillJob{job}, state.Jobs...), now)
 		usage.Count++
 		usage.Points += quote.Price

@@ -11,8 +11,8 @@ import (
 var errRefillDeliveryExpired = errors.New("号商交付已过租期")
 
 // Refill/recharge states are distinct from refund states (cancelled, banned,
-// settlement, etc.). Unknown states must never release a reservation or buy a
-// replacement. See the supplier's /console/developer/docs#states contract.
+// settlement, etc.). Unknown states never release a reservation or count as a
+// confirmed failure. The separate timeout policy may purchase a rescue order.
 func refillProviderStatusKnown(status string) bool {
 	return slices.Contains([]string{"queued", "processing", "succeeded", "failed", "review"}, status)
 }
