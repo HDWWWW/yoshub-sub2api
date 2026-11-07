@@ -89,7 +89,7 @@ func (h *ContentModerationHandler) GetConfig(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "内容审计配置仅限完整管理员访问")
 		return
 	}
@@ -175,7 +175,7 @@ func (h *ContentModerationHandler) GetStatus(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) AllocateAPIKeyIPv6(c *gin.Context) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "审计 Key IPv6 分配仅限完整管理员访问")
 		return
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 func (h *ProxyHandler) ovhIPv6(c *gin.Context, update bool) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "OVH IPv6 设置仅限完整管理员访问")
 		return
 	}
@@ -50,7 +50,7 @@ func (h *ProxyHandler) GetOVHIPv6(c *gin.Context) { h.ovhIPv6(c, false) }
 func (h *ProxyHandler) SetOVHIPv6(c *gin.Context) { h.ovhIPv6(c, true) }
 
 func (h *ProxyHandler) AllocateOVHIPv6(c *gin.Context) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "OVH IPv6 预分配仅限完整管理员访问")
 		return
 	}

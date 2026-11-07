@@ -69,6 +69,7 @@ var ProviderSet = wire.NewSet(
 	NewAccountRiskStore,
 	NewAccountAutoFastStore,
 	NewUserRepository,
+	NewMCPOAuthRepository,
 	NewAPIKeyRepository,
 	NewGroupRepository,
 	NewAdminGroupRepository,

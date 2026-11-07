@@ -11,7 +11,7 @@ import (
 )
 
 func (h *AccountHandler) GetAccountSchedulingMetadata(c *gin.Context) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "排序及租期设置仅限完整管理员访问")
 		return
 	}
@@ -42,7 +42,7 @@ func (h *AccountHandler) GetAccountSchedulingMetadata(c *gin.Context) {
 }
 
 func (h *AccountHandler) GetAccountSchedulingPreview(c *gin.Context) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "排序设置仅限完整管理员访问")
 		return
 	}

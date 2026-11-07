@@ -9,7 +9,7 @@ import (
 )
 
 func (h *ProxyHandler) proxyBindingLimits(c *gin.Context, update bool) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "绑定上限设置仅限完整管理员访问")
 		return
 	}

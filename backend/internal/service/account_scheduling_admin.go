@@ -36,7 +36,7 @@ func validateSchedulingPriorityMode(ctx context.Context, mode string, priority *
 	if mode == "" {
 		return nil
 	}
-	if adminaccess.FromContext(ctx) != nil {
+	if adminaccess.RestrictedFromContext(ctx) != nil {
 		return infraerrors.Forbidden("SCHEDULING_PRIORITY_FORBIDDEN", "手动排序仅限完整管理员设置")
 	}
 	if mode != "manual" && mode != "auto" {

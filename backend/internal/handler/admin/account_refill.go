@@ -35,7 +35,7 @@ func applyExternalImportExpiry(req *DataImportRequest, authMethod string, grace 
 }
 
 func (h *AccountHandler) refillAvailable(c *gin.Context) bool {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, http.StatusForbidden, "补号设置仅限完整管理员访问")
 		return false
 	}

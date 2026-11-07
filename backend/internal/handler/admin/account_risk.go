@@ -12,7 +12,7 @@ import (
 )
 
 func (h *AccountHandler) riskRequest(c *gin.Context) (int64, bool) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, http.StatusForbidden, "风控检测仅限完整管理员访问")
 		return 0, false
 	}

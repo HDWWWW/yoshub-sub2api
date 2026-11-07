@@ -9,7 +9,7 @@ import (
 
 func (h *ProxyHandler) GetOVHIPv6Storage(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "OVH IPv6 存储统计仅限完整管理员访问")
 		return
 	}

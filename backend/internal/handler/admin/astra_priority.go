@@ -9,7 +9,7 @@ import (
 )
 
 func (h *SettingHandler) GetAstraPriority(c *gin.Context) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "调度设置仅限完整管理员访问")
 		return
 	}
@@ -23,7 +23,7 @@ func (h *SettingHandler) GetAstraPriority(c *gin.Context) {
 }
 
 func (h *SettingHandler) SetAstraPriority(c *gin.Context) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "调度设置仅限完整管理员访问")
 		return
 	}

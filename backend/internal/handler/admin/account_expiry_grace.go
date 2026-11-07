@@ -12,7 +12,7 @@ import (
 
 // Keep extension settings on their own endpoints; native account DTOs stay intact.
 func (h *AccountHandler) accountExpiryGrace(c *gin.Context, update bool) {
-	if adminaccess.FromContext(c.Request.Context()) != nil {
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 		response.Error(c, 403, "保留时间设置仅限完整管理员访问")
 		return
 	}

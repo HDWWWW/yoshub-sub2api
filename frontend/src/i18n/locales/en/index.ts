@@ -5,6 +5,7 @@ import accountTestParams from './accountTestParams'
 import ovhIPv6 from './ovhIPv6'
 import adminAccessKeys from './adminAccessKeys'
 import happyFirstToken from './happyFirstToken'
+import mcp from './mcp'
 import landing from './landing'
 import common from './common'
 import dashboard from './dashboard'
@@ -21,6 +22,7 @@ export default {
   ovhIPv6,
   happyFirstToken,
   adminAccessKeys,
+  mcp,
   ...landing,
   ...common,
   ...dashboard,

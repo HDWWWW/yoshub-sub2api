@@ -88,3 +88,33 @@ func TestContentModerationIPv6HandlerSavedKeyAndSafeResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestContentModerationIPv6HandlerFullAccessCompatibility(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key := "sk-full-access-moderation-test"
+	sum := sha256.Sum256([]byte(key))
+	hash := hex.EncodeToString(sum[:])
+	settings := &moderationEngineSettings{value: fmt.Sprintf(`{"api_keys":[%q],"key_ipv6":{%q:{"proxy_id":42,"address":"2001:db8::42"}}}`, key, hash)}
+	svc := service.NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil)
+	h := NewContentModerationHandler(svc)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		principal := &adminaccess.Principal{KeyID: "full-access", Policy: adminaccess.Policy{FullAccess: true}}
+		c.Request = c.Request.WithContext(adminaccess.WithPrincipal(c.Request.Context(), principal))
+		c.Next()
+	})
+	router.POST("/allocate-ipv6", h.AllocateAPIKeyIPv6)
+	router.PUT("/config", h.UpdateConfig)
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/allocate-ipv6", fmt.Sprintf(`{"engine":"openai","key_hash":%q}`, hash)},
+		{http.MethodPut, "/config", `{"auto_assign_ipv6":true}`},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		require.NotContains(t, recorder.Body.String(), key)
+		require.Contains(t, recorder.Body.String(), `"managed_ipv6":"2001:db8::42"`)
+	}
+}

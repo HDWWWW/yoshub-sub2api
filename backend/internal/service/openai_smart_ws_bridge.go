@@ -91,11 +91,12 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 		maxLineSize = int(limit)
 	}
 	if hasResponsesClientToolMapping(toolMapping) {
-		resp.Body = newResponsesClientToolStreamBody(resp.Body, toolMapping, maxLineSize)
+		resp.Body = newResponsesClientToolStreamBody(resp.Body, toolMapping, maxLineSize, s.cfg)
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	buffer := getSSEScannerBuf64K()
 	scanner.Buffer(buffer[:0], maxLineSize)
+	scanner.Split(newBoundedSSESplit(s.cfg, maxLineSize, nil))
 	defer putSSEScannerBuf64K(buffer)
 	eventName := ""
 	var createdAtStamper responsesCreatedAtStamper
