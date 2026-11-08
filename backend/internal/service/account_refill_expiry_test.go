@@ -229,6 +229,8 @@ func TestRefillExpiryExistingDeliveriesCoverOnlyOneLeaseEach(t *testing.T) {
 	second.ID = 3
 	accounts.accounts = append(accounts.accounts, second)
 	store.mutate(t, func(state *accountRefillState) {
+		minutes := 120 // This test covers delivery credits before their configured timeout.
+		state.Config.TimeoutRetryMinutes = &minutes
 		state.Config.MinReady = 3
 		state.Config.MaxInFlight = 3
 		// Even a delivery placed before the lead window covers one upcoming exit.
@@ -293,6 +295,8 @@ func TestRefillExpiryOverlappingGroupsShareFailureAndSuccess(t *testing.T) {
 func TestRefillExpiryLegacyFailureRetainsItsLeaseWhenEarlierExitAppears(t *testing.T) {
 	s, store, p, accounts := expiryRefillHarness(t)
 	store.mutate(t, func(state *accountRefillState) {
+		minutes := 120 // Confirmed failures of non-expired orders retain their lease.
+		state.Config.TimeoutRetryMinutes = &minutes
 		state.Config.MinReady = 2
 		state.RotationCursor = 1
 		state.Jobs = []AccountRefillJob{{ID: "legacy-five", SupplierID: "legacy-five", GroupID: 2, Mode: state.Config.Mode,

@@ -198,6 +198,8 @@ func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {
 }
 
 type AccountRefillJob struct {
+	TimeoutIgnoredAt       *time.Time                  `json:"timeout_ignored_at,omitempty"`
+	TimeoutNotificationAt  *time.Time                  `json:"timeout_notification_at,omitempty"`
 	DailyBatchID           string                      `json:"daily_batch_id,omitempty"`
 	Force                  bool                        `json:"force,omitempty"`
 	TimeoutRetryOf         string                      `json:"timeout_retry_of,omitempty"`
@@ -265,7 +267,7 @@ type AccountRefillAccount struct {
 type AccountRefillEvaluation struct {
 	TimeoutRetryJobID string `json:"timeout_retry_job_id,omitempty"`
 	TimeoutRetryPlan  string `json:"timeout_retry_plan,omitempty"`
-	timeoutRetryJob   *AccountRefillJob
+	waitingForReview  bool
 	ExpiryTargets     []AccountRefillExpiryTarget `json:"expiry_targets,omitempty"`
 	Error             string                      `json:"error,omitempty"`
 	CheckedAt         time.Time                   `json:"checked_at"`
@@ -273,6 +275,7 @@ type AccountRefillEvaluation struct {
 	Healthy           int                         `json:"healthy"`
 	Expiring          int                         `json:"expiring"`
 	Pending           int                         `json:"pending"`
+	TimedOutPending   int                         `json:"timed_out_pending"`
 	InUse             int                         `json:"in_use"`
 	Capacity          int                         `json:"capacity"`
 	PendingCapacity   int                         `json:"pending_capacity"`
@@ -405,6 +408,10 @@ func refillInWindow(c AccountRefillConfig, now time.Time) bool {
 func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[int64]*AccountLoadInfo, jobs []AccountRefillJob, now time.Time, plannedPlans ...string) AccountRefillEvaluation {
 	e := AccountRefillEvaluation{CheckedAt: now, Accounts: []AccountRefillAccount{}}
 	for _, job := range jobs {
+		if refillJobTimedOut(c, job, now) {
+			e.TimedOutPending++
+			continue
+		}
 		if job.pending() {
 			e.Pending++
 			concurrency := job.Concurrency
@@ -515,7 +522,8 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 // Apply hard limits without treating expiry receipts as additional demand.
 func limitAccountRefillEvaluation(c AccountRefillConfig, e *AccountRefillEvaluation, jobs []AccountRefillJob) {
 	for _, j := range jobs {
-		if refillNeedsAttention(j.Status) {
+		if refillNeedsAttention(j.Status) && !refillJobTimedOut(c, j, e.CheckedAt) {
+			e.waitingForReview = true
 			e.Needed = 0
 			e.Reason = "原任务需要处理，暂停新增补号"
 		}

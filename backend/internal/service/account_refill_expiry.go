@@ -64,7 +64,7 @@ func evaluateRefillExpiryDemands(state *accountRefillState, jobs []AccountRefill
 	for _, claim := range claims {
 		demand, exists := demands[claim.AccountRefillExpiryTarget]
 		job, found := byJob[claim.JobID]
-		if exists && !demand.Completed && (claim.Completed || found && (job.pending() || job.ReplacementPending || job.Status == "imported")) {
+		if exists && !demand.Completed && (claim.Completed || found && !refillJobTimedOut(c, job, now) && (job.pending() || job.ReplacementPending || job.Status == "imported")) {
 			demands[claim.AccountRefillExpiryTarget] = claim
 		}
 	}
@@ -104,11 +104,11 @@ func evaluateRefillExpiryDemands(state *accountRefillState, jobs []AccountRefill
 		if found && job.Status == "imported" && job.AccountID > 0 {
 			demand.Completed = true
 		}
-		if !demand.Completed && (demand.JobID == "" || !found || !job.pending() && !job.ReplacementPending) {
+		if !demand.Completed && (demand.JobID == "" || !found || refillJobTimedOut(c, job, now) || !job.pending() && !job.ReplacementPending) {
 			windowStart := time.Unix(demand.SourceExpiresAt, 0).Add(-time.Duration(c.LeadMinutes) * time.Minute)
 			for _, candidate := range orderedJobs {
 				committed := candidate.pending() || candidate.ReplacementPending
-				if usedJobs[candidate.ID] || candidate.AccountID == demand.AccountID ||
+				if refillJobTimedOut(c, candidate, now) || usedJobs[candidate.ID] || candidate.AccountID == demand.AccountID ||
 					(!committed && (candidate.CreatedAt.Before(windowStart) || candidate.Status != "imported" || candidate.AccountID <= 0)) ||
 					(candidate.ExpiryTarget != nil && *candidate.ExpiryTarget != demand.AccountRefillExpiryTarget) {
 					continue
@@ -121,7 +121,7 @@ func evaluateRefillExpiryDemands(state *accountRefillState, jobs []AccountRefill
 				break
 			}
 		}
-		covered := demand.Completed || found && (job.pending() || job.ReplacementPending && demand.OwnerGroupID != c.GroupID)
+		covered := demand.Completed || found && !refillJobTimedOut(c, job, now) && (job.pending() || job.ReplacementPending && demand.OwnerGroupID != c.GroupID)
 		if !covered && c.Mode != "interval" {
 			e.ExpiryTargets = append(e.ExpiryTargets, demand.AccountRefillExpiryTarget)
 		}

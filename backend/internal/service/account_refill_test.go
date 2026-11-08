@@ -592,10 +592,10 @@ func TestAccountRefillKeyRotationAndReconciliation(t *testing.T) {
 func TestAccountRefillQueueFairness(t *testing.T) {
 	now := time.Now()
 	jobs := []AccountRefillJob{{Status: "queued", NextAttemptAt: now.Add(-time.Second)}, {Status: "processing", NextAttemptAt: now.Add(-time.Minute)}, {Status: "awaiting_push", NextAttemptAt: now.Add(-time.Hour)}}
-	require.Equal(t, 1, nextAccountRefillJob(jobs, false, now))
-	require.Equal(t, 2, nextAccountRefillJob(jobs, true, now))
+	require.Equal(t, 1, nextAccountRefillJob(jobs, AccountRefillConfig{PushEnabled: false}, now))
+	require.Equal(t, 2, nextAccountRefillJob(jobs, AccountRefillConfig{PushEnabled: true}, now))
 	jobs[1].Status = "blocked"
-	require.Equal(t, 0, nextAccountRefillJob(jobs, false, now))
+	require.Equal(t, 0, nextAccountRefillJob(jobs, AccountRefillConfig{PushEnabled: false}, now))
 	jobs[0].NextAttemptAt = now.Add(time.Minute)
-	require.Equal(t, -1, nextAccountRefillJob(jobs, false, now))
+	require.Equal(t, -1, nextAccountRefillJob(jobs, AccountRefillConfig{PushEnabled: false}, now))
 }

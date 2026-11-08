@@ -122,6 +122,7 @@ export interface RefillView {
   jobs: RefillJob[]
   evaluation: {
     expiry_targets?: { account_id: number; source_expires_at: number }[]
+    timed_out_pending?: number
     error?: string
     checked_at: string; ready: number; healthy: number; expiring: number; pending: number
     in_use: number; capacity: number; needed: number; reason: string

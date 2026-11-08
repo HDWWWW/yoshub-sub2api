@@ -454,6 +454,11 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}()
 		if !preview {
+			if markRefillTimeouts(&state, now) {
+				if err := persist(); err != nil {
+					return err
+				}
+			}
 			if err := s.checkDisabledRefillNotification(ctx, &state, now, persist); err != nil {
 				return err
 			}
@@ -463,9 +468,9 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				return err
 			}
 			// Evaluate locally so supplier backoff cannot hide a due timeout.
-			if state.EncryptedWebhook != "" && refillTimeoutNotifyEnabled(state.Config) && refillTimeoutCandidate(&state, state.Jobs, now) != nil {
+			if state.EncryptedWebhook != "" && refillTimeoutNotifyEnabled(state.Config) && captureRefillTimeoutNotice(&state, now) != nil {
 				if err := s.evaluate(ctx, &state, now); err == nil {
-					timeoutNotice = captureRefillTimeoutNotice(&state)
+					timeoutNotice = captureRefillTimeoutNotice(&state, now)
 				}
 			}
 			// Daily purchases are independent of normal monitoring, time windows
@@ -490,7 +495,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		if !preview && token != "" {
 			// Continue accepted work even when automation or its time window is off.
-			if index := nextAccountRefillJob(state.Jobs, state.Config.PushEnabled, now); index >= 0 {
+			if index := nextAccountRefillJob(state.Jobs, state.Config, now); index >= 0 {
 				if err := s.advance(ctx, token, &state, &state.Jobs[index], persist); err != nil {
 					return err
 				}
@@ -520,7 +525,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		if !preview {
 			state.TimeoutCheckedAt = now
-			timeoutNotice = captureRefillTimeoutNotice(&state)
+			timeoutNotice = captureRefillTimeoutNotice(&state, now)
 		}
 		reconcileRefillFailureReplacements(&state)
 		if time.Now().Before(state.ProviderRetryAt) {
@@ -590,10 +595,8 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 			state.Evaluation.Needed = refillMin(state.IntervalRemaining, refillMax(0, state.Config.MaxReady-state.Evaluation.Ready-state.Evaluation.Pending), refillMax(0, state.Config.MaxInFlight-state.Evaluation.Pending))
 			state.Evaluation.Reason = "定时补号"
-			for _, j := range state.Jobs {
-				if refillNeedsAttention(j.Status) {
-					state.Evaluation.Needed = 0
-				}
+			if state.Evaluation.waitingForReview {
+				state.Evaluation.Needed = 0
 			}
 		}
 		if state.Evaluation.Needed <= 0 {
@@ -668,10 +671,13 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return persist()
 		}
 		s.invalidateCapacityObservations(state.Config, state.Evaluation)
-		timeoutNotice = captureRefillTimeoutNotice(&state)
+		timeoutNotice = captureRefillTimeoutNotice(&state, time.Now())
 		if state.Config.Mode == "interval" && !timeoutRetry {
 			state.Evaluation.Needed = refillMin(state.IntervalRemaining, refillMax(0, state.Config.MaxReady-state.Evaluation.Ready-state.Evaluation.Pending), refillMax(0, state.Config.MaxInFlight-state.Evaluation.Pending))
 			state.Evaluation.Reason = "定时补号"
+			if state.Evaluation.waitingForReview {
+				state.Evaluation.Needed = 0
+			}
 		}
 		if state.Evaluation.Needed <= 0 || state.Evaluation.TimeoutRetryJobID != timeoutRetryID {
 			reconcileRefillFailureReplacements(&state)
@@ -838,12 +844,12 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 	if !refillProviderStatusKnown(remote.Status) {
 		j.Status = "supplier_unknown"
 		j.ResultReady = false
-		j.Error = "号商返回未知状态，保留原任务继续核对；号池无健康储备时按超时重试规则补号"
+		j.Error = "号商返回未知状态，保留原任务继续核对；超过设定时间仍未导入时不再阻塞自动补号"
 		j.NextAttemptAt = now.Add(time.Minute)
 		return persist()
 	}
 	if remote.Status == "review" {
-		j.Error = "号商要求人工核对，保留原任务；号池无健康储备时按超时重试规则补号"
+		j.Error = "号商要求人工核对，保留原任务；超过设定时间仍未导入时不再阻塞自动补号"
 		j.NextAttemptAt = now.Add(time.Minute)
 	}
 	if remote.Status == "failed" {
@@ -1130,11 +1136,19 @@ func (s *AccountRefillService) DismissRejected(ctx context.Context, id string) e
 	})
 }
 
-// Advance the oldest due transition so a large queue cannot starve earlier orders.
-func nextAccountRefillJob(jobs []AccountRefillJob, pushEnabled bool, now time.Time) int {
+// Fresh deliveries take priority over timed-out reconciliation. Within each
+// class, advance the oldest due transition so new accounts are not starved by
+// an accumulating backlog of supplier reviews.
+func nextAccountRefillJob(jobs []AccountRefillJob, c AccountRefillConfig, now time.Time) int {
 	selected := -1
 	for i, j := range jobs {
-		if !j.pending() || now.Before(j.NextAttemptAt) || j.Status == "blocked" || j.Status == "import_failed" || (!pushEnabled && j.Status == "awaiting_push") {
+		if !j.pending() || now.Before(j.NextAttemptAt) || j.Status == "blocked" || j.Status == "import_failed" || (!c.PushEnabled && j.Status == "awaiting_push") {
+			continue
+		}
+		if selected >= 0 && refillJobTimedOut(c, j, now) != refillJobTimedOut(c, jobs[selected], now) {
+			if !refillJobTimedOut(c, j, now) {
+				selected = i
+			}
 			continue
 		}
 		if selected < 0 || j.NextAttemptAt.Before(jobs[selected].NextAttemptAt) || (j.NextAttemptAt.Equal(jobs[selected].NextAttemptAt) && j.CreatedAt.Before(jobs[selected].CreatedAt)) {

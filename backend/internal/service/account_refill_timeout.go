@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -22,9 +23,32 @@ func refillTimeoutRetryDuration(c AccountRefillConfig) time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
-// Use creation times, never UpdatedAt: polling or changing supplier status is
-// not delivery. A fresh order for this pool restarts the wait across all rules.
-// Timed-out orders remain pending, keep their budget, and continue reconciling.
+// Each order has its own deadline. Polling, status updates and newer orders
+// cannot extend it. Ignore overdue orders only for demand and capacity, never
+// for reconciliation or financial reservations.
+func refillJobTimedOut(c AccountRefillConfig, job AccountRefillJob, now time.Time) bool {
+	return refillTimeoutRetryEnabled(c) && job.pending() && job.AccountID == 0 &&
+		!job.CreatedAt.IsZero() && !now.Before(job.CreatedAt.Add(refillTimeoutRetryDuration(c)))
+}
+
+func markRefillTimeouts(state *accountRefillState, now time.Time) bool {
+	if !state.Config.Enabled || !state.Config.MonitorEnabled || !state.Config.PushEnabled {
+		return false
+	}
+	changed := false
+	for i := range state.Jobs {
+		job := &state.Jobs[i]
+		if job.TimeoutIgnoredAt == nil && refillJobTimedOut(state.Config, *job, now) {
+			job.TimeoutIgnoredAt = &now
+			changed = true
+		}
+	}
+	return changed
+}
+
+// The zero-reserve fallback waits for fresh orders to reach their own deadline.
+// Normal automation separately ignores each expired order, even with reserves
+// or newer pending orders present.
 func refillTimeoutCandidate(state *accountRefillState, jobs []AccountRefillJob, now time.Time) *AccountRefillJob {
 	c := state.Config
 	if !c.Enabled || !c.MonitorEnabled || !c.PushEnabled || !refillTimeoutRetryEnabled(c) {
@@ -59,24 +83,23 @@ func applyRefillTimeoutRetry(state *accountRefillState, jobs []AccountRefillJob,
 		state.Evaluation.Reason = refillTimeoutRetryReason
 		state.Evaluation.TimeoutRetryJobID = job.ID
 		state.Evaluation.TimeoutRetryPlan = job.Plan
-		copy := *job
-		state.Evaluation.timeoutRetryJob = &copy
 	}
 }
 
-// A long monitoring interval must not postpone a due rescue. After evaluating
-// an overdue order, defer to normal checks (or one timeout interval) when there
-// is no shortage or the purchase is blocked by budget/configuration.
+// A long monitoring interval must not postpone removing a newly expired order
+// from the demand calculation. New submissions never postpone older deadlines.
 func refillTimeoutCheckDue(state *accountRefillState, now time.Time) bool {
-	job := refillTimeoutCandidate(state, state.Jobs, now)
-	if job == nil {
+	c := state.Config
+	if !c.Enabled || !c.MonitorEnabled || !c.PushEnabled {
 		return false
 	}
-	deadline := job.CreatedAt.Add(refillTimeoutRetryDuration(state.Config))
-	if due := state.LastSubmitAt.Add(refillTimeoutRetryDuration(state.Config)); due.After(deadline) {
-		deadline = due
+	for _, job := range state.Jobs {
+		if refillJobTimedOut(c, job, now) && (state.TimeoutCheckedAt.Before(job.CreatedAt.Add(refillTimeoutRetryDuration(c))) ||
+			now.Sub(state.TimeoutCheckedAt) >= refillTimeoutRetryDuration(c)) {
+			return true
+		}
 	}
-	return state.TimeoutCheckedAt.Before(deadline) || now.Sub(state.TimeoutCheckedAt) >= refillTimeoutRetryDuration(state.Config)
+	return false
 }
 
 func refillTimeoutReasonDetail(state *accountRefillState) string {
@@ -89,15 +112,29 @@ func refillTimeoutNotifyEnabled(c AccountRefillConfig) bool {
 }
 
 type refillTimeoutNotice struct {
-	job          AccountRefillJob
-	lastSubmitAt time.Time
+	jobs  []AccountRefillJob
+	ready int
 }
 
-func captureRefillTimeoutNotice(state *accountRefillState) *refillTimeoutNotice {
-	if state.Evaluation.timeoutRetryJob == nil {
+func captureRefillTimeoutNotice(state *accountRefillState, now time.Time) *refillTimeoutNotice {
+	c := state.Config
+	if !c.Enabled || !c.MonitorEnabled || !c.PushEnabled {
 		return nil
 	}
-	return &refillTimeoutNotice{job: *state.Evaluation.timeoutRetryJob, lastSubmitAt: state.LastSubmitAt}
+	notice := &refillTimeoutNotice{ready: state.Evaluation.Ready}
+	for _, job := range state.Jobs {
+		if job.TimeoutNotificationAt == nil && refillJobTimedOut(c, job, now) {
+			notice.jobs = append(notice.jobs, job)
+			// Keep each WeCom message bounded. The next tick picks up the rest.
+			if len(notice.jobs) == 3 {
+				break
+			}
+		}
+	}
+	if len(notice.jobs) == 0 {
+		return nil
+	}
+	return notice
 }
 
 // Persist the cycle and retry deadline before sending. A failed alert must not
@@ -107,41 +144,55 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 		return nil
 	}
 	now := time.Now()
-	if notice == nil {
-		// Retry the saved alert even after a rescue has reset the pool deadline.
-		if state.TimeoutNoticeContent == "" || state.TimeoutNoticeRetryAt.IsZero() || now.Before(state.TimeoutNoticeRetryAt) {
+	if state.TimeoutNoticeContent != "" && !state.TimeoutNoticeRetryAt.IsZero() {
+		// Keep an unsent alert even when other orders reach their deadlines.
+		if now.Before(state.TimeoutNoticeRetryAt) {
 			return nil
 		}
 		state.TimeoutNoticeRetryAt = now.Add(5 * time.Minute)
 		if err := persist(); err != nil {
 			return err
 		}
-		if s.sendRefillNotification(ctx, state, state.TimeoutNoticeContent) {
+		sent := s.sendRefillNotification(ctx, state, state.TimeoutNoticeContent)
+		if sent {
 			state.TimeoutNoticeRetryAt = time.Time{}
 		}
-		return persist()
+		if err := persist(); err != nil || !sent {
+			return err
+		}
 	}
-	key := notice.job.ID + ":" + notice.lastSubmitAt.UTC().Format(time.RFC3339Nano)
+	if notice == nil {
+		return nil
+	}
 	result := "尚未创建新订单：" + state.Message
 	for _, job := range state.Jobs {
 		if job.DailyBatchID != "" && !job.CreatedAt.Before(started) {
-			key += ":" + job.DailyBatchID
 			result = fmt.Sprintf("本轮每日定时补号已创建 %d 个新任务，继续等待导入。原订单仍保留核对。", state.DailyScheduleStatus.LastQuantity)
 			break
 		}
-		if job.TimeoutRetryOf == notice.job.ID && !job.CreatedAt.Before(started) {
-			key += ":" + job.ID
-			result = fmt.Sprintf("已创建超时补单，套餐 %s，预占 %g 积分；新号商任务：%s；当前状态：%s。原订单保留核对，仍可能交付并计费。", job.Plan, job.Price, refillSupplierTaskID(job), job.Status)
+		if job.ManualRequestID == "" && !job.CreatedAt.Before(started) {
+			label := "自动补号已创建新订单"
+			if job.TimeoutRetryOf != "" {
+				label = "已创建超时补单"
+			}
+			result = fmt.Sprintf("%s，套餐 %s，预占 %g 积分；新号商任务：%s；当前状态：%s。", label, job.Plan, job.Price, refillSupplierTaskID(job), job.Status)
 			break
 		}
 	}
-	if state.TimeoutNoticeKey == key && (state.TimeoutNoticeRetryAt.IsZero() || now.Before(state.TimeoutNoticeRetryAt)) {
-		return nil
+	ids, details := make([]string, 0, len(notice.jobs)), make([]string, 0, len(notice.jobs))
+	for _, job := range notice.jobs {
+		ids = append(ids, job.ID)
+		details = append(details, fmt.Sprintf("原号商任务：%s；状态：%s；已等待：%s", refillSupplierTaskID(job), job.Status, now.Sub(job.CreatedAt).Round(time.Second)))
+		for i := range state.Jobs {
+			if state.Jobs[i].ID == job.ID {
+				state.Jobs[i].TimeoutNotificationAt = &now
+			}
+		}
 	}
-	state.TimeoutNoticeKey, state.TimeoutNoticeRetryAt = key, now.Add(5*time.Minute)
-	content := fmt.Sprintf("Sub2API 补号超时重试提醒\n监测分组：#%d\n健康储备：0 个\n超时阈值：%d 分钟\n原号商任务：%s\n原任务状态：%s\n已等待：%s\n处理结果：%s\n时间：%s",
-		state.Config.GroupID, int(refillTimeoutRetryDuration(state.Config)/time.Minute), refillSupplierTaskID(notice.job), notice.job.Status,
-		now.Sub(notice.job.CreatedAt).Round(time.Second), result, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	slices.Sort(ids)
+	state.TimeoutNoticeKey, state.TimeoutNoticeRetryAt = strings.Join(ids, ":"), now.Add(5*time.Minute)
+	content := fmt.Sprintf("Sub2API 补号超时重试提醒\n监测分组：#%d\n健康储备：%d 个\n超时阈值：%d 分钟\n%s\n处理：超时订单不再阻塞自动补号，也不占补号缺口和在途名额，无需等待原单处理。\n处理结果：%s\n旧单仍会核对，可能后续交付并计费。\n时间：%s",
+		state.Config.GroupID, notice.ready, int(refillTimeoutRetryDuration(state.Config)/time.Minute), strings.Join(details, "\n"), result, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	state.TimeoutNoticeContent = content
 	if err := persist(); err != nil {
 		return err

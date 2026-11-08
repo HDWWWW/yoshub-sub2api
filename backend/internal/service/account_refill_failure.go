@@ -16,6 +16,10 @@ func markRefillFailureReplacement(state *accountRefillState, job *AccountRefillJ
 	if job.ManualRequestID != "" || job.DailyBatchID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
 		return
 	}
+	if job.TimeoutIgnoredAt != nil {
+		job.Error += "；原单已超时退出补号判断，由正常自动补号继续处理需求"
+		return
+	}
 	for _, other := range state.Jobs {
 		if other.TimeoutRetryOf == job.ID {
 			job.Error += "；已创建超时补单，不重复安排失败重补"

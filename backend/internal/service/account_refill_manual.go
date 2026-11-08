@@ -123,6 +123,9 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		}
 		pending := 0
 		for _, j := range state.Jobs {
+			if refillJobTimedOut(c, j, now) {
+				continue
+			}
 			if j.pending() {
 				pending++
 			}

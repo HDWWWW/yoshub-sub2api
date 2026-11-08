@@ -65,7 +65,7 @@ func (s *AccountRefillService) checkDisabledRefillNotification(ctx context.Conte
 			return persist()
 		}
 		for _, job := range jobs {
-			if refillNeedsAttention(job.Status) {
+			if refillNeedsAttention(job.Status) && !refillJobTimedOut(c, job, now) {
 				e.Needed = 0
 			}
 		}

@@ -204,6 +204,7 @@
         </div>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4"><div v-for="item in usageItems" :key="item.key" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800"><div class="text-xs text-gray-500">{{ t(`accountRefill.${item.key}`) }}</div><div class="mt-1 font-semibold tabular-nums">{{ number(item.value) }}</div></div></div>
         <p class="text-xs leading-5 text-gray-500">{{ t('accountRefill.progressHint') }}</p>
+        <p v-if="view.evaluation.timed_out_pending" class="text-sm text-amber-700 dark:text-amber-300" data-testid="refill-timeout-ignored">{{ t('accountRefill.timeoutIgnored', { count: view.evaluation.timed_out_pending }) }}</p>
         <div class="flex flex-wrap gap-5 text-sm"><span>{{ t('accountRefill.nextCheck') }}: {{ date(view.next_check_at) }}</span><span v-if="view.config.mode === 'interval'">{{ t('accountRefill.nextInterval') }}: {{ date(view.next_interval_at) }}</span></div>
         <div>
           <div class="overflow-x-auto">

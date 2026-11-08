@@ -83,7 +83,7 @@ func TestRefillTimeoutNotifiesBlockedResultOnceAndCanBeDisabled(t *testing.T) {
 			for i := 0; i < 3; i++ {
 				require.NoError(t, s.run(context.Background(), scenario == "preview"))
 			}
-			if scenario == "budget" || scenario == "balance" || scenario == "backoff" {
+			if scenario == "budget" || scenario == "balance" || scenario == "backoff" || scenario == "healthy" {
 				require.Len(t, n.messages, 1)
 				require.Contains(t, n.messages[0], "尚未创建新订单")
 				if scenario == "budget" {
@@ -94,6 +94,10 @@ func TestRefillTimeoutNotifiesBlockedResultOnceAndCanBeDisabled(t *testing.T) {
 				}
 				if scenario == "backoff" {
 					require.Contains(t, n.messages[0], "退避")
+				}
+				if scenario == "healthy" {
+					require.Contains(t, n.messages[0], "健康储备：1 个")
+					require.Contains(t, n.messages[0], "已达健康账号上限")
 				}
 				require.Empty(t, p.orders)
 			} else {
@@ -108,6 +112,7 @@ func seedStalledRefill(t *testing.T, store *refillTestStore, status string, crea
 	store.mutate(t, func(v *accountRefillState) {
 		v.Jobs = []AccountRefillJob{{ID: "stalled", SupplierID: "stalled", Status: status, SupplierStatus: "review",
 			Plan: "pro20x", Price: 60, GroupID: v.Config.GroupID, DeliveryGroupIDs: v.Config.DeliveryGroupIDs,
+			DeliveryConfig: v.Config.Delivery, Concurrency: v.Config.importConcurrencyForPlan("pro20x"),
 			Mode: v.Config.Mode, CreatedAt: created, UpdatedAt: time.Now(), NextAttemptAt: time.Now().Add(24 * time.Hour)}}
 		v.LastSubmitAt = created
 		v.RotationCursor = 1
