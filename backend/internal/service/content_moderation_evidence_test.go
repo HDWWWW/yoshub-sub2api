@@ -31,7 +31,7 @@ func TestContentModerationEvidence_LongScriptKeywordBeyondRetention(t *testing.T
 	require.Equal(t, string([]rune(text)[:maxModerationEvidenceRunes]), evidence.Text)
 	require.NotContains(t, evidence.Text, "仿生")
 	require.Contains(t, evidence.MatchContext, "角色穿上仿生装甲走入画面。")
-	require.LessOrEqual(t, utf8.RuneCountInString(evidence.MatchContext), maxModerationMatchContextRunes)
+	require.LessOrEqual(t, utf8.RuneCountInString(evidence.MatchContext), defaultModerationKeywordContextChars)
 	require.True(t, strings.HasPrefix(evidence.MatchContext, "…"))
 	require.True(t, strings.HasSuffix(evidence.MatchContext, "…"))
 
@@ -46,7 +46,7 @@ func TestContentModerationEvidence_RedactsBeforeAnyWindow(t *testing.T) {
 	secret := "sk-proj-" + strings.Repeat("abcdefghijklmnop", 35)
 	text := strings.Repeat("序幕。", 130) + " before " + secret + " after 仿生装甲" + strings.Repeat("收尾。", 130)
 	log := &ContentModerationLog{MatchedKeyword: "仿生"}
-	setContentModerationEvidence(log, text)
+	setContentModerationEvidence(log, text, defaultModerationKeywordContextChars)
 	for _, value := range []string{log.InputExcerpt, log.InputEvidence.Text, log.InputEvidence.MatchContext} {
 		require.NotContains(t, value, "abcdefghijklmnop")
 		require.NotContains(t, value, "sk-proj-")
@@ -56,12 +56,12 @@ func TestContentModerationEvidence_RedactsBeforeAnyWindow(t *testing.T) {
 
 	// Never reconstruct a hidden credential merely to show a keyword hit.
 	log.MatchedKeyword = "abcdefghijklmnop"
-	setContentModerationEvidence(log, text)
+	setContentModerationEvidence(log, text, defaultModerationKeywordContextChars)
 	require.Empty(t, log.InputEvidence.MatchContext)
 	require.NotContains(t, log.InputExcerpt, log.MatchedKeyword)
 
 	text = strings.Repeat("字", maxModerationEvidenceRunes-8) + " " + secret
-	setContentModerationEvidence(log, text)
+	setContentModerationEvidence(log, text, defaultModerationKeywordContextChars)
 	require.NotContains(t, log.InputEvidence.Text, "sk-proj-")
 	require.NotContains(t, log.InputEvidence.Text, "abcdefghijklmnop")
 }
@@ -69,7 +69,7 @@ func TestContentModerationEvidence_RedactsBeforeAnyWindow(t *testing.T) {
 func TestContentModerationEvidence_CompleteTextAndUnicodeContext(t *testing.T) {
 	for _, text := range []string{"", "中文🎬\n最后一句。", strings.Repeat("字", maxModerationEvidenceRunes)} {
 		log := &ContentModerationLog{}
-		setContentModerationEvidence(log, text)
+		setContentModerationEvidence(log, text, defaultModerationKeywordContextChars)
 		require.Equal(t, text, log.InputEvidence.Text)
 		require.False(t, log.InputEvidence.Truncated)
 		require.Equal(t, utf8.RuneCountInString(text), log.InputEvidence.TotalCharacters)
@@ -114,6 +114,66 @@ func TestContentModerationEvidence_CurrentUserInputOnly(t *testing.T) {
 	require.Contains(t, logs[0].InputExcerpt, "角色穿上仿生装甲。")
 	require.Equal(t, text, logs[0].InputEvidence.Text)
 	require.NotContains(t, logs[0].InputEvidence.Text, "private-text")
+}
+
+func TestContentModerationEvidence_ConfiguredKeywordContextAppliesWithoutRestart(t *testing.T) {
+	text := strings.Repeat("分镜🎬。", 3500) + "仿生" + strings.Repeat("后续🎬。", 3500)
+	body, err := json.Marshal(map[string]any{"messages": []map[string]string{{"role": "user", "content": text}}})
+	require.NoError(t, err)
+	cfg := defaultContentModerationConfig()
+	cfg.Enabled, cfg.Mode, cfg.BlockedKeywords = true, ContentModerationModePreBlock, []string{"仿生"}
+	cfg.EmailOnHit, cfg.AutoBanEnabled = false, false
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	settings := &contentModerationTestSettingRepo{values: map[string]string{
+		SettingKeyRiskControlEnabled: "true", SettingKeyContentModerationConfig: string(raw),
+	}}
+	repo := &contentModerationTestRepo{}
+	svc := NewContentModerationService(settings, repo, &contentModerationTestHashCache{}, nil, nil, nil, nil, nil)
+	for index, chars := range []int{1, 80, 2000, 12000} {
+		view, err := svc.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{KeywordContextChars: &chars})
+		require.NoError(t, err)
+		require.Equal(t, chars, view.KeywordContextChars)
+		decision, err := svc.Check(context.Background(), ContentModerationCheckInput{Protocol: ContentModerationProtocolOpenAIChat, Body: body})
+		require.NoError(t, err)
+		require.True(t, decision.Blocked)
+		logs := requireContentModerationLogCount(t, repo, index+1)
+		log := logs[index]
+		require.NotContains(t, log.InputEvidence.Text, "仿生")
+		require.Contains(t, log.InputEvidence.MatchContext, "仿生")
+		require.True(t, utf8.ValidString(log.InputEvidence.MatchContext))
+		require.Equal(t, max(chars, 2), utf8.RuneCountInString(log.InputEvidence.MatchContext))
+		require.LessOrEqual(t, utf8.RuneCountInString(log.InputExcerpt), maxModerationExcerptRunes)
+	}
+	// Persisted config survives service recreation and is shared by both engines.
+	fresh := NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil)
+	view, err := fresh.GetConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 12000, view.KeywordContextChars)
+	for _, engine := range view.EngineConfigs {
+		require.Equal(t, 12000, engine.KeywordContextChars)
+	}
+}
+
+func TestContentModerationKeywordContextConfigDefaults(t *testing.T) {
+	for _, value := range []int{0, -1, 12001} {
+		cfg := defaultContentModerationConfig()
+		cfg.KeywordContextChars = value
+		cfg.normalize()
+		require.Equal(t, 640, cfg.KeywordContextChars)
+	}
+	for _, sample := range []struct {
+		text, keyword string
+		limit         int
+	}{
+		{"前仿生后", "仿生", 1}, {"前仿生后", "仿生", 2}, {"前仿生后", "仿生", 3},
+		{"仿生后后后", "仿生", 4}, {"前前前仿生", "仿生", 4}, {"前🎬后", "🎬", 1},
+	} {
+		value := moderationKeywordContext(sample.text, sample.keyword, sample.limit)
+		require.Contains(t, value, sample.keyword)
+		require.True(t, utf8.ValidString(value))
+		require.LessOrEqual(t, utf8.RuneCountInString(value), max(sample.limit, utf8.RuneCountInString(sample.keyword)))
+	}
 }
 
 func TestContentModerationEvidence_OfficialPoliciesRetainCompleteBodies(t *testing.T) {

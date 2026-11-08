@@ -62,6 +62,51 @@ func TestContentModerationCapacityHandlerRoundTrip(t *testing.T) {
 	}
 }
 
+func TestContentModerationKeywordContextHandlerRoundTrip(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name, initial, body string
+		status, chars       int
+	}{
+		{"legacy default", `{}`, `{}`, 200, 640},
+		{"custom", `{"keyword_context_chars":320}`, `{"keyword_context_chars":2000}`, 200, 2000},
+		{"minimum", `{}`, `{"keyword_context_chars":1}`, 200, 1},
+		{"maximum", `{}`, `{"keyword_context_chars":12000}`, 200, 12000},
+		{"omitted", `{"keyword_context_chars":320}`, `{}`, 200, 320},
+		{"zero", `{"keyword_context_chars":320}`, `{"keyword_context_chars":0}`, 400, 320},
+		{"negative", `{"keyword_context_chars":320}`, `{"keyword_context_chars":-1}`, 400, 320},
+		{"above maximum", `{"keyword_context_chars":320}`, `{"keyword_context_chars":12001}`, 400, 320},
+		{"fraction", `{"keyword_context_chars":320}`, `{"keyword_context_chars":1.5}`, 400, 320},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := &moderationEngineSettings{value: tc.initial}
+			svc := service.NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil)
+			router := gin.New()
+			router.PUT("/config", NewContentModerationHandler(svc).UpdateConfig)
+			req := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, tc.status, w.Code, w.Body.String())
+			if tc.status != 200 {
+				require.Equal(t, tc.initial, settings.value)
+			}
+			fresh := service.NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil)
+			router.GET("/config", NewContentModerationHandler(fresh).GetConfig)
+			w = httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config", nil))
+			require.Equal(t, 200, w.Code)
+			var reply struct {
+				Data struct {
+					Chars int `json:"keyword_context_chars"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &reply))
+			require.Equal(t, tc.chars, reply.Data.Chars)
+		})
+	}
+}
+
 type moderationInputRepo struct {
 	service.ContentModerationRepository
 	calls int

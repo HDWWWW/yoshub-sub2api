@@ -171,6 +171,7 @@ type ContentModerationConfig struct {
 	HitRetentionDays     int                                 `json:"hit_retention_days"`
 	NonHitRetentionDays  int                                 `json:"non_hit_retention_days"`
 	LogStorageLimitGB    int                                 `json:"log_storage_limit_gb"`
+	KeywordContextChars  int                                 `json:"keyword_context_chars"`
 	PreHashCheckEnabled  bool                                `json:"pre_hash_check_enabled"`
 	BlockedKeywords      []string                            `json:"blocked_keywords"`
 	KeywordBlockingMode  string                              `json:"keyword_blocking_mode"`
@@ -213,6 +214,7 @@ type ContentModerationConfigView struct {
 	HitRetentionDays               int                                     `json:"hit_retention_days"`
 	NonHitRetentionDays            int                                     `json:"non_hit_retention_days"`
 	LogStorageLimitGB              int                                     `json:"log_storage_limit_gb"`
+	KeywordContextChars            int                                     `json:"keyword_context_chars"`
 	PreHashCheckEnabled            bool                                    `json:"pre_hash_check_enabled"`
 	BlockedKeywords                []string                                `json:"blocked_keywords"`
 	KeywordBlockingMode            string                                  `json:"keyword_blocking_mode"`
@@ -315,6 +317,7 @@ type UpdateContentModerationConfigInput struct {
 	HitRetentionDays               *int                          `json:"hit_retention_days"`
 	NonHitRetentionDays            *int                          `json:"non_hit_retention_days"`
 	LogStorageLimitGB              *int                          `json:"log_storage_limit_gb"`
+	KeywordContextChars            *int                          `json:"keyword_context_chars"`
 	PreHashCheckEnabled            *bool                         `json:"pre_hash_check_enabled"`
 	BlockedKeywords                *[]string                     `json:"blocked_keywords"`
 	KeywordBlockingMode            *string                       `json:"keyword_blocking_mode"`
@@ -701,6 +704,12 @@ func (s *ContentModerationService) updateConfig(ctx context.Context, input Updat
 			return nil, infraerrors.BadRequest("INVALID_MODERATION_LOG_CAPACITY", "日志容量上限必须在 1-200 GB 之间")
 		}
 		cfg.LogStorageLimitGB = *input.LogStorageLimitGB
+	}
+	if input.KeywordContextChars != nil {
+		if *input.KeywordContextChars < 1 || *input.KeywordContextChars > maxModerationKeywordContextChars {
+			return nil, infraerrors.BadRequest("INVALID_MODERATION_KEYWORD_CONTEXT", "关键词上下文字数必须在 1-12000 之间")
+		}
+		cfg.KeywordContextChars = *input.KeywordContextChars
 	}
 	if input.PreHashCheckEnabled != nil {
 		cfg.PreHashCheckEnabled = *input.PreHashCheckEnabled
@@ -2033,7 +2042,7 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 	if len(matchedKeywords) > 0 {
 		log.MatchedKeyword = matchedKeywords[0]
 	}
-	setContentModerationEvidence(log, text)
+	setContentModerationEvidence(log, text, cfg.KeywordContextChars)
 	return log
 }
 
@@ -2254,6 +2263,7 @@ func defaultContentModerationConfig() *ContentModerationConfig {
 		HitRetentionDays:     defaultContentModerationHitRetentionDays,
 		NonHitRetentionDays:  defaultContentModerationNonHitRetentionDays,
 		LogStorageLimitGB:    200,
+		KeywordContextChars:  defaultModerationKeywordContextChars,
 		PreHashCheckEnabled:  false,
 		BlockedKeywords:      []string{},
 		KeywordBlockingMode:  ContentModerationKeywordModeKeywordAndAPI,
@@ -2366,6 +2376,7 @@ func (cfg *ContentModerationConfig) normalize() {
 	if cfg.LogStorageLimitGB <= 0 || cfg.LogStorageLimitGB > 200 {
 		cfg.LogStorageLimitGB = 200
 	}
+	cfg.KeywordContextChars = normalizeModerationKeywordContextChars(cfg.KeywordContextChars)
 	cfg.GroupIDs = normalizeInt64IDs(cfg.GroupIDs)
 	cfg.Thresholds = mergeContentModerationThresholds(ContentModerationDefaultThresholds(), cfg.Thresholds)
 	cfg.BlockedKeywords = normalizeBlockedKeywords(cfg.BlockedKeywords)
@@ -2600,6 +2611,7 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		HitRetentionDays:               cfg.HitRetentionDays,
 		NonHitRetentionDays:            cfg.NonHitRetentionDays,
 		LogStorageLimitGB:              cfg.LogStorageLimitGB,
+		KeywordContextChars:            cfg.KeywordContextChars,
 		PreHashCheckEnabled:            cfg.PreHashCheckEnabled,
 		BlockedKeywords:                append([]string(nil), cfg.BlockedKeywords...),
 		KeywordBlockingMode:            cfg.KeywordBlockingMode,

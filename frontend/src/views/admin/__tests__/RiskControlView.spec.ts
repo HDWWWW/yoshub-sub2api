@@ -316,6 +316,36 @@ describe('admin RiskControlView', () => {
     wrapper.unmount()
   })
 
+  it.each([undefined, 1600])('loads and saves keyword context with existing value %s', async (configured) => {
+    getConfig.mockResolvedValue({ ...baseConfig(), keyword_context_chars: configured })
+    updateConfig.mockImplementation(async payload => ({ ...baseConfig(), ...payload }))
+    const wrapper = await mountAudits([])
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.retention').trigger('click')
+    const input = wrapper.get<HTMLInputElement>('[data-test="moderation-keyword-context-chars"]')
+    expect(input.element.value).toBe(String(configured ?? 640))
+    await input.setValue('2400')
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ keyword_context_chars: 2400 }))
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.retention').trigger('click')
+    expect(wrapper.get<HTMLInputElement>('[data-test="moderation-keyword-context-chars"]').element.value).toBe('2400')
+    wrapper.unmount()
+  })
+
+  it.each(['', '0', '-1', '12001', '1.5'])('rejects invalid keyword context %s without saving', async value => {
+    const wrapper = await mountAudits([])
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.retention').trigger('click')
+    await wrapper.get('[data-test="moderation-keyword-context-chars"]').setValue(value)
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+    expect(updateConfig).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.riskControl.keywordContextCharsInvalid')
+    wrapper.unmount()
+  })
+
   it('loads and saves the shared retention capacity', async () => {
     getConfig.mockResolvedValue({ ...baseConfig(), log_storage_limit_gb: 50 })
     const wrapper = await mountAudits([])

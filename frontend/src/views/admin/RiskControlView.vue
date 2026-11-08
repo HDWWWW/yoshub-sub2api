@@ -1084,6 +1084,11 @@
               <input v-model.number="configForm.non_hit_retention_days" type="number" min="1" max="3" class="input" />
             </div>
             <div class="lg:col-span-2">
+              <label class="input-label" for="moderation-keyword-context-chars">{{ t('admin.riskControl.keywordContextChars') }}</label>
+              <input id="moderation-keyword-context-chars" v-model.number="configForm.keyword_context_chars" type="number" min="1" max="12000" step="1" class="input max-w-xs" data-test="moderation-keyword-context-chars" />
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.keywordContextCharsHint') }}</p>
+            </div>
+            <div class="lg:col-span-2">
               <label class="input-label" for="moderation-log-capacity">{{ t('admin.riskControl.logStorageLimit') }}</label>
               <input id="moderation-log-capacity" v-model.number="configForm.log_storage_limit_gb" type="number" min="1" max="200" step="1" class="input max-w-xs" data-test="moderation-log-capacity" />
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.logStorageHint') }}</p>
@@ -1358,6 +1363,7 @@ const configForm = reactive({
   hit_retention_days: 180,
   non_hit_retention_days: 3,
   log_storage_limit_gb: 200,
+  keyword_context_chars: 640,
   pre_hash_check_enabled: false,
   thresholds: { ...riskThresholdDefaults } as Record<string, number>,
   blocked_keywords_text: '',
@@ -1888,6 +1894,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.hit_retention_days = config.hit_retention_days || 180
   configForm.non_hit_retention_days = Math.min(Math.max(config.non_hit_retention_days || 3, 1), 3)
   configForm.log_storage_limit_gb = config.log_storage_limit_gb ?? 200
+  configForm.keyword_context_chars = config.keyword_context_chars ?? 640
   configForm.pre_hash_check_enabled = config.pre_hash_check_enabled ?? false
   configForm.thresholds = riskThresholdsFromConfig(config.thresholds)
   configForm.blocked_keywords_text = Array.isArray(config.blocked_keywords) ? config.blocked_keywords.join('\n') : ''
@@ -1953,6 +1960,11 @@ async function loadStatus(silent = true) {
 async function saveConfig() {
   saving.value = true
   try {
+    const keywordContextChars = Number(configForm.keyword_context_chars)
+    if (!Number.isInteger(keywordContextChars) || keywordContextChars < 1 || keywordContextChars > 12000) {
+      appStore.showError(t('admin.riskControl.keywordContextCharsInvalid'))
+      return
+    }
     const modelFilterPayload = buildModelFilterPayload()
     if (modelFilterPayload.type !== 'all' && modelFilterPayload.models.length === 0) {
       appStore.showError(t('admin.riskControl.modelFilterModelsRequired'))
@@ -1985,6 +1997,7 @@ async function saveConfig() {
       hit_retention_days: Number(configForm.hit_retention_days) || 180,
       non_hit_retention_days: Math.min(Math.max(Number(configForm.non_hit_retention_days) || 3, 1), 3),
       log_storage_limit_gb: Number(configForm.log_storage_limit_gb),
+      keyword_context_chars: keywordContextChars,
       pre_hash_check_enabled: configForm.pre_hash_check_enabled,
       thresholds: buildRiskThresholdPayload(),
       blocked_keywords: blockedKeywordList.value,

@@ -10,7 +10,8 @@ import (
 )
 
 const maxModerationEvidenceRunes = 12000
-const maxModerationMatchContextRunes = 640
+const defaultModerationKeywordContextChars = 640
+const maxModerationKeywordContextChars = 12000
 
 // Ordinary audits retain bounded extracted text. Official safety-policy events
 // retain the complete redacted client request and rejecting provider event.
@@ -110,7 +111,7 @@ func (s *ContentModerationService) GetLogInput(ctx context.Context, id int64) (*
 	return s.repo.GetLogInput(ctx, id)
 }
 
-func setContentModerationEvidence(log *ContentModerationLog, text string) {
+func setContentModerationEvidence(log *ContentModerationLog, text string, keywordContextChars int) {
 	// Redact the whole input BEFORE selecting windows; cutting a token first
 	// could prevent the secret matcher from recognizing it.
 	redacted := redactContentModerationSecrets(text)
@@ -123,11 +124,18 @@ func setContentModerationEvidence(log *ContentModerationLog, text string) {
 	log.InputExcerpt = trimRunes(redacted, maxModerationExcerptRunes)
 	if log.MatchedKeyword != "" {
 		// Search the entire sanitized text, including beyond the detail cap.
-		log.InputEvidence.MatchContext = moderationKeywordContext(redacted, log.MatchedKeyword, maxModerationMatchContextRunes)
+		log.InputEvidence.MatchContext = moderationKeywordContext(redacted, log.MatchedKeyword, normalizeModerationKeywordContextChars(keywordContextChars))
 		if excerpt := moderationKeywordContext(redacted, log.MatchedKeyword, maxModerationExcerptRunes); excerpt != "" {
 			log.InputExcerpt = excerpt
 		}
 	}
+}
+
+func normalizeModerationKeywordContextChars(value int) int {
+	if value < 1 || value > maxModerationKeywordContextChars {
+		return defaultModerationKeywordContextChars
+	}
+	return value
 }
 
 func moderationKeywordContext(text, keyword string, limit int) string {
@@ -148,10 +156,20 @@ func moderationKeywordContext(text, keyword string, limit int) string {
 	right := min(len(runes), left+width)
 	left = max(0, right-width)
 	result := string(runes[left:right])
+	// Very small limits still preserve the full keyword. Add omission markers
+	// only when both fit within the requested character budget.
+	markers := 0
 	if left > 0 {
-		result = "…" + result
+		markers++
 	}
 	if right < len(runes) {
+		markers++
+	}
+	showMarkers := right-left+markers <= max(limit, end-start)
+	if left > 0 && showMarkers {
+		result = "…" + result
+	}
+	if right < len(runes) && showMarkers {
 		result += "…"
 	}
 	return result
