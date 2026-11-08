@@ -114,3 +114,17 @@ func TestAccountAutoFastStoreInvalidStateFailsClosed(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got.Managed[1].Original)
 }
+
+func TestAccountAutoFastStoreMultipleAccountsCompatibility(t *testing.T) {
+	legacy := `{"rules":{"7":{"group_id":7,"revision":3,"config":{"enabled":true,"stages":[{"minutes":45,"used_below_percent":50}],"final_minutes":5,"usage_max_age_seconds":300}}}}`
+	state, err := decodeAccountAutoFastState(legacy)
+	require.NoError(t, err)
+	require.False(t, state.Rules[7].Config.RequireMultipleAccounts)
+	state.Rules[7].Config.RequireMultipleAccounts = true
+	raw, err := json.Marshal(state)
+	require.NoError(t, err)
+	got, err := decodeAccountAutoFastState(string(raw))
+	require.NoError(t, err)
+	require.True(t, got.Rules[7].Config.RequireMultipleAccounts)
+	require.EqualValues(t, 3, got.Rules[7].Revision)
+}

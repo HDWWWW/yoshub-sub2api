@@ -32,10 +32,11 @@ type AccountAutoFastStage struct {
 }
 
 type AccountAutoFastConfig struct {
-	Enabled            bool                   `json:"enabled"`
-	Stages             []AccountAutoFastStage `json:"stages"`
-	FinalMinutes       int                    `json:"final_minutes"`
-	UsageMaxAgeSeconds int                    `json:"usage_max_age_seconds"`
+	Enabled                 bool                   `json:"enabled"`
+	RequireMultipleAccounts bool                   `json:"require_multiple_accounts"`
+	Stages                  []AccountAutoFastStage `json:"stages"`
+	FinalMinutes            int                    `json:"final_minutes"`
+	UsageMaxAgeSeconds      int                    `json:"usage_max_age_seconds"`
 }
 
 func DefaultAccountAutoFastConfig() AccountAutoFastConfig {
@@ -86,13 +87,14 @@ type AccountAutoFastEvent struct {
 }
 
 type AccountAutoFastRule struct {
-	GroupID   int64                        `json:"group_id"`
-	Revision  int64                        `json:"revision"`
-	Config    AccountAutoFastConfig        `json:"config"`
-	CheckedAt time.Time                    `json:"checked_at"`
-	Total     int                          `json:"total"`
-	Accounts  []AccountAutoFastObservation `json:"accounts"`
-	Events    []AccountAutoFastEvent       `json:"events"`
+	GroupID          int64                        `json:"group_id"`
+	Revision         int64                        `json:"revision"`
+	Config           AccountAutoFastConfig        `json:"config"`
+	CheckedAt        time.Time                    `json:"checked_at"`
+	Total            int                          `json:"total"`
+	EligibleAccounts int                          `json:"eligible_accounts"`
+	Accounts         []AccountAutoFastObservation `json:"accounts"`
+	Events           []AccountAutoFastEvent       `json:"events"`
 }
 
 type AccountAutoFastManaged struct {
@@ -349,6 +351,25 @@ func autoFastEvent(rule *AccountAutoFastRule, now time.Time, id int64, on bool, 
 	}
 }
 
+// Count the whole group, independently of the time stage and quota snapshot
+// needed to turn Fast on. Expired/reclaimed or currently blocked accounts cannot
+// act as the second available account. Busy concurrency slots do not remove one.
+func autoFastEligibleAccounts(pool []Account, now time.Time) int {
+	count := 0
+	for i := range pool {
+		a := &pool[i]
+		if !a.IsOpenAI() || !a.isSchedulableAt(now) || EvaluateAccountSchedulingThreshold(a, nil, now).ShouldPause {
+			continue
+		}
+		deadline, _ := a.SourceExpiresAt()
+		if (deadline != nil && !deadline.After(now)) || (a.ExpiresAt != nil && !a.ExpiresAt.After(now)) {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 func (s *AccountAutoFastService) restore(ctx context.Context, state *AccountAutoFastState, apply AccountAutoFastApply, id int64, managed AccountAutoFastManaged, now time.Time, reason string) error {
 	a, err := s.accounts.GetByID(ctx, id)
 	if errors.Is(err, ErrAccountNotFound) {
@@ -441,9 +462,18 @@ func (s *AccountAutoFastService) tick(ctx context.Context, now time.Time) error 
 		for _, id := range ids {
 			rule := state.Rules[id]
 			rule.CheckedAt, rule.Total, rule.Accounts = now, len(pools[id]), []AccountAutoFastObservation{}
+			rule.EligibleAccounts = autoFastEligibleAccounts(pools[id], now)
 			for i := range pools[id] {
 				a := &pools[id][i]
 				o, desired := evaluateAutoFast(a, rule.Config, now)
+				if rule.Config.RequireMultipleAccounts && rule.EligibleAccounts < 2 && o.Mode != "inactive" && o.Mode != "expired" {
+					// This prerequisite wins over final-stage forcing and stale quota
+					// retention. Keep ownership while off so original=true cannot be
+					// restored by the ordinary exit path during single-account mode.
+					off := false
+					desired = &off
+					o.Mode, o.Message = "insufficient_accounts", fmt.Sprintf("当前仅 %d 个可调度账号，少于2个，关闭Fast", rule.EligibleAccounts)
+				}
 				if len(owners[a.ID]) > 1 {
 					o.Mode, o.Message, desired = "conflict", "账号属于多个已启用规则分组，暂停接管", nil
 				}

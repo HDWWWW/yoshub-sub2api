@@ -41,6 +41,9 @@ func (s *autoFastHandlerStore) Update(_ context.Context, fn func(*service.Accoun
 func TestAccountAutoFastHandlerAuthorizationValidationAndSafeErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	valid, _ := json.Marshal(map[string]any{"config": service.DefaultAccountAutoFastConfig(), "revision": 0})
+	multiple := service.DefaultAccountAutoFastConfig()
+	multiple.RequireMultipleAccounts = true
+	withMultiple, _ := json.Marshal(map[string]any{"config": multiple, "revision": 0})
 	for _, tc := range []struct {
 		name, method, query, body string
 		restricted, unavailable   bool
@@ -49,6 +52,7 @@ func TestAccountAutoFastHandlerAuthorizationValidationAndSafeErrors(t *testing.T
 	}{
 		{name: "view", method: "GET", status: 200},
 		{name: "save", body: string(valid), status: 200},
+		{name: "save multiple accounts", body: string(withMultiple), status: 200},
 		{name: "restricted view", method: "GET", restricted: true, status: 403},
 		{name: "restricted save", body: string(valid), restricted: true, status: 403},
 		{name: "bad group", query: "x", status: 400},
@@ -90,6 +94,10 @@ func TestAccountAutoFastHandlerAuthorizationValidationAndSafeErrors(t *testing.T
 			require.NotContains(t, rec.Body.String(), "private db credential")
 			if tc.status == http.StatusOK {
 				require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+			}
+			if tc.name == "save multiple accounts" {
+				require.True(t, store.state.Rules[7].Config.RequireMultipleAccounts)
+				require.Contains(t, rec.Body.String(), `"require_multiple_accounts":true`)
 			}
 		})
 	}

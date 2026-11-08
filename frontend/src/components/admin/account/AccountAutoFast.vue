@@ -20,6 +20,13 @@
             <input v-model="draft.enabled" data-testid="auto-fast-enabled" type="checkbox" class="rounded" />
             <span class="text-sm font-medium">{{ t('accountAutoFast.enabled') }}</span>
           </label>
+          <div class="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+            <label class="flex items-center gap-3">
+              <input v-model="draft.require_multiple_accounts" data-testid="auto-fast-require-multiple" type="checkbox" class="rounded" />
+              <span class="text-sm font-medium">{{ t('accountAutoFast.requireMultipleAccounts') }}</span>
+            </label>
+            <p class="text-xs text-gray-500">{{ t('accountAutoFast.requireMultipleAccountsHint') }}</p>
+          </div>
           <section class="space-y-3">
             <h3 class="text-sm font-semibold">{{ t('accountAutoFast.stagesTitle') }}</h3>
             <p class="text-xs text-gray-500">{{ t('accountAutoFast.stagesHint') }}</p>
@@ -48,6 +55,7 @@
         <section class="space-y-3 rounded-lg border border-gray-200 p-3 text-sm dark:border-dark-600">
           <div class="flex items-center justify-between gap-3"><h3 class="font-semibold">{{ t('accountAutoFast.status') }}</h3><button type="button" class="btn btn-secondary text-xs" data-testid="auto-fast-refresh" :disabled="refreshing || loading || saving" @click="refresh">{{ t('common.refresh') }}</button></div>
           <p>{{ view.config.enabled ? t('accountAutoFast.active') : t('accountAutoFast.disabled') }} · {{ t('accountAutoFast.total', { count: view.total }) }}</p>
+          <p v-if="view.config.require_multiple_accounts && checked" data-testid="auto-fast-eligible-count" :class="view.eligible_accounts < 2 ? 'text-amber-600' : 'text-gray-500'">{{ t('accountAutoFast.eligibleAccounts', { count: view.eligible_accounts }) }} · {{ view.eligible_accounts < 2 ? t('accountAutoFast.waitingForAccounts') : t('accountAutoFast.enoughAccounts') }}</p>
           <p v-if="checked" class="text-xs text-gray-500">{{ t('accountAutoFast.checked') }} {{ formatTime(view.checked_at) }}</p>
           <p v-if="view.config.enabled && stale" class="text-amber-600">{{ t('accountAutoFast.stale') }}</p>
           <div v-for="account in view.accounts" :key="account.account_id" class="space-y-1 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
@@ -98,7 +106,7 @@ const checked = computed(() => !!view.value?.checked_at && Date.parse(view.value
 const stale = computed(() => !checked.value || now.value - Date.parse(view.value!.checked_at) > 35000)
 const changedElsewhere = computed(() => !!view.value && view.value.revision !== draftRevision.value)
 let generation = 0, timer: ReturnType<typeof setInterval> | undefined
-function cloneConfig(config: AccountAutoFastConfig): AccountAutoFastConfig { return { ...config, stages: config.stages.map(stage => ({ ...stage })) } }
+function cloneConfig(config: AccountAutoFastConfig): AccountAutoFastConfig { return { ...config, require_multiple_accounts: config.require_multiple_accounts ?? false, stages: config.stages.map(stage => ({ ...stage })) } }
 function formatTime(value: string) { return new Date(value).toLocaleString() }
 function sourceName(source: string) { return t(source === 'supplier_api' ? 'accountAutoFast.supplier' : source === 'import' ? 'accountAutoFast.imported' : 'accountAutoFast.local') }
 function addStage() {
