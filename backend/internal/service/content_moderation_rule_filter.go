@@ -171,6 +171,9 @@ func ruleEvidence(d pf.Decision, cfg *ContentModerationRuleFilter, limit int) *C
 		}
 		plain := strings.ReplaceAll(strings.ReplaceAll(marked, pf.HitStartMarker, ""), pf.HitEndMarker, "")
 		text := trimRunes(redactContentModerationSecrets(plain), remaining)
+		if len(words) == 0 {
+			words = pf.SignalContextKeywords(sig, cfg.upstream(), text)
+		}
 		remaining -= utf8.RuneCountInString(text)
 		e.Signals = append(e.Signals, ContentModerationRuleSignal{Origin: string(sig.Origin), LayerMode: sig.LayerMode, Score: sig.Score, RawScore: sig.RawScore, Action: sig.SuggestedAction, Matches: append([]pf.Match(nil), sig.Matches...), Context: text, Keywords: words})
 	}
