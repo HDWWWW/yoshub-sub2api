@@ -9,6 +9,7 @@ import (
 
 type combinationMessage struct {
 	text, source string
+	role         string
 	current      bool
 }
 
@@ -27,7 +28,7 @@ func extractCombinationMessages(protocol string, body []byte) []combinationMessa
 		var parts []string
 		collectCombinationText(value, &parts)
 		if text := strings.TrimSpace(strings.Join(parts, "\n")); text != "" {
-			out = append(out, combinationMessage{text: text, source: source})
+			out = append(out, combinationMessage{text: text, source: source, role: combinationSourceRole(value)})
 		}
 	}
 	fields := []string{"input", "messages", "contents"}
@@ -55,9 +56,44 @@ func extractCombinationMessages(protocol string, body []byte) []combinationMessa
 		}
 	}
 	if current := extractContentModerationKeywordText(protocol, body); current != "" {
-		out = append(out, combinationMessage{text: current, source: "current_user", current: true})
+		out = append(out, combinationMessage{text: current, source: "current_user", role: "user", current: true})
 	}
 	return out
+}
+
+func combinationSourceRole(value gjson.Result) string {
+	switch strings.ToLower(value.Get("type").String()) {
+	case "function_call_output", "custom_tool_call_output", "tool_result":
+		return "tool"
+	case "function_call", "custom_tool_call", "tool_use":
+		return "tool_call"
+	}
+	role := strings.ToLower(value.Get("role").String())
+	if role == "model" {
+		return "assistant"
+	}
+	if role == "user" || role == "" {
+		// Anthropic and Gemini transport tool results in role=user messages.
+		tool, user := false, false
+		for _, field := range []string{"content", "parts"} {
+			value.Get(field).ForEach(func(_, part gjson.Result) bool {
+				if part.Get("type").String() == "tool_result" || part.Get("functionResponse").Exists() || part.Get("function_response").Exists() {
+					tool = true
+				} else {
+					user = true
+				}
+				return true
+			})
+		}
+		if tool && user {
+			return "mixed"
+		}
+		if tool {
+			return "tool"
+		}
+		return "user"
+	}
+	return role
 }
 
 func collectCombinationText(value gjson.Result, parts *[]string) {

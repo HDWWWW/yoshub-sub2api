@@ -39,8 +39,10 @@ type ContentModerationCombinationHit struct {
 	Scope            string                                    `json:"scope"`
 	WindowCharacters int                                       `json:"window_characters"`
 	Source           string                                    `json:"source"`
+	SourceRole       string                                    `json:"source_role,omitempty"`
 	Matches          []ContentModerationCombinationMatchedWord `json:"matches"`
 	Context          string                                    `json:"context"`
+	text             string
 }
 
 type ContentModerationCombinationMatchedWord struct {
@@ -260,7 +262,7 @@ func (m *contentModerationCombinationMatcher) matchMessage(message combinationMe
 			found[term.rule] = ContentModerationCombinationHit{
 				RuleID: rule.ID, RuleName: rule.Name, Action: rule.Action, Scope: rule.Scope,
 				WindowCharacters: rule.WindowCharacters, Source: message.source, Matches: words,
-				Context: string(chars[left:right]),
+				Context: string(chars[left:right]), SourceRole: message.role, text: message.text,
 			}
 			remaining--
 			if remaining == 0 {
@@ -297,11 +299,21 @@ func TestContentModerationCombinationRules(rules []ContentModerationCombinationR
 	if utf8.RuneCountInString(text) > 100000 {
 		return nil, infraerrors.BadRequest("RULE_TEST_TOO_LARGE", "规则测试文本不能超过 100000 字符")
 	}
-	hits := newCombinationMatcher(normalized).match([]combinationMessage{{text: text, source: "test", current: true}})
+	hits := newCombinationMatcher(normalized).match([]combinationMessage{{text: text, source: "test", role: "user", current: true}})
 	for i := range hits {
-		hits[i].Context = redactContentModerationSecrets(hits[i].Context)
+		hits[i].retainContext(defaultModerationKeywordContextChars)
 	}
 	return hits, nil
+}
+
+func (hit *ContentModerationCombinationHit) retainContext(limit int) {
+	// Sanitize the complete message before taking a window, including tokens
+	// that cross the match boundary. Also sanitize secrets between matched words
+	// so they do not prevent locating the otherwise useful evidence window.
+	redacted := redactContentModerationSecrets(hit.text)
+	span := redactContentModerationSecrets(hit.Context)
+	hit.Context = moderationKeywordContext(redacted, span, normalizeModerationKeywordContextChars(limit))
+	hit.text = ""
 }
 
 func (s *ContentModerationService) checkCombinationRules(input ContentModerationCheckInput, snapshot *contentModerationRuntimeSnapshot) *ContentModerationDecision {
@@ -326,17 +338,10 @@ func (s *ContentModerationService) checkCombinationRules(input ContentModeration
 	// topic filters never poison the hash cache or accumulate account penalties.
 	log := s.buildLog(input, cfg, action, true, "combination_rule", 0, nil, "", nil, nil, "")
 	log.ThresholdSnapshot = nil
-	userTexts := make(map[string]string)
-	for _, message := range extractModerationUserBodies(input.Protocol, input.Body) {
-		userTexts[message.source] = message.text
-		if message.current {
-			userTexts["current_user"] = normalizeContentModerationText(message.text)
-		}
-	}
 	for i := range hits {
-		contextLog := &ContentModerationLog{MatchedKeyword: hits[i].Context}
-		setContentModerationEvidence(contextLog, userTexts[hits[i].Source], cfg.KeywordContextChars)
-		hits[i].Context = contextLog.InputEvidence.MatchContext
+		// Keep a bounded, redacted match window from the actual matched message,
+		// independently of the latest user text retained as the log's main body.
+		hits[i].retainContext(cfg.KeywordContextChars)
 	}
 	log.InputEvidence.CombinationRules = hits
 	s.enqueueRecord(input, cfg, log, "", false, false)

@@ -2066,6 +2066,11 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 		log.MatchedKeyword = matchedKeywords[0]
 	}
 	setContentModerationUserEvidence(log, input.Protocol, input.Body, text, cfg.KeywordContextChars)
+	if log.MatchedKeyword != "" {
+		// The main body is user-only; the evidence window must still explain a
+		// match in a client reminder or another filtered part of the audited text.
+		log.InputEvidence.MatchContext = moderationKeywordContext(redactContentModerationSecrets(text), log.MatchedKeyword, normalizeModerationKeywordContextChars(cfg.KeywordContextChars))
+	}
 	return log
 }
 

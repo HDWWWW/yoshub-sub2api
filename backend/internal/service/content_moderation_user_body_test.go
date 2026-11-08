@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -62,11 +64,11 @@ func TestContentModerationUserBodyClientEnvelopes(t *testing.T) {
 }
 
 func TestCombinationUserBodyDoesNotChangeDetection(t *testing.T) {
-	for _, tc := range []struct{ name, matchMessage, wantContext string }{
-		{"tool", `{"type":"function_call_output","output":"工具噪音 猫画画"}`, ""},
-		{"assistant", `{"role":"assistant","content":"助手噪音 猫画画"}`, ""},
-		{"reminder", `{"role":"user","content":"<system-reminder>客户端噪音 猫画画</system-reminder>"}`, ""},
-		{"historical user", `{"role":"user","content":"用户要求猫画画"}`, "用户要求猫画画"},
+	for _, tc := range []struct{ name, matchMessage, wantContext, role string }{
+		{"tool", `{"type":"function_call_output","output":"工具噪音 猫画画"}`, "工具噪音 猫画画", "tool"},
+		{"assistant", `{"role":"assistant","content":"助手噪音 猫画画"}`, "助手噪音 猫画画", "assistant"},
+		{"reminder", `{"role":"user","content":"<system-reminder>客户端噪音 猫画画</system-reminder>"}`, "<system-reminder>客户端噪音 猫画画</system-reminder>", "user"},
+		{"historical user", `{"role":"user","content":"用户要求猫画画"}`, "用户要求猫画画", "user"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := defaultContentModerationConfig()
@@ -87,11 +89,76 @@ func TestCombinationUserBodyDoesNotChangeDetection(t *testing.T) {
 			require.Empty(t, log.InputEvidence.MatchContext)
 			hit := log.InputEvidence.CombinationRules[0]
 			require.Equal(t, "input[0]", hit.Source)
+			require.Equal(t, tc.role, hit.SourceRole)
 			require.Equal(t, tc.wantContext, hit.Context)
 			require.Len(t, hit.Matches, 2)
 			stored, err := json.Marshal(log.InputEvidence)
 			require.NoError(t, err)
-			require.NotContains(t, string(stored), "噪音")
+			require.NotContains(t, string(stored), "尾部噪音")
+			require.NotContains(t, log.InputEvidence.Text, "噪音")
+		})
+	}
+}
+
+func TestCombinationToolEvidenceIsBoundedAndRedacted(t *testing.T) {
+	cfg := defaultContentModerationConfig()
+	cfg.Enabled, cfg.Mode, cfg.KeywordContextChars = true, ContentModerationModePreBlock, 96
+	rule := ContentModerationCombinationRule{ID: "tool", Name: "Tool", Enabled: true, Action: "block", Scope: "conversation", WindowCharacters: 400,
+		Groups: []ContentModerationCombinationGroup{{Name: "A", Keywords: []string{"猫"}}, {Name: "B", Keywords: []string{"画画"}}}}
+	cfg.CombinationRules = []ContentModerationCombinationRule{rule}
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	repo := &contentModerationTestRepo{}
+	svc := NewContentModerationService(&contentModerationTestSettingRepo{values: map[string]string{SettingKeyRiskControlEnabled: "true", SettingKeyContentModerationConfig: string(raw)}}, repo, nil, nil, nil, nil, nil, nil)
+	secret := "sk-test123456789012345678901234"
+	tool := "无关开头" + strings.Repeat("甲", 13000) + " 工具片段 猫 api_key=" + secret + " 画画 " + strings.Repeat("乙", 2000) + "无关结尾"
+	body, err := json.Marshal(map[string]any{"input": []map[string]string{{"role": "user", "content": "最新用户正文"}, {"type": "function_call_output", "output": tool}}})
+	require.NoError(t, err)
+	decision, err := svc.Check(context.Background(), ContentModerationCheckInput{Protocol: ContentModerationProtocolOpenAIResponses, Body: body})
+	require.NoError(t, err)
+	require.True(t, decision.Blocked)
+	log := requireContentModerationLogCount(t, repo, 1)[0]
+	require.Equal(t, "最新用户正文", log.InputEvidence.Text)
+	require.Equal(t, "最新用户正文", log.InputExcerpt)
+	hit := log.InputEvidence.CombinationRules[0]
+	require.Equal(t, "tool", hit.SourceRole)
+	require.Contains(t, hit.Context, "工具片段 猫 api_key=[已脱敏] 画画")
+	require.LessOrEqual(t, utf8.RuneCountInString(hit.Context), cfg.KeywordContextChars)
+	require.Empty(t, hit.text)
+	stored, err := json.Marshal(log.InputEvidence)
+	require.NoError(t, err)
+	for _, unwanted := range []string{secret, "无关开头", "无关结尾"} {
+		require.NotContains(t, string(stored), unwanted)
+	}
+	preview, err := TestContentModerationCombinationRules([]ContentModerationCombinationRule{rule}, tool)
+	require.NoError(t, err)
+	require.Empty(t, preview[0].text)
+	require.NotContains(t, preview[0].Context, secret)
+	require.Contains(t, preview[0].Context, "猫 api_key=[已脱敏] 画画")
+}
+
+func TestCombinationEvidenceDoesNotRestorePartialCredentials(t *testing.T) {
+	rule := ContentModerationCombinationRule{ID: "test", Name: "Test", Enabled: true, Action: "block", Scope: "conversation", WindowCharacters: 100,
+		Groups: []ContentModerationCombinationGroup{{Name: "A", Keywords: []string{"token"}}, {Name: "B", Keywords: []string{"secret"}}}}
+	hits, err := TestContentModerationCombinationRules([]ContentModerationCombinationRule{rule}, "api_key=token.secret.12345678901234567890")
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Empty(t, hits[0].Context)
+}
+
+func TestCombinationEvidenceSourceRoles(t *testing.T) {
+	for _, tc := range []struct{ name, body, role string }{
+		{"anthropic tool", `{"messages":[{"role":"user","content":[{"type":"tool_result","content":"猫画画"}]}]}`, "tool"},
+		{"anthropic mixed", `{"messages":[{"role":"user","content":[{"type":"tool_result","content":"猫画画"},{"type":"text","text":"用户补充"}]}]}`, "mixed"},
+		{"gemini tool", `{"contents":[{"role":"user","parts":[{"functionResponse":{"response":{"text":"猫画画"}}}]}]}`, "tool"},
+		{"gemini assistant", `{"contents":[{"role":"model","parts":[{"text":"猫画画"}]}]}`, "assistant"},
+		{"chat tool", `{"messages":[{"role":"tool","content":"猫画画"}]}`, "tool"},
+		{"responses tool call", `{"input":[{"type":"function_call","arguments":"猫画画"}]}`, "tool_call"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			messages := extractCombinationMessages("", []byte(tc.body))
+			require.NotEmpty(t, messages)
+			require.Equal(t, tc.role, messages[0].role)
 		})
 	}
 }
@@ -132,10 +199,6 @@ func TestCombinationCurrentUserContextDoesNotBorrowHistory(t *testing.T) {
 		hit := log.InputEvidence.CombinationRules[0]
 		require.Equal(t, "current_user", hit.Source)
 		require.NotContains(t, hit.Context, "旧消息")
-		if cleanModerationUserBody(tail) == "" {
-			require.Empty(t, hit.Context)
-		} else {
-			require.Contains(t, hit.Context, "当前用户猫画画")
-		}
+		require.Equal(t, tail, hit.Context)
 	}
 }

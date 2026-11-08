@@ -5,10 +5,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps<{ text: string; keyword?: string }>()
+const props = defineProps<{ text: string; keyword?: string; keywords?: string[] }>()
 const parts = computed(() => {
-  if (!props.keyword) return [props.text]
-  const escaped = props.keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const words = [...new Set([props.keyword, ...(props.keywords ?? [])].filter((word): word is string => !!word))]
+  if (!words.length) return [props.text]
+  const escaped = words.sort((a, b) => b.length - a.length).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
   return props.text.split(new RegExp(`(${escaped})`, 'gi'))
 })
 </script>

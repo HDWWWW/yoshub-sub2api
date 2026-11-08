@@ -267,8 +267,9 @@ export default {
         blockResult: "Combination rule blocked",
         observeResult: "Combination rule recorded",
         localMatch: "Local rule match (no model score)",
-        evidenceScope: "The body contains user text. Rule evidence retains keywords and sources, with context only from user text. These rules are not upstream safety scores.",
-        contextOmitted: 'The match was in assistant, tool, filtered or redacted content. Only the rule and matched keywords are retained.',
+        evidenceScope: 'This section retains the redacted context of the actual match and highlights each matched keyword. The main body below contains user input only.',
+        contextOmitted: 'This record did not retain displayable match context, or the match was redacted. Omitted historical text cannot be reconstructed from keywords.',
+        sourceRoles: { user: 'User message', assistant: 'Assistant message', tool: 'Tool result', tool_call: 'Tool call', mixed: 'User message and tool results', unknown: 'Other source' },
       },
 
       engine: 'Audit engine',

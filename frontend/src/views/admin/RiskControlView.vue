@@ -1192,9 +1192,11 @@
               <div v-if="inputDetail.evidence.combination_rules?.length" class="mt-4 space-y-3" data-test="combination-evidence">
                 <div v-for="hit in inputDetail.evidence.combination_rules" :key="hit.rule_id" class="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20">
                   <p class="font-semibold">{{ hit.rule_name }} · {{ hit.rule_id }}</p>
-                  <p class="mt-1 text-xs text-gray-500">{{ hit.source }} · {{ t('admin.riskControl.combination.window') }}: {{ hit.window_characters }}</p>
+                  <p class="mt-1 text-xs text-gray-500">{{ t(`admin.riskControl.combination.sourceRoles.${hit.source_role && ['user', 'assistant', 'tool', 'tool_call', 'mixed'].includes(hit.source_role) ? hit.source_role : 'unknown'}`) }} · {{ hit.source }} · {{ t('admin.riskControl.combination.window') }}: {{ hit.window_characters }}</p>
                   <p class="mt-2 text-sm">{{ hit.matches.map(word => `${word.group}: ${word.keyword}`).join(' · ') }}</p>
-                  <p class="mt-2 whitespace-pre-wrap break-words text-sm">{{ hit.context || t('admin.riskControl.combination.contextOmitted') }}</p>
+                  <p class="mt-2 text-xs text-gray-500">{{ t('admin.riskControl.combination.evidenceScope') }}</p>
+                  <ModerationHighlightedText v-if="hit.context" class="mt-2 block max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm" data-test="combination-match-context" :text="hit.context" :keywords="hit.matches.map(word => word.keyword)" />
+                  <p v-else class="mt-2 text-sm">{{ t('admin.riskControl.combination.contextOmitted') }}</p>
                 </div>
               </div>
               <div v-if="inputDetail.matched_keyword" class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20" data-test="moderation-match-context">

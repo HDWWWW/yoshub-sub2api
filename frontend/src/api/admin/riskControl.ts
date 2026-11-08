@@ -16,6 +16,7 @@ export interface CombinationRuleHit {
   scope: string
   window_characters: number
   source: string
+  source_role?: string
   matches: Array<{ group: string; keyword: string }>
   context: string
 }

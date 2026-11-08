@@ -331,6 +331,32 @@ describe('admin RiskControlView', () => {
     wrapper.unmount()
   })
 
+  it.each(['工具结果 <img src=x> 猫正在画画', ''])('renders separate combination evidence and its source for context %s', async context => {
+    getLogInput.mockResolvedValue({ input_excerpt: '用户正文', matched_keyword: '', evidence: {
+      text: '用户正文', total_characters: 4, stored_characters: 4, truncated: false, content_scope: 'user_body',
+      combination_rules: [{ rule_id: 'test', rule_name: '组合测试', action: 'block', scope: 'conversation',
+        window_characters: 400, source: 'input[3]', source_role: 'tool', context,
+        matches: [{ group: 'A', keyword: '猫' }, { group: 'B', keyword: '画画' }],
+      }],
+    } })
+    const wrapper = await mountAudits([{ ...auditRow(), action: 'rule_block', matched_keyword: '' }])
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="moderation-input-text"]').text()).toBe('用户正文')
+    const evidence = wrapper.get('[data-test="combination-evidence"]')
+    expect(evidence.text()).toContain('sourceRoles.tool')
+    expect(evidence.text()).toContain('input[3]')
+    expect(evidence.find('img').exists()).toBe(false)
+    if (context) {
+      expect(evidence.get('[data-test="combination-match-context"]').text()).toBe(context)
+      expect(evidence.findAll('mark').map(mark => mark.text())).toEqual(['猫', '画画'])
+    } else {
+      expect(evidence.text()).toContain('contextOmitted')
+      expect(evidence.find('[data-test="combination-match-context"]').exists()).toBe(false)
+    }
+    wrapper.unmount()
+  })
+
   it('saves editable combination rules and loads the saved configuration again', async () => {
     getConfig.mockResolvedValue({ ...baseConfig(), combination_rules: [{ id: 'custom', name: 'Editable rule', enabled: true, action: 'block', scope: 'conversation', window_characters: 400, groups: [{ name: 'A', keywords: ['猫'] }, { name: 'B', keywords: ['画'] }] }] })
     const wrapper = await mountAudits([])

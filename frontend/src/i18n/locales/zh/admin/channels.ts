@@ -267,8 +267,9 @@ export default {
         blockResult: "组合规则拦截",
         observeResult: "组合规则记录",
         localMatch: "本地规则命中（无模型评分）",
-        evidenceScope: "正文记录用户文本；规则依据保留命中词和来源，只有用户文本保留上下文。组合规则不代表上游安全模型评分。",
-        contextOmitted: '命中位于助手、工具或已过滤/脱敏的内容中，仅保留规则和命中词。',
+        evidenceScope: '此处单独保留实际命中位置附近的脱敏片段，并高亮各组命中词；下方主正文仅展示用户输入。',
+        contextOmitted: '此记录未保存可展示的命中上下文，或命中已脱敏。已省略的历史原文无法从命中词还原。',
+        sourceRoles: { user: '用户消息', assistant: '助手消息', tool: '工具结果', tool_call: '工具调用', mixed: '用户消息与工具结果', unknown: '其他来源' },
       },
 
       engine: '审计引擎',
