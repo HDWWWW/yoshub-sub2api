@@ -104,7 +104,13 @@ func TestContentModerationCheck_ReminderKeywordModes(t *testing.T) {
 						require.Empty(t, cache.snapshotChecked())
 						logs := requireContentModerationLogCount(t, repo, 1)
 						require.Equal(t, "今晚打老虎", logs[0].MatchedKeyword)
-						require.Contains(t, logs[0].InputExcerpt, "今晚打老虎")
+						if name == "inside" {
+							require.Empty(t, logs[0].InputExcerpt)
+							require.Empty(t, logs[0].InputEvidence.MatchContext)
+						} else {
+							require.Contains(t, logs[0].InputExcerpt, "今晚打老虎")
+						}
+						require.NotContains(t, logs[0].InputEvidence.Text, "system-reminder")
 						require.Equal(t, int64(1), svc.asyncEnqueued.Load())
 					}
 				})

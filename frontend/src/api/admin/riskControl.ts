@@ -253,6 +253,8 @@ export interface ContentModerationLogInput {
   input_excerpt: string
   matched_keyword: string
   evidence: {
+    content_scope?: string
+    source?: string
     text: string
     total_characters: number
     stored_characters: number
@@ -261,8 +263,6 @@ export interface ContentModerationLogInput {
     match_context?: string
     policy?: {
       code: string
-      request_body: string
-      upstream_body: string
       upstream_status: number
     }
   } | null

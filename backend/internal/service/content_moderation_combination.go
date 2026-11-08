@@ -41,7 +41,6 @@ type ContentModerationCombinationHit struct {
 	Source           string                                    `json:"source"`
 	Matches          []ContentModerationCombinationMatchedWord `json:"matches"`
 	Context          string                                    `json:"context"`
-	text             string
 }
 
 type ContentModerationCombinationMatchedWord struct {
@@ -261,7 +260,7 @@ func (m *contentModerationCombinationMatcher) matchMessage(message combinationMe
 			found[term.rule] = ContentModerationCombinationHit{
 				RuleID: rule.ID, RuleName: rule.Name, Action: rule.Action, Scope: rule.Scope,
 				WindowCharacters: rule.WindowCharacters, Source: message.source, Matches: words,
-				Context: string(chars[left:right]), text: message.text,
+				Context: string(chars[left:right]),
 			}
 			remaining--
 			if remaining == 0 {
@@ -325,21 +324,17 @@ func (s *ContentModerationService) checkCombinationRules(input ContentModeration
 	}
 	// One combination audit event per request, including all matched rules. These local
 	// topic filters never poison the hash cache or accumulate account penalties.
-	anchor := hits[0]
-	for _, hit := range hits {
-		if blocking && hit.Action == "block" {
-			anchor = hit
-			break
-		}
-	}
-	log := s.buildLog(input, cfg, action, true, "combination_rule", 0, nil, anchor.text, nil, nil, "", anchor.Context)
-	log.MatchedKeyword = ""
+	log := s.buildLog(input, cfg, action, true, "combination_rule", 0, nil, "", nil, nil, "")
 	log.ThresholdSnapshot = nil
+	userTexts := make(map[string]string)
+	for _, message := range extractModerationUserBodies(input.Protocol, input.Body) {
+		userTexts[message.source] = message.text
+		userTexts["current_user"] = normalizeContentModerationText(message.text)
+	}
 	for i := range hits {
 		contextLog := &ContentModerationLog{MatchedKeyword: hits[i].Context}
-		setContentModerationEvidence(contextLog, hits[i].text, cfg.KeywordContextChars)
+		setContentModerationEvidence(contextLog, userTexts[hits[i].Source], cfg.KeywordContextChars)
 		hits[i].Context = contextLog.InputEvidence.MatchContext
-		hits[i].text = ""
 	}
 	log.InputEvidence.CombinationRules = hits
 	s.enqueueRecord(input, cfg, log, "", false, false)

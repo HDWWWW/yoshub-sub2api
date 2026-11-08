@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"unicode/utf8"
 
@@ -13,10 +12,12 @@ const maxModerationEvidenceRunes = 12000
 const defaultModerationKeywordContextChars = 640
 const maxModerationKeywordContextChars = 12000
 
-// Ordinary audits retain bounded extracted text. Official safety-policy events
-// retain the complete redacted client request and rejecting provider event.
-// Character counts refer to Text, after redaction.
+// Audits retain bounded user text, independently of the text used for detection.
+// Character counts refer to Text, after redaction. Empty ContentScope identifies
+// legacy evidence whose retained content may include non-user text.
 type ContentModerationInputEvidence struct {
+	ContentScope     string                            `json:"content_scope,omitempty"`
+	Source           string                            `json:"source,omitempty"`
 	CombinationRules []ContentModerationCombinationHit `json:"combination_rules,omitempty"`
 	Text             string                            `json:"text"`
 	TotalCharacters  int                               `json:"total_characters"`
@@ -28,75 +29,24 @@ type ContentModerationInputEvidence struct {
 
 type ContentModerationPolicyEvidence struct {
 	Code           string `json:"code"`
-	RequestBody    string `json:"request_body"`
-	UpstreamBody   string `json:"upstream_body"`
+	RequestBody    string `json:"request_body,omitempty"`  // Legacy read compatibility only.
+	UpstreamBody   string `json:"upstream_body,omitempty"` // Legacy read compatibility only.
 	UpstreamStatus int    `json:"upstream_status"`
 }
 
 func setContentModerationPolicyEvidence(log *ContentModerationLog, in CyberPolicyRecordInput) {
-	request := redactModerationEvidenceJSON(in.RequestBody)
-	log.InputExcerpt = trimRunes(request, maxModerationExcerptRunes)
-	log.InputEvidence = &ContentModerationInputEvidence{
-		Policy: &ContentModerationPolicyEvidence{
-			Code: log.Action, RequestBody: request,
-			UpstreamBody: redactModerationEvidenceJSON(in.UpstreamBody), UpstreamStatus: in.UpstreamStatus,
-		},
+	setContentModerationUserEvidence(log, "", []byte(in.RequestBody), "", defaultModerationKeywordContextChars)
+	log.InputEvidence.Policy = &ContentModerationPolicyEvidence{
+		Code: log.Action, UpstreamStatus: in.UpstreamStatus,
 	}
 }
 
-// Decode string values before redacting so escaped credentials cannot bypass
-// the existing text redactor. Preserve JSON structure and all non-secret fields.
-func redactModerationEvidenceJSON(raw string) string {
-	var value any
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil || !json.Valid([]byte(raw)) {
-		return redactModerationEvidenceText(raw)
+func isModerationSecretField(key string) bool {
+	switch strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", ""), "_", "")) {
+	case "apikey", "authorization", "cookie", "setcookie", "password", "passwd", "pwd", "secret", "clientsecret", "privatekey", "token", "accesstoken", "refreshtoken", "idtoken", "sessiontoken":
+		return true
 	}
-	var redact func(any) any
-	redact = func(value any) any {
-		switch v := value.(type) {
-		case map[string]any:
-			for key, child := range v {
-				switch strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", ""), "_", "")) {
-				case "apikey", "authorization", "cookie", "setcookie", "password", "passwd", "pwd", "secret", "clientsecret", "privatekey", "token", "accesstoken", "refreshtoken", "idtoken", "sessiontoken":
-					v[key] = "[已脱敏]"
-				default:
-					v[key] = redact(child)
-				}
-			}
-		case []any:
-			for i := range v {
-				v[i] = redact(v[i])
-			}
-		case string:
-			return redactModerationEvidenceText(v)
-		}
-		return value
-	}
-	encoded, err := json.MarshalIndent(redact(value), "", "  ")
-	if err != nil {
-		return redactModerationEvidenceText(raw)
-	}
-	return string(encoded)
-}
-
-// Complete policy evidence preserves URLs, hashes, encoded images and long
-// source strings. Only recognizable credentials are removed here; JSON secret
-// fields are also removed structurally above, including short secret values.
-func redactModerationEvidenceText(text string) string {
-	for index := 1; index <= 4; index++ {
-		pattern := contentModerationSecretPatterns[index]
-		switch index {
-		case 1:
-			text = pattern.ReplaceAllString(text, `${1}${2}[已脱敏]`)
-		case 2:
-			text = pattern.ReplaceAllString(text, `${1}[已脱敏]`)
-		default:
-			text = pattern.ReplaceAllString(text, `[已脱敏]`)
-		}
-	}
-	return text
+	return false
 }
 
 type ContentModerationLogInput struct {
@@ -109,7 +59,18 @@ func (s *ContentModerationService) GetLogInput(ctx context.Context, id int64) (*
 	if id <= 0 {
 		return nil, infraerrors.BadRequest("INVALID_LOG_ID", "审计记录 ID 无效")
 	}
-	return s.repo.GetLogInput(ctx, id)
+	result, err := s.repo.GetLogInput(ctx, id)
+	if err != nil || result == nil || result.Evidence == nil {
+		return result, err
+	}
+	if policy := result.Evidence.Policy; policy != nil && result.Evidence.ContentScope != moderationUserBodyScope {
+		// Project old complete requests on read. Do not rewrite historical rows
+		// or return their raw request/provider payload through the admin API.
+		log := &ContentModerationLog{Action: policy.Code}
+		setContentModerationPolicyEvidence(log, CyberPolicyRecordInput{RequestBody: policy.RequestBody, UpstreamStatus: policy.UpstreamStatus})
+		return &ContentModerationLogInput{InputExcerpt: log.InputExcerpt, Evidence: log.InputEvidence}, nil
+	}
+	return result, nil
 }
 
 func setContentModerationEvidence(log *ContentModerationLog, text string, keywordContextChars int) {

@@ -12,7 +12,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 func TestContentModerationEvidence_LongScriptKeywordBeyondRetention(t *testing.T) {
@@ -176,7 +175,7 @@ func TestContentModerationKeywordContextConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestContentModerationEvidence_OfficialPoliciesRetainCompleteBodies(t *testing.T) {
+func TestContentModerationEvidence_OfficialPoliciesRetainOnlyUserBody(t *testing.T) {
 	for _, code := range []string{OpenAIPolicyCyber, OpenAIPolicyBio} {
 		t.Run(code, func(t *testing.T) {
 			prompt := strings.Repeat("完整多轮剧本输入。", 2000) + "请求末尾证据"
@@ -202,26 +201,29 @@ func TestContentModerationEvidence_OfficialPoliciesRetainCompleteBodies(t *testi
 			require.Len(t, logs, 1)
 			evidence := logs[0].InputEvidence
 			require.NotNil(t, evidence.Policy)
-			require.False(t, evidence.Truncated)
+			require.True(t, evidence.Truncated)
+			require.Equal(t, moderationUserBodyScope, evidence.ContentScope)
+			require.Equal(t, "input[0]", evidence.Source)
+			require.Equal(t, maxModerationEvidenceRunes, evidence.StoredCharacters)
+			require.Equal(t, utf8.RuneCountInString(prompt), evidence.TotalCharacters)
+			require.Equal(t, string([]rune(prompt)[:maxModerationEvidenceRunes]), evidence.Text)
 			require.Equal(t, 200, evidence.Policy.UpstreamStatus)
-			require.Equal(t, prompt, gjson.Get(evidence.Policy.RequestBody, "input.0.content").String())
-			require.Equal(t, "完整系统提示", gjson.Get(evidence.Policy.RequestBody, "instructions").String())
-			require.Equal(t, "工具说明", gjson.Get(evidence.Policy.RequestBody, "tools.0.description").String())
-			require.Equal(t, "12345678901234567890", gjson.Get(evidence.Policy.RequestBody, "metadata.large_id").Raw)
-			require.NotContains(t, evidence.Policy.RequestBody, "short-secret")
-			require.NotContains(t, evidence.Policy.RequestBody, "another-secret")
-			require.Equal(t, message, gjson.Get(evidence.Policy.UpstreamBody, "response.error.message").String())
-			require.Contains(t, evidence.Policy.UpstreamBody, "保留额外字段")
+			require.Equal(t, code, evidence.Policy.Code)
+			retained, err := json.Marshal(evidence)
+			require.NoError(t, err)
+			for _, noise := range []string{"完整系统提示", "工具说明", "short-secret", "another-secret", "官方分析", "保留额外字段", "request_body", "upstream_body"} {
+				require.NotContains(t, string(retained), noise)
+			}
+			require.NotContains(t, logs[0].Error, "官方分析")
 		})
 	}
 }
 
 func TestContentModerationEvidence_RedactsEscapedJSONSecrets(t *testing.T) {
-	value := redactModerationEvidenceJSON(`{"input":"sk-proj-1234567890abc\u0064ef","Authorization":"tiny","image":"data:image/png;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","url":"https://example.com/reference"}`)
-	require.NotContains(t, value, "1234567890")
-	require.NotContains(t, value, "tiny")
-	require.Contains(t, value, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	require.Contains(t, value, "https://example.com/reference")
+	log := &ContentModerationLog{Action: OpenAIPolicyBio}
+	setContentModerationPolicyEvidence(log, CyberPolicyRecordInput{RequestBody: `{"input":"hello sk-proj-1234567890abc\u0064ef","Authorization":"tiny","image":"data:image/png;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`})
+	require.Equal(t, "hello [已脱敏]", log.InputEvidence.Text)
+	require.Empty(t, log.InputEvidence.Policy.RequestBody)
 }
 
 func TestContentModerationStorageLimitConfig(t *testing.T) {

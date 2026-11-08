@@ -1178,16 +1178,12 @@
               <button type="button" class="ml-2 underline" data-test="moderation-input-retry" @click="openInputDetail(inputDetailRow)">{{ t('common.tryAgain') }}</button>
             </div>
             <p v-else-if="!inputDetail?.evidence" class="mt-4 text-sm text-amber-700 dark:text-amber-300" data-test="moderation-input-legacy">{{ t('admin.riskControl.inputLegacyNotice') }}</p>
-            <div v-else-if="inputDetail.evidence.policy" class="mt-4 space-y-3" data-test="moderation-policy-evidence">
-              <p class="text-sm text-amber-700 dark:text-amber-300">{{ inputDetail.evidence.policy.code }} · {{ t('admin.riskControl.policyUpstreamStatus', { status: inputDetail.evidence.policy.upstream_status }) }}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.policyEvidenceScope') }}</p>
-              <p class="text-sm font-semibold">{{ t('admin.riskControl.policyRequestBody') }}</p>
-              <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100" data-test="moderation-policy-request">{{ inputDetail.evidence.policy.request_body || '-' }}</pre>
-              <p class="text-sm font-semibold">{{ t('admin.riskControl.policyUpstreamBody') }}</p>
-              <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100" data-test="moderation-policy-response">{{ inputDetail.evidence.policy.upstream_body || '-' }}</pre>
-            </div>
             <template v-else>
-              <p class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t(inputDetail.evidence.combination_rules?.length ? 'admin.riskControl.combination.evidenceScope' : 'admin.riskControl.inputEvidenceScope') }}</p>
+              <div v-if="inputDetail.evidence.policy" class="mt-4" data-test="moderation-policy-evidence">
+                <p class="text-sm text-amber-700 dark:text-amber-300">{{ inputDetail.evidence.policy.code }} · {{ t('admin.riskControl.policyUpstreamStatus', { status: inputDetail.evidence.policy.upstream_status }) }}</p>
+              </div>
+              <p class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t(inputDetail.evidence.content_scope === 'user_body' ? 'admin.riskControl.inputEvidenceScope' : 'admin.riskControl.inputEvidenceLegacyScope') }}</p>
+              <p v-if="inputDetail.evidence.source" class="mt-1 text-xs text-gray-500" data-test="moderation-input-source">{{ t('admin.riskControl.inputSource') }}: {{ inputDetail.evidence.source }}</p>
               <p class="mt-2 text-sm" :class="inputDetail.evidence.truncated ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-gray-400'" data-test="moderation-input-retention">
                 {{ inputDetail.evidence.truncated
                   ? t('admin.riskControl.inputTruncated', { total: inputDetail.evidence.total_characters, stored: inputDetail.evidence.stored_characters })
@@ -1198,7 +1194,7 @@
                   <p class="font-semibold">{{ hit.rule_name }} · {{ hit.rule_id }}</p>
                   <p class="mt-1 text-xs text-gray-500">{{ hit.source }} · {{ t('admin.riskControl.combination.window') }}: {{ hit.window_characters }}</p>
                   <p class="mt-2 text-sm">{{ hit.matches.map(word => `${word.group}: ${word.keyword}`).join(' · ') }}</p>
-                  <p class="mt-2 whitespace-pre-wrap break-words text-sm">{{ hit.context || t('admin.riskControl.inputMatchUnavailable') }}</p>
+                  <p class="mt-2 whitespace-pre-wrap break-words text-sm">{{ hit.context || t('admin.riskControl.combination.contextOmitted') }}</p>
                 </div>
               </div>
               <div v-if="inputDetail.matched_keyword" class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20" data-test="moderation-match-context">
@@ -1208,7 +1204,7 @@
               </div>
             </template>
             <p v-if="!inputDetailRow.matched_keyword && ['block', 'allow'].includes(inputDetailRow.action)" class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.inputSemanticNotice') }}</p>
-            <pre v-if="!inputDetail?.evidence?.policy" class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50" data-test="moderation-input-text"><ModerationHighlightedText :text="inputDetailText" :keyword="inputDetailRow.matched_keyword" /></pre>
+            <pre class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50" data-test="moderation-input-text"><ModerationHighlightedText :text="inputDetailText" :keyword="inputDetailRow.matched_keyword" /></pre>
           </div>
         </div>
 
@@ -1760,7 +1756,8 @@ const riskThresholdRows = computed<RiskThresholdRow[]>(() => (
 
 const inputDetailText = computed(() => {
   if (!inputDetailRow.value) return '-'
-  return inputDetail.value?.evidence?.text ?? (inputDetailRow.value.input_excerpt || inputDetailRow.value.error || '-')
+  if (inputDetail.value?.evidence?.content_scope === 'user_body' && !inputDetail.value.evidence.text) return t('admin.riskControl.inputNoUserBody')
+  return inputDetail.value?.evidence?.text ?? (inputDetailRow.value.input_excerpt || '-')
 })
 
 const queueUsagePercent = computed(() => `${Math.min(100, Math.max(0, status.value?.queue_usage_percent ?? 0)).toFixed(1)}%`)
@@ -2080,7 +2077,7 @@ function canUnbanRow(row: ContentModerationLog): boolean {
 }
 
 function inputSummaryText(row: ContentModerationLog): string {
-  return row.input_excerpt || row.error || '-'
+  return row.input_excerpt || '-'
 }
 
 async function openInputDetail(row: ContentModerationLog) {

@@ -299,20 +299,35 @@ describe('admin RiskControlView', () => {
     wrapper.unmount()
   })
 
-  it('displays complete HTTP 200 policy evidence without rendering injected markup', async () => {
+  it('displays user text and HTTP 200 policy metadata without rendering injected markup', async () => {
     const request = '<img src=x onerror=alert(1)>'.repeat(800) + '请求末尾'
-    const response = '官方报文'.repeat(2000) + '响应末尾'
     getLogInput.mockResolvedValue({ ...auditEvidence(''), matched_keyword: '', evidence: {
-      text: '', total_characters: 0, stored_characters: 0, truncated: false,
-      policy: { code: 'bio_policy', request_body: request, upstream_body: response, upstream_status: 200 },
+      text: request, total_characters: request.length, stored_characters: request.length, truncated: false,
+      content_scope: 'user_body', source: 'input[2]',
+      policy: { code: 'bio_policy', upstream_status: 200 },
     } })
     const wrapper = await mountAudits([{ ...auditRow(), action: 'bio_policy', matched_keyword: '' }])
     await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
     await flushPromises()
-    expect(wrapper.get('[data-test="moderation-policy-request"]').text()).toBe(request)
-    expect(wrapper.get('[data-test="moderation-policy-response"]').text()).toBe(response)
-    expect(wrapper.find('[data-test="moderation-policy-evidence"] img').exists()).toBe(false)
-    expect(wrapper.find('[data-test="moderation-input-retention"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="moderation-input-text"]').text()).toBe(request)
+    expect(wrapper.get('[data-test="moderation-policy-evidence"]').text()).toContain('bio_policy')
+    expect(wrapper.find('[data-test="moderation-policy-request"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="moderation-policy-response"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="moderation-input-text"] img').exists()).toBe(false)
+    expect(wrapper.find('[data-test="moderation-input-retention"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="moderation-input-source"]').text()).toContain('input[2]')
+    wrapper.unmount()
+  })
+
+  it('explains missing user text instead of showing tool content or errors as the user body', async () => {
+    getLogInput.mockResolvedValue({ input_excerpt: '', matched_keyword: '', evidence: {
+      text: '', total_characters: 0, stored_characters: 0, truncated: false, content_scope: 'user_body',
+    } })
+    const wrapper = await mountAudits([{ ...auditRow(), input_excerpt: '', error: 'upstream noise' }])
+    expect(wrapper.get('[data-test="moderation-input-1"]').text()).not.toContain('upstream noise')
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="moderation-input-text"]').text()).toBe('admin.riskControl.inputNoUserBody')
     wrapper.unmount()
   })
 

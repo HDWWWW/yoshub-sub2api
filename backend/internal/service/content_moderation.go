@@ -2065,7 +2065,7 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 	if len(matchedKeywords) > 0 {
 		log.MatchedKeyword = matchedKeywords[0]
 	}
-	setContentModerationEvidence(log, text, cfg.KeywordContextChars)
+	setContentModerationUserEvidence(log, input.Protocol, input.Body, text, cfg.KeywordContextChars)
 	return log
 }
 
@@ -3226,11 +3226,7 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 	if in.APIKeyID > 0 {
 		apiKeyID = &in.APIKeyID
 	}
-	errBody := strings.TrimSpace(in.UpstreamMessage)
-	if b := strings.TrimSpace(in.UpstreamBody); b != "" {
-		// 原始 body 不在此预脱敏；写入 log.Error 前由 redactContentModerationSecrets 统一脱敏。
-		errBody = strings.TrimSpace(errBody + "\n" + b)
-	}
+	errBody := strings.TrimSpace(policyCode + ": " + in.UpstreamMessage)
 	if in.UpstreamInTok > 0 || in.UpstreamOutTok > 0 {
 		errBody = fmt.Sprintf("%s\nupstream_usage=in:%d,out:%d", errBody, in.UpstreamInTok, in.UpstreamOutTok)
 	}
