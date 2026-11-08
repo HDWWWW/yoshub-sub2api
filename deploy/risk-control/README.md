@@ -1,36 +1,23 @@
-# 可配置组合规则
+# codex2api 本地组合拦截
 
-后台入口：风控中心 → 审计配置 → 组合规则。可新增、修改、启停、删除规则，增删词组，导入或导出 JSON，并测试未保存的草稿。点击配置弹窗底部的保存后生效，其他实例通过现有设置缓存刷新，无须重启。
+入口：风控中心 → 审计配置 → 组合拦截 · codex2api。
 
-规则存储在 `content_moderation_config.combination_rules`。服务默认规则列表为空，不会因为升级而自动启用特定主题。`biological-research-rules.json` 是本站指定的可编辑候选配置，导入后可以修改或删除；没有词表写在匹配器中。
+本地规则核心与 130 条预设来自 `james-6-23/codex2api` 的 `security/promptfilter`，固定版本 `b6a827f9357a6cf1ac4c211854726d808406c44f`。上游源码、测试和逐文件 SHA-256 位于 `backend/internal/pkg/codexpromptfilter`。保持原版正则、AND/OR/排除条件、信号分数、严格规则、语境折扣、编码归一化、来源分类、长文本预算和工具输出高置信例外；不将所有消息拼成一段做正则匹配。
 
-```json
-{
-  "combination_rules": [{
-    "id": "example-topic",
-    "name": "示例组合规则",
-    "enabled": true,
-    "action": "observe",
-    "scope": "conversation",
-    "window_characters": 400,
-    "groups": [
-      {"name": "对象", "keywords": ["猫", "cat"]},
-      {"name": "动作", "keywords": ["画", "draw"]}
-    ]
-  }]
-}
-```
+配置保存到 `content_moderation_config.rule_filter`。新安装默认关闭；本站迁移时明确启用 block，普通阈值 50、严格阈值 90、strict_terminal_enabled=true，启用全部预设并删除旧 biological-research-combination。升级程序本身不覆盖管理员已有配置。旧 combination_rules 和旧日志继续支持读取，但启用新引擎后不执行旧匹配器。
 
-组内为 OR，组间为 AND，词序不限。匹配距离包含命中词本身，按 Unicode 字符计算，不能跨消息拼接。大小写不敏感，英文词边界避免 `map` 匹配到 `roadmap`。ID 必须唯一；每条 2–8 组，每组最多 200 个词、单词最多 200 字符，合计最多 100 条规则、5000 个词及 100000 个词表字符。导入追加规则，重复 ID 会报错。
+后台支持查看和搜索全部预设、分类筛选、逐条启停、自定义正则的增删改、JSON 导入导出、恢复推荐值、草稿测试。内置规则是版本化源码，禁用列表和自定义规则均可随时修改并热更新。导入替换当前规则草稿；恢复推荐值保留自定义规则，恢复阈值及内置启停。两者都需点击页面保存。自定义规则最多 100 条，配置最多 1 MiB；使用上游 AuditPatternConfig 验证，错误正则、空匹配、过宽规则及重复名称会返回明确错误。
 
-`scope=conversation` 检查本次正文中的历史用户、助手、工具文本，不检查系统/开发者指令、图片或加密推理。工具续轮也检查已携带的历史消息。仅由 `previous_response_id` 等 ID 引用、未包含在正文中的历史不可读取。`current_user` 保持现有仅当前用户输入的边界。
+主正则与 all_patterns 同时满足；any_patterns 至少命中 min_matches 条（0 表示默认 1）；exclude_patterns 任一命中排除。AuthorizationExcludePatterns 保留原版字段，推荐策略不承认无法验证的授权自述。大小写、匹配顺序等遵从 Go RE2 和原版归一化逻辑，需要忽略大小写时使用 (?i)。Strict 优先于 SignalOnly，二者同时启用仍可能拦截。模式 monitor/warn/block 通过原版 pipeline 限制实际动作。
 
-`action=block` 在全局前置拦截模式下拒绝请求；`observe` 仅记录并继续其他审计。全局观察模式或风控白名单覆盖本地拦截。规则独立于普通关键词/API 策略，遵守风控开关、审计开关、分组和模型范围，在采样之前检查。任一启用规则要求拦截即拦截，多条命中合并到一条审计记录。
+本层仍遵守 Sub2 风控/审计开关、分组、模型范围、全局观察模式和白名单，在采样之前执行。保留独立的 blocked_keywords、keyword_blocking_mode、现有 OpenAI/TypeSafe API 审核和 Qwen 提示词审计配置。规则拦截使用既有 block_status/block_message。只迁移本地规则层，不启用 codex2api 的外部复核服务、跨请求会话拼接或账户处罚；不能宣称两套完整服务的所有行为相同。
 
-组合规则是站点主题筛选，不等同于上游 `bio_policy`。日志保留规则 ID、名称、匹配距离、来源消息及类型、每组命中词。命中依据独立保留实际命中附近的脱敏上下文，包括助手、工具和客户端提示中的命中；按配置限制长度并高亮命中词，不把整段工具输出充当主正文。不伪造模型概率，不发送邮件，不写入违规哈希库，也不累计自动封禁次数。官方策略会话屏蔽仍由已有独立开关控制。
+日志主正文继续使用最近有效用户正文；规则依据单独记录版本、动作、分数、阈值、来源、命中规则与脱敏片段，前端用文本插值高亮。分数不是审核 API 的概率。辅助内容通过既有有界工作队列观察，最多 2 个并行检测，队列拥挤时丢弃并计入 dropped，不影响同步拦截。规则日志不写违规 hash、不发邮件、不累计封禁次数。历史组合规则日志保留原格式显示。
 
-内容审计日志的摘要和正文统一使用本次请求携带的最近一条有效用户文本；工具续轮会向前查找。过滤 system/developer、工具调用和结果、图片/文件载荷、推理内容，以及已识别的 AGENTS、环境、reminder、压缩摘要等客户端包装。凭据先脱敏，再保留最多 12000 字；实际命中上下文独立保留。没有携带用户文本时明确显示为空，不使用工具输出或错误报文替代。此提取器仅用于日志，完全不改变关键词、组合规则、模型审核和哈希检查的检测范围。旧记录若未存储命中片段，无法仅凭命中词恢复。
+管理接口：
 
-官方 `bio_policy` / `cyber_policy` 新记录同样保存用户正文、策略代码和 HTTP 状态，不再保存完整请求 JSON 或完整上游事件。旧官方记录在查看详情时提取用户正文；旧组合/普通记录没有完整角色信息，界面标注旧格式，不猜测或重写历史内容。
+- `GET /api/v1/admin/risk-control/rule-filter/catalog`：版本、预设及推荐配置。
+- `PUT /api/v1/admin/risk-control/config`：传 `rule_filter` 保存完整对象；省略则保留。
+- `POST /api/v1/admin/risk-control/rule-filter/test`：传 `{config, text}`；或 `{config, body, protocol}` 检查协议与来源。只做本地计算，不保存、不写审计、不请求模型。测试使用草稿的 enabled 开关。
 
-管理接口：`PUT /api/v1/admin/risk-control/config` 传 `combination_rules` 数组保存；省略该字段保留，空数组清空。`POST /api/v1/admin/risk-control/combination-rules/test` 传 `{ "rules": [...], "text": "..." }` 验证草稿，完全本地运行，不产生审计或外部 API 调用。测试接口文本最多 100000 字符，请求体最多 2 MB。
+旧官方 bio_policy/cyber_policy 日志仍按用户正文投影展示，既有官方错误会话屏蔽由原功能控制。

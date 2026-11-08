@@ -16,6 +16,7 @@ const maxModerationKeywordContextChars = 12000
 // Character counts refer to Text, after redaction. Empty ContentScope identifies
 // legacy evidence whose retained content may include non-user text.
 type ContentModerationInputEvidence struct {
+	RuleFilter       *ContentModerationRuleEvidence    `json:"rule_filter,omitempty"`
 	ContentScope     string                            `json:"content_scope,omitempty"`
 	Source           string                            `json:"source,omitempty"`
 	CombinationRules []ContentModerationCombinationHit `json:"combination_rules,omitempty"`

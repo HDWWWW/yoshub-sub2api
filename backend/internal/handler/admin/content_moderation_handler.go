@@ -60,6 +60,7 @@ type contentModerationConfigRequest struct {
 	KeywordContextChars            *int                                        `json:"keyword_context_chars"`
 	PreHashCheckEnabled            *bool                                       `json:"pre_hash_check_enabled"`
 	CombinationRules               *[]service.ContentModerationCombinationRule `json:"combination_rules"`
+	RuleFilter                     *service.ContentModerationRuleFilter        `json:"rule_filter"`
 	BlockedKeywords                *[]string                                   `json:"blocked_keywords"`
 	KeywordBlockingMode            *string                                     `json:"keyword_blocking_mode"`
 	ModelFilter                    *service.ContentModerationModelFilter       `json:"model_filter"`
@@ -136,6 +137,7 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 		KeywordContextChars:            req.KeywordContextChars,
 		PreHashCheckEnabled:            req.PreHashCheckEnabled,
 		CombinationRules:               req.CombinationRules,
+		RuleFilter:                     req.RuleFilter,
 		BlockedKeywords:                req.BlockedKeywords,
 		KeywordBlockingMode:            req.KeywordBlockingMode,
 		ModelFilter:                    req.ModelFilter,

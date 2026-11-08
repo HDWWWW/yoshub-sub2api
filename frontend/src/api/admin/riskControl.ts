@@ -1,5 +1,52 @@
 import { apiClient } from '../client'
 
+export interface RulePattern {
+  name: string
+  pattern: string
+  weight: number
+  category?: string
+  strict?: boolean
+  signal_only?: boolean
+  enabled?: boolean
+  all_patterns?: string[]
+  any_patterns?: string[]
+  exclude_patterns?: string[]
+  authorization_exclude_patterns?: string[]
+  min_matches?: number
+}
+export interface RuleFilterConfig {
+  enabled: boolean
+  mode: 'block' | 'monitor' | 'warn'
+  threshold: number
+  strict_threshold: number
+  strict_terminal_enabled: boolean
+  custom_patterns: RulePattern[]
+  disabled_patterns: string[]
+}
+export const defaultRuleFilter = (): RuleFilterConfig => ({ enabled: false, mode: 'block', threshold: 50, strict_threshold: 90, strict_terminal_enabled: true, custom_patterns: [], disabled_patterns: [] })
+export interface RuleFilterEvidence {
+  version: string
+  action: string
+  would_action: string
+  score: number
+  raw_score: number
+  audit_score: number
+  threshold: number
+  strict_threshold: number
+  reason: string
+  truncated: boolean
+  deferred: boolean
+  signals: Array<{ origin: string; layer_mode: string; score: number; raw_score: number; action: string; matches: Array<{ name: string; category?: string; weight: number; strict?: boolean; signal_only?: boolean }>; context: string; keywords: string[] }>
+}
+export interface RuleFilterCatalog { version: string; presets: RulePattern[]; defaults: RuleFilterConfig }
+export async function getRuleFilterCatalog(): Promise<RuleFilterCatalog> {
+  return (await apiClient.get<RuleFilterCatalog>('/admin/risk-control/rule-filter/catalog')).data
+}
+export async function testRuleFilter(config: RuleFilterConfig, text: string): Promise<RuleFilterEvidence> {
+  return (await apiClient.post<RuleFilterEvidence>('/admin/risk-control/rule-filter/test', { config, text })).data
+}
+
+
 export interface CombinationRule {
   id: string
   name: string
@@ -72,6 +119,7 @@ export interface ContentModerationConfig {
   keyword_context_chars?: number
   pre_hash_check_enabled: boolean
   combination_rules?: CombinationRule[]
+  rule_filter?: RuleFilterConfig
   blocked_keywords: string[]
   keyword_blocking_mode: KeywordBlockingMode
   model_filter: ContentModerationModelFilter
@@ -164,6 +212,7 @@ export interface UpdateContentModerationConfig {
   keyword_context_chars?: number
   pre_hash_check_enabled?: boolean
   combination_rules?: CombinationRule[]
+  rule_filter?: RuleFilterConfig
   blocked_keywords?: string[]
   keyword_blocking_mode?: KeywordBlockingMode
   model_filter?: ContentModerationModelFilter
@@ -261,6 +310,7 @@ export interface ContentModerationLogInput {
     stored_characters: number
     truncated: boolean
     combination_rules?: CombinationRuleHit[]
+  rule_filter?: RuleFilterEvidence
     match_context?: string
     policy?: {
       code: string

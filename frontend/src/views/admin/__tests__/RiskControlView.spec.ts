@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils'
 
 import RiskControlView from '../RiskControlView.vue'
+import { defaultRuleFilter } from '@/api/admin/riskControl'
 import type { ContentModerationAPIKeyStatus, ContentModerationConfig, UpdateContentModerationConfig } from '@/api/admin/riskControl'
 
 const {
@@ -54,6 +55,8 @@ vi.mock('@/api/admin', () => ({
     },
   },
 }))
+
+vi.mock('@/api/admin/riskControl', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/api/admin/riskControl')>()), getRuleFilterCatalog: vi.fn().mockResolvedValue({ version: 'test', presets: [], defaults: { enabled: false, mode: 'block', threshold: 50, strict_threshold: 90, strict_terminal_enabled: true, custom_patterns: [], disabled_patterns: [] } }) }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
@@ -357,19 +360,19 @@ describe('admin RiskControlView', () => {
     wrapper.unmount()
   })
 
-  it('saves editable combination rules and loads the saved configuration again', async () => {
-    getConfig.mockResolvedValue({ ...baseConfig(), combination_rules: [{ id: 'custom', name: 'Editable rule', enabled: true, action: 'block', scope: 'conversation', window_characters: 400, groups: [{ name: 'A', keywords: ['猫'] }, { name: 'B', keywords: ['画'] }] }] })
+  it('saves editable local rules and loads the saved configuration again', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig(), rule_filter: { ...defaultRuleFilter(), enabled: true, custom_patterns: [{ name: 'Editable rule', pattern: 'local-sentinel-marker', weight: 100 }] } })
     const wrapper = await mountAudits([])
     await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
-    await findButtonByText(wrapper, 'admin.riskControl.combination.title').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.ruleFilter.title').trigger('click')
     await wrapper.get('[data-test="rule-name"]').setValue('Renamed rule')
-    await wrapper.get('[data-test="rule-window"]').setValue('600')
+    await wrapper.get('[data-test="rule-threshold"]').setValue('60')
     await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
     await flushPromises()
-    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ combination_rules: [expect.objectContaining({ id: 'custom', name: 'Renamed rule', window_characters: 600 })] }))
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ rule_filter: expect.objectContaining({ threshold: 60, custom_patterns: [expect.objectContaining({ name: 'Renamed rule' })] }) }))
     expect(showError).not.toHaveBeenCalled()
     await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
-    await findButtonByText(wrapper, 'admin.riskControl.combination.title').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.ruleFilter.title').trigger('click')
     expect(wrapper.get<HTMLInputElement>('[data-test="rule-name"]').element.value).toBe('Renamed rule')
     wrapper.unmount()
   })

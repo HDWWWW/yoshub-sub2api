@@ -174,6 +174,7 @@ type ContentModerationConfig struct {
 	KeywordContextChars  int                                 `json:"keyword_context_chars"`
 	PreHashCheckEnabled  bool                                `json:"pre_hash_check_enabled"`
 	CombinationRules     []ContentModerationCombinationRule  `json:"combination_rules"`
+	RuleFilter           *ContentModerationRuleFilter        `json:"rule_filter,omitempty"`
 	BlockedKeywords      []string                            `json:"blocked_keywords"`
 	KeywordBlockingMode  string                              `json:"keyword_blocking_mode"`
 	ModelFilter          ContentModerationModelFilter        `json:"model_filter"`
@@ -218,6 +219,7 @@ type ContentModerationConfigView struct {
 	KeywordContextChars            int                                     `json:"keyword_context_chars"`
 	PreHashCheckEnabled            bool                                    `json:"pre_hash_check_enabled"`
 	CombinationRules               []ContentModerationCombinationRule      `json:"combination_rules"`
+	RuleFilter                     *ContentModerationRuleFilter            `json:"rule_filter,omitempty"`
 	BlockedKeywords                []string                                `json:"blocked_keywords"`
 	KeywordBlockingMode            string                                  `json:"keyword_blocking_mode"`
 	ModelFilter                    ContentModerationModelFilter            `json:"model_filter"`
@@ -322,6 +324,7 @@ type UpdateContentModerationConfigInput struct {
 	KeywordContextChars            *int                                `json:"keyword_context_chars"`
 	PreHashCheckEnabled            *bool                               `json:"pre_hash_check_enabled"`
 	CombinationRules               *[]ContentModerationCombinationRule `json:"combination_rules"`
+	RuleFilter                     *ContentModerationRuleFilter        `json:"rule_filter,omitempty"`
 	BlockedKeywords                *[]string                           `json:"blocked_keywords"`
 	KeywordBlockingMode            *string                             `json:"keyword_blocking_mode"`
 	ModelFilter                    *ContentModerationModelFilter       `json:"model_filter"`
@@ -579,6 +582,7 @@ type contentModerationRuntimeSnapshot struct {
 }
 
 type contentModerationTask struct {
+	ruleAudit        *contentModerationRuleAudit
 	input            ContentModerationCheckInput
 	content          ContentModerationInput
 	inputHash        string
@@ -717,6 +721,12 @@ func (s *ContentModerationService) updateConfig(ctx context.Context, input Updat
 	}
 	if input.PreHashCheckEnabled != nil {
 		cfg.PreHashCheckEnabled = *input.PreHashCheckEnabled
+	}
+	if input.RuleFilter != nil {
+		if err := validateRuleFilter(input.RuleFilter); err != nil {
+			return nil, err
+		}
+		cfg.RuleFilter = cloneRuleFilter(input.RuleFilter)
 	}
 	if input.CombinationRules != nil {
 		rules, err := normalizeCombinationRules(*input.CombinationRules)
@@ -980,7 +990,11 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"configured_models", cfg.ModelFilter.Models)
 		return allow, nil
 	}
-	if ruleDecision := s.checkCombinationRules(input, runtimeSnapshot); ruleDecision != nil {
+	if cfg.RuleFilter != nil && cfg.RuleFilter.Enabled {
+		if ruleDecision := s.checkRuleFilter(ctx, input, runtimeSnapshot); ruleDecision != nil {
+			return ruleDecision, nil
+		}
+	} else if ruleDecision := s.checkCombinationRules(input, runtimeSnapshot); ruleDecision != nil {
 		return ruleDecision, nil
 	}
 	if cfg.Mode == ContentModerationModePreBlock {
@@ -1329,6 +1343,10 @@ func (s *ContentModerationService) worker(id int) {
 					slog.Error("content_moderation.worker_panic", "worker_id", id, "recover", r)
 				}
 			}()
+			if task.ruleAudit != nil {
+				s.processRuleShadow(ctx, task, runtimeSnapshot)
+				return
+			}
 			if task.log != nil {
 				s.asyncActive.Add(1)
 				defer s.asyncActive.Add(-1)
@@ -1611,6 +1629,12 @@ func parseContentModerationConfig(raw string) (*ContentModerationConfig, error) 
 		return nil, err
 	}
 	cfg.CombinationRules = rules
+	if cfg.RuleFilter == nil {
+		cfg.RuleFilter = DefaultContentModerationRuleFilter()
+	}
+	if err := validateRuleFilter(cfg.RuleFilter); err != nil {
+		return nil, err
+	}
 	if !validModerationEngine(cfg.Engine) {
 		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_ENGINE", "内容审计引擎无效")
 	}
@@ -2316,6 +2340,7 @@ func cloneContentModerationConfig(cfg *ContentModerationConfig) *ContentModerati
 	clone.APIKeys = append([]string(nil), cfg.APIKeys...)
 	clone.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
 	clone.CombinationRules = cloneCombinationRules(cfg.CombinationRules)
+	clone.RuleFilter = cloneRuleFilter(cfg.RuleFilter)
 	clone.BlockedKeywords = append([]string(nil), cfg.BlockedKeywords...)
 	clone.Thresholds = cloneFloatMap(cfg.Thresholds)
 	clone.ModelFilter = ContentModerationModelFilter{
@@ -2643,6 +2668,7 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		KeywordContextChars:            cfg.KeywordContextChars,
 		PreHashCheckEnabled:            cfg.PreHashCheckEnabled,
 		CombinationRules:               cloneCombinationRules(cfg.CombinationRules),
+		RuleFilter:                     cloneRuleFilter(cfg.RuleFilter),
 		BlockedKeywords:                append([]string(nil), cfg.BlockedKeywords...),
 		KeywordBlockingMode:            cfg.KeywordBlockingMode,
 		ModelFilter:                    cloneContentModerationModelFilter(cfg.ModelFilter),

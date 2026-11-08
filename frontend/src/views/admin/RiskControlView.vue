@@ -323,7 +323,7 @@
                     </td>
                     <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
                       <div>{{ row.highest_category || '-' }}</div>
-                      <div class="text-xs text-gray-400">{{ row.highest_category === 'combination_rule' ? t('admin.riskControl.combination.localMatch') : percent(row.highest_score) }}</div>
+                      <div class="text-xs text-gray-400">{{ ['combination_rule', 'local_rule'].includes(row.highest_category) ? t('admin.riskControl.combination.localMatch') : percent(row.highest_score) }}</div>
                       <div v-if="row.matched_keyword" class="mt-0.5 text-xs font-medium text-red-600 dark:text-red-300" :title="t('admin.riskControl.matchedKeyword') + ': ' + row.matched_keyword">
                         {{ t('admin.riskControl.matchedKeyword') }}: {{ row.matched_keyword }}
                       </div>
@@ -1010,7 +1010,7 @@
             </div>
           </div>
 
-          <CombinationRulesEditor v-else-if="activeSettingsTab === 'combinations'" v-model="configForm.combination_rules" />
+          <RuleFilterEditor v-else-if="activeSettingsTab === 'combinations'" v-model="configForm.rule_filter" />
 
           <div v-else-if="activeSettingsTab === 'keywords'" class="space-y-5">
             <div
@@ -1126,7 +1126,7 @@
         <div v-if="inputDetailRow" class="space-y-5">
           <div class="text-sm break-words" data-test="audit-engine-meta">
             <span class="font-medium">{{ t('admin.riskControl.auditSource') }}: </span>
-            <template v-if="inputDetailRow.highest_category === 'combination_rule'">{{ t('admin.riskControl.combination.title') }}</template>
+            <template v-if="['combination_rule', 'local_rule'].includes(inputDetailRow.highest_category)">{{ t(inputDetailRow.highest_category === 'local_rule' ? 'admin.riskControl.ruleFilter.title' : 'admin.riskControl.combination.title') }}</template>
             <template v-else-if="inputDetailRow.engine_meta">
               {{ engineLabel(inputDetailRow.engine_meta.engine) }} · {{ inputDetailRow.engine_meta.model || '-' }} · {{ inputDetailRow.engine_meta.rules_version || '-' }}
               <span v-if="inputDetailRow.engine_meta.skipped_images"> · {{ t('admin.riskControl.skippedImages', { count: inputDetailRow.engine_meta.skipped_images }) }}</span>
@@ -1151,7 +1151,7 @@
             <div class="rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/70">
               <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.highest') }}</p>
               <p class="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">
-                {{ inputDetailRow.highest_category === 'combination_rule' ? t('admin.riskControl.combination.localMatch') : `${inputDetailRow.highest_category || '-'} / ${percent(inputDetailRow.highest_score)}` }}
+                {{ ['combination_rule', 'local_rule'].includes(inputDetailRow.highest_category) ? t('admin.riskControl.combination.localMatch') : `${inputDetailRow.highest_category || '-'} / ${percent(inputDetailRow.highest_score)}` }}
               </p>
             </div>
             <div v-if="inputDetailRow.matched_keyword" class="rounded-lg border border-red-100 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-900/20">
@@ -1189,6 +1189,7 @@
                   ? t('admin.riskControl.inputTruncated', { total: inputDetail.evidence.total_characters, stored: inputDetail.evidence.stored_characters })
                   : t('admin.riskControl.inputComplete', { total: inputDetail.evidence.total_characters }) }}
               </p>
+              <RuleFilterEvidence v-if="inputDetail.evidence.rule_filter" class="mt-4" :evidence="inputDetail.evidence.rule_filter" />
               <div v-if="inputDetail.evidence.combination_rules?.length" class="mt-4 space-y-3" data-test="combination-evidence">
                 <div v-for="hit in inputDetail.evidence.combination_rules" :key="hit.rule_id" class="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20">
                   <p class="font-semibold">{{ hit.rule_name }} · {{ hit.rule_id }}</p>
@@ -1249,7 +1250,9 @@ import type {
   UpdateModerationEngineConfig,
   UpdateContentModerationConfig,
 } from '@/api/admin/riskControl'
-import CombinationRulesEditor from '@/components/admin/risk/CombinationRulesEditor.vue'
+import RuleFilterEditor from '@/components/admin/risk/RuleFilterEditor.vue'
+import RuleFilterEvidence from '@/components/admin/risk/RuleFilterEvidence.vue'
+import { defaultRuleFilter } from '@/api/admin/riskControl'
 import type { CombinationRule } from '@/api/admin/riskControl'
 import type { AdminGroup, Proxy, SelectOption } from '@/types'
 import { useAppStore } from '@/stores/app'
@@ -1378,6 +1381,7 @@ const configForm = reactive({
   pre_hash_check_enabled: false,
   thresholds: { ...riskThresholdDefaults } as Record<string, number>,
   combination_rules: [] as CombinationRule[],
+  rule_filter: defaultRuleFilter(),
   blocked_keywords_text: '',
   keyword_blocking_mode: 'keyword_and_api' as KeywordBlockingMode,
   model_filter_type: 'all' as ContentModerationModelFilterType,
@@ -1456,7 +1460,7 @@ const settingsTabs = computed<Array<{ id: SettingsTab; label: string }>>(() => [
   { id: 'response', label: t('admin.riskControl.tabs.response') },
   { id: 'riskThresholds', label: t('admin.riskControl.tabs.riskThresholds') },
   { id: 'keywords', label: t('admin.riskControl.tabs.keywords') },
-  { id: 'combinations', label: t('admin.riskControl.combination.title') },
+  { id: 'combinations', label: t('admin.riskControl.ruleFilter.title') },
   { id: 'retention', label: t('admin.riskControl.tabs.retention') },
 ])
 
@@ -1912,6 +1916,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.pre_hash_check_enabled = config.pre_hash_check_enabled ?? false
   configForm.thresholds = riskThresholdsFromConfig(config.thresholds)
   configForm.combination_rules = (config.combination_rules ?? []).map(rule => ({ ...rule, groups: rule.groups.map(group => ({ ...group, keywords: [...group.keywords] })) }))
+  configForm.rule_filter = JSON.parse(JSON.stringify(config.rule_filter ?? defaultRuleFilter()))
   configForm.blocked_keywords_text = Array.isArray(config.blocked_keywords) ? config.blocked_keywords.join('\n') : ''
   configForm.keyword_blocking_mode = normalizeKeywordBlockingMode(config.keyword_blocking_mode)
   const modelFilter = normalizeModelFilter(config.model_filter)
@@ -2016,6 +2021,7 @@ async function saveConfig() {
       pre_hash_check_enabled: configForm.pre_hash_check_enabled,
       thresholds: buildRiskThresholdPayload(),
       combination_rules: configForm.combination_rules,
+      rule_filter: configForm.rule_filter,
       blocked_keywords: blockedKeywordList.value,
       keyword_blocking_mode: configForm.keyword_blocking_mode,
       model_filter: modelFilterPayload,
