@@ -112,3 +112,30 @@ func TestContentModerationUserBodyLegacyPolicyProjection(t *testing.T) {
 	require.Empty(t, result.Evidence.Policy.UpstreamBody)
 	require.Contains(t, old.Policy.RequestBody, "noise", "read projection must not mutate historical storage")
 }
+
+func TestCombinationCurrentUserContextDoesNotBorrowHistory(t *testing.T) {
+	for _, tail := range []string{"<system-reminder>猫画画</system-reminder>", "当前用户猫画画"} {
+		cfg := defaultContentModerationConfig()
+		cfg.Enabled, cfg.Mode = true, ContentModerationModePreBlock
+		rule := ContentModerationCombinationRule{ID: "current", Name: "Test", Enabled: true, Action: "block", Scope: "current_user", WindowCharacters: 100, Groups: []ContentModerationCombinationGroup{{Name: "A", Keywords: []string{"猫"}}, {Name: "B", Keywords: []string{"画"}}}}
+		cfg.CombinationRules = []ContentModerationCombinationRule{rule}
+		raw, err := json.Marshal(cfg)
+		require.NoError(t, err)
+		repo := &contentModerationTestRepo{}
+		svc := NewContentModerationService(&contentModerationTestSettingRepo{values: map[string]string{SettingKeyRiskControlEnabled: "true", SettingKeyContentModerationConfig: string(raw)}}, repo, nil, nil, nil, nil, nil, nil)
+		body, err := json.Marshal(map[string]any{"input": []map[string]string{{"role": "user", "content": "旧消息猫画画"}, {"role": "user", "content": tail}}})
+		require.NoError(t, err)
+		decision, err := svc.Check(context.Background(), ContentModerationCheckInput{Protocol: ContentModerationProtocolOpenAIResponses, Body: body})
+		require.NoError(t, err)
+		require.True(t, decision.Blocked)
+		log := requireContentModerationLogCount(t, repo, 1)[0]
+		hit := log.InputEvidence.CombinationRules[0]
+		require.Equal(t, "current_user", hit.Source)
+		require.NotContains(t, hit.Context, "旧消息")
+		if cleanModerationUserBody(tail) == "" {
+			require.Empty(t, hit.Context)
+		} else {
+			require.Contains(t, hit.Context, "当前用户猫画画")
+		}
+	}
+}

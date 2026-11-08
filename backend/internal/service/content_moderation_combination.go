@@ -329,7 +329,9 @@ func (s *ContentModerationService) checkCombinationRules(input ContentModeration
 	userTexts := make(map[string]string)
 	for _, message := range extractModerationUserBodies(input.Protocol, input.Body) {
 		userTexts[message.source] = message.text
-		userTexts["current_user"] = normalizeContentModerationText(message.text)
+		if message.current {
+			userTexts["current_user"] = normalizeContentModerationText(message.text)
+		}
 	}
 	for i := range hits {
 		contextLog := &ContentModerationLog{MatchedKeyword: hits[i].Context}

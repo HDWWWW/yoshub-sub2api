@@ -12,6 +12,7 @@ const moderationUserBodyScope = "user_body"
 
 type moderationUserBody struct {
 	text, source string
+	current      bool
 }
 
 // This extractor is ONLY for retained audit evidence. Never feed its filtered
@@ -38,7 +39,7 @@ func extractModerationUserBodies(protocol string, body []byte) []moderationUserB
 		var parts []string
 		collectModerationUserState(root.Get("state"), &parts)
 		if text := cleanModerationUserBody(strings.Join(parts, "\n")); text != "" {
-			return []moderationUserBody{{text: text, source: "state"}}
+			return []moderationUserBody{{text: text, source: "state", current: true}}
 		}
 		return nil
 	default:
@@ -54,7 +55,7 @@ func extractModerationUserBodies(protocol string, body []byte) []moderationUserB
 		return nil
 	}
 	var out []moderationUserBody
-	add := func(value gjson.Result, source string) {
+	add := func(value gjson.Result, source string, current bool) {
 		role := strings.ToLower(strings.TrimSpace(value.Get("role").String()))
 		if role != "user" && !(role == "" && implicitUser) {
 			return
@@ -62,17 +63,24 @@ func extractModerationUserBodies(protocol string, body []byte) []moderationUserB
 		var parts []string
 		collectModerationUserText(value, &parts)
 		if text := cleanModerationUserBody(strings.Join(parts, "\n")); text != "" {
-			out = append(out, moderationUserBody{text: text, source: source})
+			out = append(out, moderationUserBody{text: text, source: source, current: current})
 		}
 	}
 	value := root.Get(field)
 	if value.IsArray() {
+		items := value.Array()
+		currentIndex := len(items) - 1
+		if protocol == ContentModerationProtocolAnthropicMessages {
+			for currentIndex >= 0 && strings.EqualFold(strings.TrimSpace(items[currentIndex].Get("role").String()), "system") {
+				currentIndex--
+			}
+		}
 		value.ForEach(func(index, item gjson.Result) bool {
-			add(item, fmt.Sprintf("%s[%d]", field, index.Int()))
+			add(item, fmt.Sprintf("%s[%d]", field, index.Int()), int(index.Int()) == currentIndex)
 			return true
 		})
 	} else {
-		add(value, field)
+		add(value, field, true)
 	}
 	return out
 }
