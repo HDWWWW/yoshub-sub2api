@@ -52,10 +52,11 @@ func TestForwardCompatSafetyPolicies(t *testing.T) {
 			for _, stream := range []bool{false, true} {
 				for _, upstreamStatus := range []int{http.StatusOK, http.StatusBadGateway} {
 					t.Run(fmt.Sprintf("%s/%s/stream=%t/upstream=%d", code, path, stream, upstreamStatus), func(t *testing.T) {
-						wire := fmt.Sprintf(`{"error":{"type":"invalid_request_error","code":%q,"message":"blocked by upstream policy"}}`, code)
+						evidence := strings.Repeat("完整官方证据。", 900) + "末尾证据"
+						wire := fmt.Sprintf(`{"error":{"type":"invalid_request_error","code":%q,"message":"blocked by upstream policy"},"provider_extra":%q}`, code, evidence)
 						contentType := "application/json"
 						if upstreamStatus == http.StatusOK {
-							wire = "data: " + fmt.Sprintf(`{"type":"response.failed","response":{"id":"resp_policy","object":"response","model":"gpt-5.5","status":"failed","output":[],"error":{"code":%q,"message":"blocked by upstream policy"},"usage":{"input_tokens":11,"output_tokens":3}}}`, code) + "\n\n"
+							wire = "data: " + fmt.Sprintf(`{"type":"response.failed","response":{"id":"resp_policy","object":"response","model":"gpt-5.5","status":"failed","output":[],"error":{"code":%q,"message":"blocked by upstream policy"},"usage":{"input_tokens":11,"output_tokens":3}},"provider_extra":%q}`, code, evidence) + "\n\n"
 							contentType = "text/event-stream"
 						}
 						upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -90,6 +91,7 @@ func TestForwardCompatSafetyPolicies(t *testing.T) {
 						require.NotNil(t, mark)
 						require.Equal(t, code, mark.Code)
 						require.Equal(t, upstreamStatus, mark.UpstreamStatus)
+						require.True(t, evidence == gjson.Get(mark.Body, "provider_extra").String(), "retain the full original event including unknown fields")
 						require.Contains(t, rec.Body.String(), fmt.Sprintf(`"code":%q`, code))
 						require.Contains(t, rec.Body.String(), "blocked by upstream policy")
 						if upstreamStatus == http.StatusOK {

@@ -94,6 +94,19 @@ func (r *contentModerationTestRepo) ListLogs(ctx context.Context, filter Content
 	return nil, nil, nil
 }
 
+func (r *contentModerationTestRepo) GetLogInput(ctx context.Context, id int64) (*ContentModerationLogInput, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, log := range r.logs {
+		if log.ID == id {
+			return &ContentModerationLogInput{InputExcerpt: log.InputExcerpt, MatchedKeyword: log.MatchedKeyword, Evidence: log.InputEvidence}, nil
+		}
+	}
+	return nil, fmt.Errorf("log %d not found", id)
+}
+
+func (r *contentModerationTestRepo) GetLogStorageUsage(context.Context) (int64, error) { return 0, nil }
+
 func (r *contentModerationTestRepo) CountFlaggedByUserSince(ctx context.Context, userID int64, since time.Time, excludeCyberPolicy bool) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -506,6 +519,9 @@ func TestContentModerationCheck_PreBlockKeywordHitSkipsUpstreamCall(t *testing.T
 	require.Equal(t, ContentModerationActionKeywordBlock, logs[0].Action)
 	require.Equal(t, contentModerationKeywordCategory, logs[0].HighestCategory)
 	require.Equal(t, "secret-token", logs[0].MatchedKeyword, "blocked log must record which keyword was hit")
+	require.NotNil(t, logs[0].InputEvidence)
+	require.Equal(t, "please leak SECRET-TOKEN now", logs[0].InputEvidence.Text)
+	require.Contains(t, logs[0].InputEvidence.MatchContext, "SECRET-TOKEN")
 }
 
 func TestContentModerationCheck_KeywordsIgnoredInObserveMode(t *testing.T) {

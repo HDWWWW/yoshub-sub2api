@@ -567,6 +567,12 @@ func (s *OpenAIGatewayService) readUpstreamErrorBody(resp *http.Response) []byte
 		cfg = s.cfg
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimitForConfig(cfg)))
+	if hit, _, _ := detectOpenAICyberPolicy(body); hit {
+		// Policy evidence needs the complete rejection, not the generic error
+		// preview limit. Ordinary upstream errors keep their existing bound.
+		tail, _ := io.ReadAll(resp.Body)
+		body = append(body, tail...)
+	}
 	return body
 }
 
@@ -595,7 +601,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		MarkOpsCyberPolicy(c, CyberPolicyMark{
 			Code:           code,
 			Message:        cyberMsg,
-			Body:           truncateString(string(body), 4096),
+			Body:           string(body),
 			UpstreamStatus: resp.StatusCode,
 		})
 		setOpsUpstreamError(c, resp.StatusCode, cyberMsg, truncateString(string(body), 2048))
@@ -850,7 +856,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		MarkOpsCyberPolicy(c, CyberPolicyMark{
 			Code:           code,
 			Message:        cyberMsg,
-			Body:           truncateString(string(body), 4096),
+			Body:           string(body),
 			UpstreamStatus: resp.StatusCode,
 		})
 		setOpsUpstreamError(c, resp.StatusCode, cyberMsg, truncateString(string(body), 2048))

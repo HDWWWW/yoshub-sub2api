@@ -30,7 +30,7 @@ var errOpenAICyberPolicyForwarded = errors.New("openai safety policy forwarded t
 type CyberPolicyMark struct {
 	Code           string // Original provider policy code.
 	Message        string // 上游 error.message
-	Body           string // 上游 response.failed / 400 原始 body（已截断；未脱敏，ops_error 落库由 sanitizeErrorBodyForStorage、风控日志由 redactContentModerationSecrets 统一脱敏）
+	Body           string // Complete rejecting provider event; storage paths redact independently.
 	UpstreamStatus int    // 原始上游 HTTP 状态，可与客户端状态不同。
 	UpstreamInTok  int    // 上游已报 input tokens（如有）
 	UpstreamOutTok int    // 上游已报 output tokens（如有）
@@ -137,7 +137,7 @@ func markOpenAICyberPolicyEvent(c *gin.Context, payload []byte, upstreamStatus i
 	mark := CyberPolicyMark{
 		Code:           code,
 		Message:        message,
-		Body:           truncateString(string(payload), 4096),
+		Body:           string(payload),
 		UpstreamStatus: upstreamStatus,
 	}
 	if usage != nil {

@@ -41,6 +41,12 @@ func (r *cyberOrderingTestRepo) ListLogs(ctx context.Context, filter ContentMode
 	return nil, nil, nil
 }
 
+func (r *cyberOrderingTestRepo) GetLogInput(ctx context.Context, id int64) (*ContentModerationLogInput, error) {
+	return &ContentModerationLogInput{}, nil
+}
+
+func (r *cyberOrderingTestRepo) GetLogStorageUsage(context.Context) (int64, error) { return 0, nil }
+
 func (r *cyberOrderingTestRepo) CountFlaggedByUserSince(ctx context.Context, userID int64, since time.Time, excludeCyberPolicy bool) (int, error) {
 	return 0, nil
 }

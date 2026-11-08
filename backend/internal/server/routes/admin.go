@@ -178,6 +178,7 @@ func registerContentModerationRoutes(admin *gin.RouterGroup, h *handler.Handlers
 		risk.POST("/api-keys/allocate-ipv6", h.Admin.ContentModeration.AllocateAPIKeyIPv6)
 		risk.GET("/status", h.Admin.ContentModeration.GetStatus)
 		risk.GET("/logs", h.Admin.ContentModeration.ListLogs)
+		risk.GET("/logs/:id/input", h.Admin.ContentModeration.GetLogInput)
 		risk.POST("/users/:user_id/unban", h.Admin.ContentModeration.UnbanUser)
 		risk.DELETE("/hashes", h.Admin.ContentModeration.DeleteFlaggedHash)
 		risk.DELETE("/hashes/all", h.Admin.ContentModeration.ClearFlaggedHashes)

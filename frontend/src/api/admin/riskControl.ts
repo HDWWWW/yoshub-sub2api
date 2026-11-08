@@ -47,6 +47,7 @@ export interface ContentModerationConfig {
   retry_count: number
   hit_retention_days: number
   non_hit_retention_days: number
+  log_storage_limit_gb?: number
   pre_hash_check_enabled: boolean
   blocked_keywords: string[]
   keyword_blocking_mode: KeywordBlockingMode
@@ -136,6 +137,7 @@ export interface UpdateContentModerationConfig {
   retry_count?: number
   hit_retention_days?: number
   non_hit_retention_days?: number
+  log_storage_limit_gb?: number
   pre_hash_check_enabled?: boolean
   blocked_keywords?: string[]
   keyword_blocking_mode?: KeywordBlockingMode
@@ -174,6 +176,7 @@ export interface ContentModerationRuntimeStatus {
   last_cleanup_at?: string
   last_cleanup_deleted_hit: number
   last_cleanup_deleted_non_hit: number
+  log_storage_used_bytes?: number | null
 }
 
 export interface ContentModerationAPIKeyLoad {
@@ -220,6 +223,24 @@ export interface ContentModerationLog {
   user_status: string
   queue_delay_ms: number | null
   created_at: string
+}
+
+export interface ContentModerationLogInput {
+  input_excerpt: string
+  matched_keyword: string
+  evidence: {
+    text: string
+    total_characters: number
+    stored_characters: number
+    truncated: boolean
+    match_context?: string
+    policy?: {
+      code: string
+      request_body: string
+      upstream_body: string
+      upstream_status: number
+    }
+  } | null
 }
 
 export type UpdateModerationEngineConfig = Pick<UpdateContentModerationConfig,
@@ -299,6 +320,11 @@ export async function listLogs(
   return data
 }
 
+export async function getLogInput(id: number): Promise<ContentModerationLogInput> {
+  const { data } = await apiClient.get<ContentModerationLogInput>(`/admin/risk-control/logs/${id}/input`)
+  return data
+}
+
 export async function unbanUser(userID: number): Promise<ContentModerationUnbanUserResponse> {
   const { data } = await apiClient.post<ContentModerationUnbanUserResponse>(
     `/admin/risk-control/users/${userID}/unban`
@@ -325,6 +351,7 @@ export const riskControlAPI = {
   testAPIKeys,
   allocateAPIKeyIPv6,
   listLogs,
+  getLogInput,
   unbanUser,
   deleteFlaggedHash,
   clearFlaggedHashes,

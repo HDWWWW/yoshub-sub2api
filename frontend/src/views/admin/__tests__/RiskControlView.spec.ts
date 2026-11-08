@@ -11,6 +11,7 @@ const {
   updateConfig,
   getStatus,
   listLogs,
+  getLogInput,
   getGroups,
   getProxies,
   testAPIKeys,
@@ -22,6 +23,7 @@ const {
   updateConfig: vi.fn(),
   getStatus: vi.fn(),
   listLogs: vi.fn(),
+  getLogInput: vi.fn(),
   getGroups: vi.fn(),
   getProxies: vi.fn(),
   testAPIKeys: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock('@/api/admin', () => ({
       updateConfig,
       getStatus,
       listLogs,
+      getLogInput,
       testAPIKeys,
       allocateAPIKeyIPv6,
       deleteFlaggedHash: vi.fn(),
@@ -201,6 +204,7 @@ describe('admin RiskControlView', () => {
     updateConfig.mockReset()
     getStatus.mockReset()
     listLogs.mockReset()
+    getLogInput.mockReset()
     getGroups.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
@@ -210,6 +214,7 @@ describe('admin RiskControlView', () => {
     getConfig.mockResolvedValue(baseConfig())
     getStatus.mockResolvedValue(runtimeStatus())
     listLogs.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
+    getLogInput.mockResolvedValue({ input_excerpt: '历史摘要', matched_keyword: '', evidence: null })
     getGroups.mockResolvedValue([])
     getProxies.mockResolvedValue([])
     updateConfig.mockImplementation(async (payload: UpdateContentModerationConfig) => ({
@@ -222,6 +227,108 @@ describe('admin RiskControlView', () => {
       api_key_masks: [],
       api_key_statuses: [],
     }))
+  })
+
+  const auditRow = (id = 1) => ({
+    id, created_at: '2026-11-08T04:00:00Z', user_email: 'writer@example.test',
+    endpoint: '/v1/responses', provider: 'openai', model: 'test-model', mode: 'pre_block',
+    action: 'keyword_block', flagged: true, highest_category: 'keyword', highest_score: 1,
+    matched_keyword: '仿生', input_excerpt: '…角色穿上仿生装甲走入画面。…',
+    error: '', violation_count: 1, category_scores: {}, threshold_snapshot: {},
+  })
+  const mountAudits = async (rows = [auditRow()]) => {
+    listLogs.mockResolvedValue({ items: rows, total: rows.length, page: 1, page_size: 20, pages: 1 })
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+    return wrapper
+  }
+  const auditEvidence = (text: string) => ({ input_excerpt: '摘要', matched_keyword: '仿生', evidence: {
+    text, total_characters: [...text].length, stored_characters: [...text].length,
+    truncated: false, match_context: '角色穿上仿生装甲走入画面。',
+  } })
+
+  it('loads evidence on demand and highlights a match beyond the retained input', async () => {
+    getLogInput.mockResolvedValue({ ...auditEvidence('长剧本正文。'.repeat(2400)), evidence: {
+      text: '长剧本正文。'.repeat(2400), total_characters: 20000, stored_characters: 12000,
+      truncated: true, match_context: '角色穿上仿生装甲走入画面。',
+    } })
+    const wrapper = await mountAudits()
+    expect(getLogInput).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="moderation-input-1"] mark').text()).toBe('仿生')
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await flushPromises()
+    expect(getLogInput).toHaveBeenCalledWith(1)
+    expect(wrapper.get('[data-test="moderation-input-retention"]').text()).toContain('inputTruncated')
+    expect(wrapper.get('[data-test="moderation-match-context"] mark').text()).toBe('仿生')
+    expect(wrapper.get('[data-test="moderation-input-text"]').text()).toBe('长剧本正文。'.repeat(2400))
+    wrapper.unmount()
+  })
+
+  it('explains missing legacy evidence and supports retry after a failed fetch', async () => {
+    getLogInput.mockRejectedValueOnce(new Error('network failed'))
+    const wrapper = await mountAudits()
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('inputDetailFailed')
+    expect(wrapper.find('[data-test="moderation-input-legacy"]').exists()).toBe(false)
+    await wrapper.get('[data-test="moderation-input-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="moderation-input-legacy"]').text()).toContain('inputLegacyNotice')
+    expect(wrapper.get('[data-test="moderation-input-text"]').text()).toContain('角色穿上仿生装甲')
+    wrapper.unmount()
+  })
+
+  it('ignores late responses after switching or closing the input dialog', async () => {
+    let finishFirst!: (value: unknown) => void
+    getLogInput.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }))
+    getLogInput.mockResolvedValueOnce(auditEvidence('第二条审核输入'))
+    const wrapper = await mountAudits([auditRow(1), auditRow(2)])
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await wrapper.get('[data-test="moderation-input-2"]').trigger('click')
+    await flushPromises()
+    finishFirst(auditEvidence('不应出现的旧输入'))
+    await flushPromises()
+    expect(wrapper.get('[data-test="moderation-input-text"]').text()).toBe('第二条审核输入')
+    let finishClosed!: (value: unknown) => void
+    getLogInput.mockImplementationOnce(() => new Promise(resolve => { finishClosed = resolve }))
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await findButtonByText(wrapper, 'common.close').trigger('click')
+    finishClosed(auditEvidence('关闭后返回'))
+    await flushPromises()
+    expect(wrapper.find('[data-test="moderation-input-text"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('displays complete HTTP 200 policy evidence without rendering injected markup', async () => {
+    const request = '<img src=x onerror=alert(1)>'.repeat(800) + '请求末尾'
+    const response = '官方报文'.repeat(2000) + '响应末尾'
+    getLogInput.mockResolvedValue({ ...auditEvidence(''), matched_keyword: '', evidence: {
+      text: '', total_characters: 0, stored_characters: 0, truncated: false,
+      policy: { code: 'bio_policy', request_body: request, upstream_body: response, upstream_status: 200 },
+    } })
+    const wrapper = await mountAudits([{ ...auditRow(), action: 'bio_policy', matched_keyword: '' }])
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="moderation-policy-request"]').text()).toBe(request)
+    expect(wrapper.get('[data-test="moderation-policy-response"]').text()).toBe(response)
+    expect(wrapper.find('[data-test="moderation-policy-evidence"] img').exists()).toBe(false)
+    expect(wrapper.find('[data-test="moderation-input-retention"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('loads and saves the shared retention capacity', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig(), log_storage_limit_gb: 50 })
+    const wrapper = await mountAudits([])
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.retention').trigger('click')
+    const capacity = wrapper.get<HTMLInputElement>('[data-test="moderation-log-capacity"]')
+    expect(capacity.element.value).toBe('50')
+    expect(capacity.attributes('max')).toBe('200')
+    await capacity.setValue('25')
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ log_storage_limit_gb: 25 }))
+    wrapper.unmount()
   })
 
   it.each(['openai', 'typesafe'] as const)('shows the selected draft engine keys while %s remains active', async (activeEngine) => {

@@ -641,7 +641,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			MarkOpsCyberPolicy(c, CyberPolicyMark{
 				Code:           code,
 				Message:        msg,
-				Body:           truncateString(string(payload), 4096),
+				Body:           string(payload),
 				UpstreamStatus: http.StatusOK,
 				UpstreamInTok:  usage.InputTokens,
 				UpstreamOutTok: usage.OutputTokens,
@@ -946,6 +946,9 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 							if response.Usage != nil {
 								usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
 							}
+							if strings.TrimSpace(response.Status) == "failed" {
+								markOpenAICyberPolicyEvent(c, []byte(frame.Data), resp.StatusCode, &usage)
+							}
 							return response, usage, acc, prior, nil
 						}
 					}
@@ -995,6 +998,9 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 				}
 				if response.Usage != nil {
 					usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
+				}
+				if strings.TrimSpace(response.Status) == "failed" {
+					markOpenAICyberPolicyEvent(c, []byte(frame.Data), resp.StatusCode, &usage)
 				}
 				return response, usage, acc, prior, nil
 			}
@@ -1133,7 +1139,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					MarkOpsCyberPolicy(c, CyberPolicyMark{
 						Code:           code,
 						Message:        msg,
-						Body:           truncateString(payload, 4096),
+						Body:           payload,
 						UpstreamStatus: http.StatusOK,
 						UpstreamInTok:  usage.InputTokens,
 						UpstreamOutTok: usage.OutputTokens,

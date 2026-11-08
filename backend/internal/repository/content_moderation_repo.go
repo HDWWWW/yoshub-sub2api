@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -33,6 +35,14 @@ func (r *contentModerationRepository) CreateLog(ctx context.Context, log *servic
 		return fmt.Errorf("marshal moderation thresholds: %w", err)
 	}
 	var engineMeta any
+	var inputEvidence any
+	if log.InputEvidence != nil {
+		raw, err := json.Marshal(log.InputEvidence)
+		if err != nil {
+			return fmt.Errorf("marshal moderation input evidence: %w", err)
+		}
+		inputEvidence = string(raw)
+	}
 	if log.EngineMeta != nil {
 		raw, err := json.Marshal(log.EngineMeta)
 		if err != nil {
@@ -61,22 +71,47 @@ INSERT INTO content_moderation_logs (
     request_id, user_id, user_email, api_key_id, api_key_name, group_id, group_name,
     endpoint, provider, model, mode, action, flagged, highest_category, highest_score,
     category_scores, threshold_snapshot, input_excerpt, upstream_latency_ms, error,
-    violation_count, auto_banned, email_sent, queue_delay_ms, matched_keyword, engine_meta
+    violation_count, auto_banned, email_sent, queue_delay_ms, matched_keyword, engine_meta, input_evidence
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10, $11, $12, $13, $14, $15,
     $16::jsonb, $17::jsonb, $18, $19, $20,
-    $21, $22, $23, $24, $25, $26::jsonb
+    $21, $22, $23, $24, $25, $26::jsonb, $27::jsonb
 ) RETURNING id, created_at`,
 		log.RequestID, userID, log.UserEmail, apiKeyID, log.APIKeyName, groupID, log.GroupName,
 		log.Endpoint, log.Provider, log.Model, log.Mode, log.Action, log.Flagged, log.HighestCategory, log.HighestScore,
 		string(categoryScores), string(thresholdSnapshot), log.InputExcerpt, latency, log.Error,
-		log.ViolationCount, log.AutoBanned, log.EmailSent, nullableIntPtr(log.QueueDelayMS), log.MatchedKeyword, engineMeta,
+		log.ViolationCount, log.AutoBanned, log.EmailSent, nullableIntPtr(log.QueueDelayMS), log.MatchedKeyword, engineMeta, inputEvidence,
 	).Scan(&log.ID, &log.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert content moderation log: %w", err)
 	}
 	return nil
+}
+
+func (r *contentModerationRepository) GetLogInput(ctx context.Context, id int64) (*service.ContentModerationLogInput, error) {
+	var result service.ContentModerationLogInput
+	var raw []byte
+	err := r.db.QueryRowContext(ctx, `SELECT input_excerpt, matched_keyword, input_evidence
+FROM content_moderation_logs WHERE id = $1`, id).Scan(&result.InputExcerpt, &result.MatchedKeyword, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, infraerrors.NotFound("CONTENT_MODERATION_LOG_NOT_FOUND", "审计记录不存在或已清理")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get moderation input evidence: %w", err)
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &result.Evidence); err != nil {
+			return nil, fmt.Errorf("decode moderation input evidence: %w", err)
+		}
+	}
+	return &result, nil
+}
+
+func (r *contentModerationRepository) GetLogStorageUsage(ctx context.Context) (int64, error) {
+	var used int64
+	err := r.db.QueryRowContext(ctx, "SELECT used_bytes FROM content_moderation_storage WHERE id = 1").Scan(&used)
+	return used, err
 }
 
 func (r *contentModerationRepository) ListLogs(ctx context.Context, filter service.ContentModerationLogFilter) ([]service.ContentModerationLog, *pagination.PaginationResult, error) {
@@ -236,23 +271,32 @@ func (r *contentModerationRepository) CleanupExpiredLogs(ctx context.Context, hi
 	if r == nil || r.db == nil {
 		return result, nil
 	}
-	hitExec, err := r.db.ExecContext(ctx, `
-DELETE FROM content_moderation_logs
-WHERE flagged = TRUE AND created_at < $1
-`, hitBefore)
-	if err != nil {
-		return nil, fmt.Errorf("delete expired hit content moderation logs: %w", err)
+	// Each batch commits independently so retention cleanup releases the shared
+	// storage-budget lock regularly and does not stall new moderation records.
+	for _, batch := range []struct {
+		flagged bool
+		before  time.Time
+		deleted *int64
+	}{{true, hitBefore, &result.DeletedHit}, {false, nonHitBefore, &result.DeletedNonHit}} {
+		for {
+			exec, err := r.db.ExecContext(ctx, `
+DELETE FROM content_moderation_logs WHERE id IN (
+    SELECT id FROM content_moderation_logs WHERE flagged = $1 AND created_at < $2
+    ORDER BY created_at, id LIMIT 1000
+)`, batch.flagged, batch.before)
+			if err != nil {
+				return nil, fmt.Errorf("delete expired content moderation logs: %w", err)
+			}
+			deleted, err := exec.RowsAffected()
+			if err != nil {
+				return nil, err
+			}
+			*batch.deleted += deleted
+			if deleted < 1000 {
+				break
+			}
+		}
 	}
-	result.DeletedHit, _ = hitExec.RowsAffected()
-
-	nonHitExec, err := r.db.ExecContext(ctx, `
-DELETE FROM content_moderation_logs
-WHERE flagged = FALSE AND created_at < $1
-`, nonHitBefore)
-	if err != nil {
-		return nil, fmt.Errorf("delete expired non-hit content moderation logs: %w", err)
-	}
-	result.DeletedNonHit, _ = nonHitExec.RowsAffected()
 
 	result.FinishedAt = time.Now()
 	return result, nil

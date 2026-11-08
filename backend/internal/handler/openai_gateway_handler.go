@@ -4528,6 +4528,8 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		ClientIP:        clientIPStr,
 		CreatedAt:       time.Now(),
 	}
+	// Copy before dispatch: WebSocket turn buffers can be reused after return.
+	policyRequestBody := string(cyberBlockBody)
 	cyberLogOnly := h.cyberPolicyLogOnly(c, apiKey)
 	if gwSvc != nil && apiKey != nil && !cyberLogOnly {
 		block := buildCyberSessionBlock(apiKey.ID, c, cyberBlockBody)
@@ -4555,6 +4557,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 				Model:           model,
 				UpstreamMessage: mark.Message,
 				UpstreamBody:    mark.Body,
+				RequestBody:     policyRequestBody,
 				UpstreamStatus:  mark.UpstreamStatus,
 				UpstreamInTok:   mark.UpstreamInTok,
 				UpstreamOutTok:  mark.UpstreamOutTok,

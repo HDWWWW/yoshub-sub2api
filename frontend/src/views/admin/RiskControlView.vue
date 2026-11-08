@@ -356,9 +356,10 @@
                         type="button"
                         class="group flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-gray-100 dark:hover:bg-dark-700"
                         :title="inputSummaryText(row)"
+                        :data-test="`moderation-input-${row.id}`"
                         @click="openInputDetail(row)"
                       >
-                        <span class="min-w-0 flex-1 truncate">{{ inputSummaryText(row) }}</span>
+                        <ModerationHighlightedText class="min-w-0 flex-1 whitespace-pre-wrap break-words" :text="inputSummaryText(row)" :keyword="row.matched_keyword" />
                         <Icon name="eye" size="xs" class="flex-shrink-0 text-gray-300 transition-colors group-hover:text-primary-500 dark:text-gray-500" />
                       </button>
                     </td>
@@ -1082,6 +1083,12 @@
               <label class="input-label">{{ t('admin.riskControl.nonHitRetentionDays') }}</label>
               <input v-model.number="configForm.non_hit_retention_days" type="number" min="1" max="3" class="input" />
             </div>
+            <div class="lg:col-span-2">
+              <label class="input-label" for="moderation-log-capacity">{{ t('admin.riskControl.logStorageLimit') }}</label>
+              <input id="moderation-log-capacity" v-model.number="configForm.log_storage_limit_gb" type="number" min="1" max="200" step="1" class="input max-w-xs" data-test="moderation-log-capacity" />
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.logStorageHint') }}</p>
+              <p v-if="status?.log_storage_used_bytes != null" class="mt-2 text-sm text-gray-600 dark:text-gray-300">{{ t('admin.riskControl.logStorageUsage', { used: (status.log_storage_used_bytes / 1_000_000_000).toFixed(3) }) }}</p>
+            </div>
             <div class="rounded-lg border border-gray-100 p-4 text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400 lg:col-span-2">
               <div class="flex flex-wrap items-center gap-3">
                 <Icon name="database" size="md" class="text-gray-400" />
@@ -1157,7 +1164,35 @@
                 {{ inputDetailRow.group_name }}
               </span>
             </div>
-            <pre class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50">{{ inputDetailText }}</pre>
+            <p v-if="inputDetailLoading" class="mt-4 text-sm text-gray-500" role="status">{{ t('common.loading') }}</p>
+            <div v-else-if="inputDetailError" class="mt-4 text-sm text-red-600 dark:text-red-300" role="alert">
+              {{ inputDetailError }}
+              <button type="button" class="ml-2 underline" data-test="moderation-input-retry" @click="openInputDetail(inputDetailRow)">{{ t('common.tryAgain') }}</button>
+            </div>
+            <p v-else-if="!inputDetail?.evidence" class="mt-4 text-sm text-amber-700 dark:text-amber-300" data-test="moderation-input-legacy">{{ t('admin.riskControl.inputLegacyNotice') }}</p>
+            <div v-else-if="inputDetail.evidence.policy" class="mt-4 space-y-3" data-test="moderation-policy-evidence">
+              <p class="text-sm text-amber-700 dark:text-amber-300">{{ inputDetail.evidence.policy.code }} · {{ t('admin.riskControl.policyUpstreamStatus', { status: inputDetail.evidence.policy.upstream_status }) }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.policyEvidenceScope') }}</p>
+              <p class="text-sm font-semibold">{{ t('admin.riskControl.policyRequestBody') }}</p>
+              <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100" data-test="moderation-policy-request">{{ inputDetail.evidence.policy.request_body || '-' }}</pre>
+              <p class="text-sm font-semibold">{{ t('admin.riskControl.policyUpstreamBody') }}</p>
+              <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100" data-test="moderation-policy-response">{{ inputDetail.evidence.policy.upstream_body || '-' }}</pre>
+            </div>
+            <template v-else>
+              <p class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.inputEvidenceScope') }}</p>
+              <p class="mt-2 text-sm" :class="inputDetail.evidence.truncated ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-gray-400'" data-test="moderation-input-retention">
+                {{ inputDetail.evidence.truncated
+                  ? t('admin.riskControl.inputTruncated', { total: inputDetail.evidence.total_characters, stored: inputDetail.evidence.stored_characters })
+                  : t('admin.riskControl.inputComplete', { total: inputDetail.evidence.total_characters }) }}
+              </p>
+              <div v-if="inputDetail.matched_keyword" class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20" data-test="moderation-match-context">
+                <p class="mb-2 text-sm font-semibold text-amber-900 dark:text-amber-200">{{ t('admin.riskControl.inputMatchContext') }}</p>
+                <ModerationHighlightedText v-if="inputDetail.evidence.match_context" class="whitespace-pre-wrap break-words text-sm text-gray-900 dark:text-gray-100" :text="inputDetail.evidence.match_context" :keyword="inputDetail.matched_keyword" />
+                <p v-else class="text-sm text-amber-700 dark:text-amber-300">{{ t('admin.riskControl.inputMatchUnavailable') }}</p>
+              </div>
+            </template>
+            <p v-if="!inputDetailRow.matched_keyword && ['block', 'allow'].includes(inputDetailRow.action)" class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.inputSemanticNotice') }}</p>
+            <pre v-if="!inputDetail?.evidence?.policy" class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50" data-test="moderation-input-text"><ModerationHighlightedText :text="inputDetailText" :keyword="inputDetailRow.matched_keyword" /></pre>
           </div>
         </div>
 
@@ -1182,12 +1217,14 @@ import Toggle from '@/components/common/Toggle.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
+import ModerationHighlightedText from '@/components/admin/risk/ModerationHighlightedText.vue'
 import { adminAPI } from '@/api/admin'
 import type {
   ContentModerationAPIKeyLoad,
   ContentModerationAPIKeyStatus,
   ContentModerationConfig,
   ContentModerationLog,
+  ContentModerationLogInput,
   ContentModerationModelFilter,
   ContentModerationModelFilterType,
   ContentModerationRuntimeStatus,
@@ -1278,6 +1315,10 @@ const moderationTestPrompt = ref('')
 const moderationTestImages = ref<string[]>([])
 const moderationTestResult = ref<ContentModerationTestAuditResult | null>(null)
 const inputDetailRow = ref<ContentModerationLog | null>(null)
+const inputDetail = ref<ContentModerationLogInput | null>(null)
+const inputDetailLoading = ref(false)
+const inputDetailError = ref('')
+let inputDetailRequest = 0
 const savedEngine = ref<ModerationEngine>('openai')
 const engineOptions: SelectOption[] = [{ value: 'openai', label: 'OpenAI' }, { value: 'typesafe', label: 'TypeSafe AI' }]
 const engineLabel = (engine: ModerationEngine) => engine === 'typesafe' ? 'TypeSafe AI' : 'OpenAI'
@@ -1316,6 +1357,7 @@ const configForm = reactive({
   violation_window_hours: 720,
   hit_retention_days: 180,
   non_hit_retention_days: 3,
+  log_storage_limit_gb: 200,
   pre_hash_check_enabled: false,
   thresholds: { ...riskThresholdDefaults } as Record<string, number>,
   blocked_keywords_text: '',
@@ -1697,7 +1739,7 @@ const riskThresholdRows = computed<RiskThresholdRow[]>(() => (
 
 const inputDetailText = computed(() => {
   if (!inputDetailRow.value) return '-'
-  return inputDetailRow.value.input_excerpt || inputDetailRow.value.error || '-'
+  return inputDetail.value?.evidence?.text ?? (inputDetailRow.value.input_excerpt || inputDetailRow.value.error || '-')
 })
 
 const queueUsagePercent = computed(() => `${Math.min(100, Math.max(0, status.value?.queue_usage_percent ?? 0)).toFixed(1)}%`)
@@ -1845,6 +1887,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.violation_window_hours = config.violation_window_hours || 720
   configForm.hit_retention_days = config.hit_retention_days || 180
   configForm.non_hit_retention_days = Math.min(Math.max(config.non_hit_retention_days || 3, 1), 3)
+  configForm.log_storage_limit_gb = config.log_storage_limit_gb ?? 200
   configForm.pre_hash_check_enabled = config.pre_hash_check_enabled ?? false
   configForm.thresholds = riskThresholdsFromConfig(config.thresholds)
   configForm.blocked_keywords_text = Array.isArray(config.blocked_keywords) ? config.blocked_keywords.join('\n') : ''
@@ -1941,6 +1984,7 @@ async function saveConfig() {
       violation_window_hours: Number(configForm.violation_window_hours) || 720,
       hit_retention_days: Number(configForm.hit_retention_days) || 180,
       non_hit_retention_days: Math.min(Math.max(Number(configForm.non_hit_retention_days) || 3, 1), 3),
+      log_storage_limit_gb: Number(configForm.log_storage_limit_gb),
       pre_hash_check_enabled: configForm.pre_hash_check_enabled,
       thresholds: buildRiskThresholdPayload(),
       blocked_keywords: blockedKeywordList.value,
@@ -2009,12 +2053,30 @@ function inputSummaryText(row: ContentModerationLog): string {
   return row.input_excerpt || row.error || '-'
 }
 
-function openInputDetail(row: ContentModerationLog) {
+async function openInputDetail(row: ContentModerationLog) {
+  const request = ++inputDetailRequest
   inputDetailRow.value = row
+  inputDetail.value = null
+  inputDetailError.value = ''
+  inputDetailLoading.value = true
+  try {
+    const result = await adminAPI.riskControl.getLogInput(row.id)
+    if (request === inputDetailRequest) inputDetail.value = result
+  } catch (err) {
+    if (request === inputDetailRequest) {
+      inputDetailError.value = extractApiErrorMessage(err, t('admin.riskControl.inputDetailFailed'))
+    }
+  } finally {
+    if (request === inputDetailRequest) inputDetailLoading.value = false
+  }
 }
 
 function closeInputDetail() {
+  inputDetailRequest++
   inputDetailRow.value = null
+  inputDetail.value = null
+  inputDetailError.value = ''
+  inputDetailLoading.value = false
 }
 
 async function unbanUser(row: ContentModerationLog) {
@@ -2530,6 +2592,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  closeInputDetail()
   if (statusTimer !== null) {
     window.clearInterval(statusTimer)
     statusTimer = null

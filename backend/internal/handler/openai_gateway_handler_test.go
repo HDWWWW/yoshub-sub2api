@@ -1352,6 +1352,14 @@ func (r *contentModerationHandlerTestRepo) ListLogs(ctx context.Context, filter 
 	return nil, nil, nil
 }
 
+func (r *contentModerationHandlerTestRepo) GetLogInput(ctx context.Context, id int64) (*service.ContentModerationLogInput, error) {
+	return &service.ContentModerationLogInput{}, nil
+}
+
+func (r *contentModerationHandlerTestRepo) GetLogStorageUsage(context.Context) (int64, error) {
+	return 0, nil
+}
+
 func (r *contentModerationHandlerTestRepo) CountFlaggedByUserSince(ctx context.Context, userID int64, since time.Time, excludeCyberPolicy bool) (int, error) {
 	return 0, nil
 }

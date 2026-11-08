@@ -197,6 +197,25 @@ func (h *ContentModerationHandler) AllocateAPIKeyIPv6(c *gin.Context) {
 	response.Success(c, view)
 }
 
+func (h *ContentModerationHandler) GetLogInput(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
+		response.Error(c, 403, "审核输入仅限完整管理员访问")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid log ID")
+		return
+	}
+	result, err := h.service.GetLogInput(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	filter := service.ContentModerationLogFilter{
