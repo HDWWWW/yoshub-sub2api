@@ -173,6 +173,7 @@ type ContentModerationConfig struct {
 	LogStorageLimitGB    int                                 `json:"log_storage_limit_gb"`
 	KeywordContextChars  int                                 `json:"keyword_context_chars"`
 	PreHashCheckEnabled  bool                                `json:"pre_hash_check_enabled"`
+	CombinationRules     []ContentModerationCombinationRule  `json:"combination_rules"`
 	BlockedKeywords      []string                            `json:"blocked_keywords"`
 	KeywordBlockingMode  string                              `json:"keyword_blocking_mode"`
 	ModelFilter          ContentModerationModelFilter        `json:"model_filter"`
@@ -216,6 +217,7 @@ type ContentModerationConfigView struct {
 	LogStorageLimitGB              int                                     `json:"log_storage_limit_gb"`
 	KeywordContextChars            int                                     `json:"keyword_context_chars"`
 	PreHashCheckEnabled            bool                                    `json:"pre_hash_check_enabled"`
+	CombinationRules               []ContentModerationCombinationRule      `json:"combination_rules"`
 	BlockedKeywords                []string                                `json:"blocked_keywords"`
 	KeywordBlockingMode            string                                  `json:"keyword_blocking_mode"`
 	ModelFilter                    ContentModerationModelFilter            `json:"model_filter"`
@@ -292,37 +294,38 @@ type UpdateContentModerationConfigInput struct {
 	BaseURL       *string                                       `json:"base_url"`
 	Model         *string                                       `json:"model"`
 	// ProxyID nil 表示不修改；<=0 表示清除代理（恢复直连）；>0 表示指定代理。
-	ProxyID                        *int64                        `json:"proxy_id"`
-	AutoAssignIPv6                 *bool                         `json:"auto_assign_ipv6"`
-	APIKey                         *string                       `json:"api_key"`
-	APIKeys                        *[]string                     `json:"api_keys"`
-	APIKeysMode                    string                        `json:"api_keys_mode"`
-	DeleteAPIKeyHashes             *[]string                     `json:"delete_api_key_hashes"`
-	ClearAPIKey                    bool                          `json:"clear_api_key"`
-	TimeoutMS                      *int                          `json:"timeout_ms"`
-	SampleRate                     *int                          `json:"sample_rate"`
-	AllGroups                      *bool                         `json:"all_groups"`
-	GroupIDs                       *[]int64                      `json:"group_ids"`
-	RecordNonHits                  *bool                         `json:"record_non_hits"`
-	Thresholds                     *map[string]float64           `json:"thresholds"`
-	WorkerCount                    *int                          `json:"worker_count"`
-	QueueSize                      *int                          `json:"queue_size"`
-	BlockStatus                    *int                          `json:"block_status"`
-	BlockMessage                   *string                       `json:"block_message"`
-	EmailOnHit                     *bool                         `json:"email_on_hit"`
-	AutoBanEnabled                 *bool                         `json:"auto_ban_enabled"`
-	BanThreshold                   *int                          `json:"ban_threshold"`
-	ViolationWindowHours           *int                          `json:"violation_window_hours"`
-	RetryCount                     *int                          `json:"retry_count"`
-	HitRetentionDays               *int                          `json:"hit_retention_days"`
-	NonHitRetentionDays            *int                          `json:"non_hit_retention_days"`
-	LogStorageLimitGB              *int                          `json:"log_storage_limit_gb"`
-	KeywordContextChars            *int                          `json:"keyword_context_chars"`
-	PreHashCheckEnabled            *bool                         `json:"pre_hash_check_enabled"`
-	BlockedKeywords                *[]string                     `json:"blocked_keywords"`
-	KeywordBlockingMode            *string                       `json:"keyword_blocking_mode"`
-	ModelFilter                    *ContentModerationModelFilter `json:"model_filter"`
-	CyberPolicyExcludeFromBanCount *bool                         `json:"cyber_policy_exclude_from_ban_count"`
+	ProxyID                        *int64                              `json:"proxy_id"`
+	AutoAssignIPv6                 *bool                               `json:"auto_assign_ipv6"`
+	APIKey                         *string                             `json:"api_key"`
+	APIKeys                        *[]string                           `json:"api_keys"`
+	APIKeysMode                    string                              `json:"api_keys_mode"`
+	DeleteAPIKeyHashes             *[]string                           `json:"delete_api_key_hashes"`
+	ClearAPIKey                    bool                                `json:"clear_api_key"`
+	TimeoutMS                      *int                                `json:"timeout_ms"`
+	SampleRate                     *int                                `json:"sample_rate"`
+	AllGroups                      *bool                               `json:"all_groups"`
+	GroupIDs                       *[]int64                            `json:"group_ids"`
+	RecordNonHits                  *bool                               `json:"record_non_hits"`
+	Thresholds                     *map[string]float64                 `json:"thresholds"`
+	WorkerCount                    *int                                `json:"worker_count"`
+	QueueSize                      *int                                `json:"queue_size"`
+	BlockStatus                    *int                                `json:"block_status"`
+	BlockMessage                   *string                             `json:"block_message"`
+	EmailOnHit                     *bool                               `json:"email_on_hit"`
+	AutoBanEnabled                 *bool                               `json:"auto_ban_enabled"`
+	BanThreshold                   *int                                `json:"ban_threshold"`
+	ViolationWindowHours           *int                                `json:"violation_window_hours"`
+	RetryCount                     *int                                `json:"retry_count"`
+	HitRetentionDays               *int                                `json:"hit_retention_days"`
+	NonHitRetentionDays            *int                                `json:"non_hit_retention_days"`
+	LogStorageLimitGB              *int                                `json:"log_storage_limit_gb"`
+	KeywordContextChars            *int                                `json:"keyword_context_chars"`
+	PreHashCheckEnabled            *bool                               `json:"pre_hash_check_enabled"`
+	CombinationRules               *[]ContentModerationCombinationRule `json:"combination_rules"`
+	BlockedKeywords                *[]string                           `json:"blocked_keywords"`
+	KeywordBlockingMode            *string                             `json:"keyword_blocking_mode"`
+	ModelFilter                    *ContentModerationModelFilter       `json:"model_filter"`
+	CyberPolicyExcludeFromBanCount *bool                               `json:"cyber_policy_exclude_from_ban_count"`
 }
 
 type ContentModerationModelFilter struct {
@@ -569,6 +572,7 @@ type contentModerationRuntimeSnapshot struct {
 	allowlistedUsers   map[int64]struct{}
 	riskControlEnabled bool
 	config             *ContentModerationConfig
+	combinationMatcher *contentModerationCombinationMatcher
 	keywordMatcher     *contentModerationKeywordMatcher
 	configDigest       [sha256.Size]byte
 	loadedAt           time.Time
@@ -713,6 +717,13 @@ func (s *ContentModerationService) updateConfig(ctx context.Context, input Updat
 	}
 	if input.PreHashCheckEnabled != nil {
 		cfg.PreHashCheckEnabled = *input.PreHashCheckEnabled
+	}
+	if input.CombinationRules != nil {
+		rules, err := normalizeCombinationRules(*input.CombinationRules)
+		if err != nil {
+			return nil, err
+		}
+		cfg.CombinationRules = rules
 	}
 	if input.BlockedKeywords != nil {
 		cfg.BlockedKeywords = normalizeBlockedKeywords(*input.BlockedKeywords)
@@ -969,6 +980,9 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"configured_models", cfg.ModelFilter.Models)
 		return allow, nil
 	}
+	if ruleDecision := s.checkCombinationRules(input, runtimeSnapshot); ruleDecision != nil {
+		return ruleDecision, nil
+	}
 	if cfg.Mode == ContentModerationModePreBlock {
 		if cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {
 			keywordText := extractContentModerationKeywordText(input.Protocol, input.Body)
@@ -1218,7 +1232,7 @@ func (s *ContentModerationService) recordPreBlockSyncMetric(latencyMS int, actio
 	}
 	s.preBlockLatencyTotalMS.Add(int64(latencyMS))
 	switch action {
-	case ContentModerationActionBlock, ContentModerationActionHashBlock, ContentModerationActionKeywordBlock:
+	case ContentModerationActionBlock, ContentModerationActionHashBlock, ContentModerationActionKeywordBlock, ContentModerationActionRuleBlock:
 		s.preBlockBlocked.Add(1)
 	case ContentModerationActionError:
 		s.preBlockErrors.Add(1)
@@ -1592,6 +1606,11 @@ func parseContentModerationConfig(raw string) (*ContentModerationConfig, error) 
 		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "内容审计配置不是有效 JSON")
 	}
 	cfg.normalize()
+	rules, err := normalizeCombinationRules(cfg.CombinationRules)
+	if err != nil {
+		return nil, err
+	}
+	cfg.CombinationRules = rules
 	if !validModerationEngine(cfg.Engine) {
 		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_ENGINE", "内容审计引擎无效")
 	}
@@ -1672,6 +1691,7 @@ func (s *ContentModerationService) refreshRuntimeSnapshot(ctx context.Context) (
 			allowlistedUsers:   allowlistedUsers,
 			riskControlEnabled: values[SettingKeyRiskControlEnabled] == "true",
 			config:             current.config,
+			combinationMatcher: current.combinationMatcher,
 			keywordMatcher:     current.keywordMatcher,
 			configDigest:       configDigest,
 			loadedAt:           time.Now(),
@@ -1689,6 +1709,7 @@ func (s *ContentModerationService) refreshRuntimeSnapshot(ctx context.Context) (
 		allowlistedUsers:   allowlistedUsers,
 		riskControlEnabled: values[SettingKeyRiskControlEnabled] == "true",
 		config:             cfg,
+		combinationMatcher: newCombinationMatcher(cfg.CombinationRules),
 		keywordMatcher:     newContentModerationKeywordMatcher(cfg.BlockedKeywords),
 		configDigest:       configDigest,
 		loadedAt:           time.Now(),
@@ -1709,6 +1730,7 @@ func (s *ContentModerationService) replaceRuntimeConfig(cfg *ContentModerationCo
 		return
 	}
 	config := cfg.effectiveEngine(cfg.Engine)
+	combinationMatcher := newCombinationMatcher(cfg.CombinationRules)
 	keywordMatcher := newContentModerationKeywordMatcher(cfg.BlockedKeywords)
 	configDigest := sha256.Sum256(raw)
 
@@ -1722,6 +1744,7 @@ func (s *ContentModerationService) replaceRuntimeConfig(cfg *ContentModerationCo
 		allowlistedUsers:   current.allowlistedUsers,
 		riskControlEnabled: current.riskControlEnabled,
 		config:             config,
+		combinationMatcher: combinationMatcher,
 		keywordMatcher:     keywordMatcher,
 		configDigest:       configDigest,
 		loadedAt:           time.Now(),
@@ -2287,6 +2310,7 @@ func cloneContentModerationConfig(cfg *ContentModerationConfig) *ContentModerati
 	clone.KeyIPv6 = cloneModerationKeyIPv6(cfg.KeyIPv6)
 	clone.APIKeys = append([]string(nil), cfg.APIKeys...)
 	clone.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
+	clone.CombinationRules = cloneCombinationRules(cfg.CombinationRules)
 	clone.BlockedKeywords = append([]string(nil), cfg.BlockedKeywords...)
 	clone.Thresholds = cloneFloatMap(cfg.Thresholds)
 	clone.ModelFilter = ContentModerationModelFilter{
@@ -2613,6 +2637,7 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		LogStorageLimitGB:              cfg.LogStorageLimitGB,
 		KeywordContextChars:            cfg.KeywordContextChars,
 		PreHashCheckEnabled:            cfg.PreHashCheckEnabled,
+		CombinationRules:               cloneCombinationRules(cfg.CombinationRules),
 		BlockedKeywords:                append([]string(nil), cfg.BlockedKeywords...),
 		KeywordBlockingMode:            cfg.KeywordBlockingMode,
 		ModelFilter:                    cloneContentModerationModelFilter(cfg.ModelFilter),

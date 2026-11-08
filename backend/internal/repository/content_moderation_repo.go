@@ -245,7 +245,7 @@ SELECT COUNT(*)
 FROM content_moderation_logs
 WHERE user_id = $1
   AND flagged = TRUE
-  AND action <> 'hash_block'
+  AND action NOT IN ('hash_block', 'rule_block', 'rule_observe')
   AND mode <> 'cyber_log_only'
   AND mode <> 'risk_control_log_only'
   AND ($3::bool IS FALSE OR action NOT IN ('cyber_policy', 'bio_policy'))
@@ -320,7 +320,7 @@ func buildContentModerationLogWhere(filter service.ContentModerationLogFilter) (
 	case "hit", "flagged":
 		where = append(where, "l.flagged = TRUE")
 	case "blocked", "block":
-		where = append(where, "l.action IN ('block', 'keyword_block', 'hash_block')")
+		where = append(where, "l.action IN ('block', 'keyword_block', 'hash_block', 'rule_block')")
 	case "pass", "allow":
 		where = append(where, "l.flagged = FALSE AND l.error = ''")
 	case "error":

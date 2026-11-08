@@ -316,6 +316,23 @@ describe('admin RiskControlView', () => {
     wrapper.unmount()
   })
 
+  it('saves editable combination rules and loads the saved configuration again', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig(), combination_rules: [{ id: 'custom', name: 'Editable rule', enabled: true, action: 'block', scope: 'conversation', window_characters: 400, groups: [{ name: 'A', keywords: ['猫'] }, { name: 'B', keywords: ['画'] }] }] })
+    const wrapper = await mountAudits([])
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.combination.title').trigger('click')
+    await wrapper.get('[data-test="rule-name"]').setValue('Renamed rule')
+    await wrapper.get('[data-test="rule-window"]').setValue('600')
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ combination_rules: [expect.objectContaining({ id: 'custom', name: 'Renamed rule', window_characters: 600 })] }))
+    expect(showError).not.toHaveBeenCalled()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.combination.title').trigger('click')
+    expect(wrapper.get<HTMLInputElement>('[data-test="rule-name"]').element.value).toBe('Renamed rule')
+    wrapper.unmount()
+  })
+
   it.each([undefined, 1600])('loads and saves keyword context with existing value %s', async (configured) => {
     getConfig.mockResolvedValue({ ...baseConfig(), keyword_context_chars: configured })
     updateConfig.mockImplementation(async payload => ({ ...baseConfig(), ...payload }))

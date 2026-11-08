@@ -1,5 +1,25 @@
 import { apiClient } from '../client'
 
+export interface CombinationRule {
+  id: string
+  name: string
+  enabled: boolean
+  action: 'block' | 'observe'
+  scope: 'conversation' | 'current_user'
+  window_characters: number
+  groups: Array<{ name: string; keywords: string[] }>
+}
+export interface CombinationRuleHit {
+  rule_id: string
+  rule_name: string
+  action: 'block' | 'observe'
+  scope: string
+  window_characters: number
+  source: string
+  matches: Array<{ group: string; keyword: string }>
+  context: string
+}
+
 export type ModerationMode = 'off' | 'observe' | 'pre_block'
 export type ModerationEngine = 'openai' | 'typesafe'
 export interface ModerationEngineMeta {
@@ -50,6 +70,7 @@ export interface ContentModerationConfig {
   log_storage_limit_gb?: number
   keyword_context_chars?: number
   pre_hash_check_enabled: boolean
+  combination_rules?: CombinationRule[]
   blocked_keywords: string[]
   keyword_blocking_mode: KeywordBlockingMode
   model_filter: ContentModerationModelFilter
@@ -141,6 +162,7 @@ export interface UpdateContentModerationConfig {
   log_storage_limit_gb?: number
   keyword_context_chars?: number
   pre_hash_check_enabled?: boolean
+  combination_rules?: CombinationRule[]
   blocked_keywords?: string[]
   keyword_blocking_mode?: KeywordBlockingMode
   model_filter?: ContentModerationModelFilter
@@ -235,6 +257,7 @@ export interface ContentModerationLogInput {
     total_characters: number
     stored_characters: number
     truncated: boolean
+    combination_rules?: CombinationRuleHit[]
     match_context?: string
     policy?: {
       code: string
@@ -346,7 +369,13 @@ export async function clearFlaggedHashes(): Promise<ClearFlaggedHashesResponse> 
   return data
 }
 
+export async function testCombinationRules(rules: CombinationRule[], text: string): Promise<{ matches: CombinationRuleHit[] }> {
+  const { data } = await apiClient.post<{ matches: CombinationRuleHit[] }>('/admin/risk-control/combination-rules/test', { rules, text })
+  return data
+}
+
 export const riskControlAPI = {
+  testCombinationRules,
   getConfig,
   updateConfig,
   getStatus,

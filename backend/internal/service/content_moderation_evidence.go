@@ -17,12 +17,13 @@ const maxModerationKeywordContextChars = 12000
 // retain the complete redacted client request and rejecting provider event.
 // Character counts refer to Text, after redaction.
 type ContentModerationInputEvidence struct {
-	Text             string                           `json:"text"`
-	TotalCharacters  int                              `json:"total_characters"`
-	StoredCharacters int                              `json:"stored_characters"`
-	Truncated        bool                             `json:"truncated"`
-	MatchContext     string                           `json:"match_context,omitempty"`
-	Policy           *ContentModerationPolicyEvidence `json:"policy,omitempty"`
+	CombinationRules []ContentModerationCombinationHit `json:"combination_rules,omitempty"`
+	Text             string                            `json:"text"`
+	TotalCharacters  int                               `json:"total_characters"`
+	StoredCharacters int                               `json:"stored_characters"`
+	Truncated        bool                              `json:"truncated"`
+	MatchContext     string                            `json:"match_context,omitempty"`
+	Policy           *ContentModerationPolicyEvidence  `json:"policy,omitempty"`
 }
 
 type ContentModerationPolicyEvidence struct {
