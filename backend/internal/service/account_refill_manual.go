@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 const manualRefillRequestLifetime = 24 * time.Hour
 
 type ManualAccountRefillRequest struct {
+	Provider  string `json:"provider,omitempty"`
 	Force     bool   `json:"force,omitempty"`
 	GroupID   int64  `json:"group_id,omitempty"`
 	RequestID string `json:"request_id"`
@@ -33,7 +33,7 @@ func invalidManualRefill(message string) error {
 
 func validateManualRefillRequest(r ManualAccountRefillRequest, now time.Time) error {
 	parts := strings.Split(r.RequestID, ":")
-	if len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !slices.Contains([]string{"pro5x", "pro20x"}, r.Plan) {
+	if (r.Provider != "" && r.Provider != refillProviderFendudu) || len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !slices.Contains([]string{"pro5x", "pro20x"}, r.Plan) {
 		return invalidManualRefill("手动补号参数无效")
 	}
 	stamp, err := strconv.ParseInt(parts[0], 10, 64)
@@ -78,7 +78,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		// the original accepted order, even if configuration changed afterwards.
 		for _, j := range state.Jobs {
 			if j.ID == jobID || j.ManualRequestID == request.RequestID {
-				if j.Plan != request.Plan || j.Force != request.Force || (j.ConfigRevision != 0 && j.ConfigRevision != request.Revision) {
+				if j.Provider != request.Provider || j.Plan != request.Plan || j.Force != request.Force || (j.ConfigRevision != 0 && j.ConfigRevision != request.Revision) {
 					return invalidManualRefill("同一请求不能修改套餐或配置版本，请核对原任务")
 				}
 				return nil
@@ -118,7 +118,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		if c.Delivery.ExpiryMode == "fixed" && *c.Delivery.FixedExpiresAt <= now.Unix() {
 			return invalidManualRefill("指定截止时间已过，请修改推送设置并保存")
 		}
-		if now.Before(state.ProviderRetryAt) {
+		if (request.Provider == "" && now.Before(state.ProviderRetryAt)) || (request.Provider == refillProviderFendudu && now.Before(state.Fendudu.RetryAt)) {
 			return invalidManualRefill("号商暂不可用或正在限流，请稍后再试")
 		}
 		pending := 0
@@ -142,70 +142,23 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		if _, err := s.selectProxy(ctx, c.Delivery); err != nil {
 			return invalidManualRefill(err.Error())
 		}
-		if state.EncryptedToken == "" {
-			return invalidManualRefill("请先配置号商 API Key")
-		}
-		token, err := s.encryptor.Decrypt(state.EncryptedToken)
-		if err != nil {
-			return invalidManualRefill("密钥解密失败，请重新保存 API Key")
-		}
 		persist := func() error { return saveRefillState(&state, save) }
-		providerFailure := func(err error) error {
-			state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
-			if err := persist(); err != nil {
-				return err
-			}
-			return invalidManualRefill("无法读取号商报价或余额，请稍后重试")
-		}
-		catalog, err := s.provider.Catalog(ctx, token)
-		if err != nil || catalog == nil {
-			return providerFailure(err)
-		}
-		wallet, key, err := s.provider.Identity(ctx, token)
-		if err != nil || wallet == nil || key == nil {
-			return providerFailure(err)
-		}
-		state.Wallet, state.Key, state.IdentityAt = wallet, key, &now
-		if err := s.notifyRefillBalance(ctx, &state, wallet.Available, 0, persist); err != nil {
-			return err
-		}
-		if key.Revoked || (!key.ExpiresAt.IsZero() && !key.ExpiresAt.After(time.Now())) {
-			return invalidManualRefill("号商 API Key 已失效，请替换")
-		}
 		var quote *RefillQuote
-		for i := range catalog.Items {
-			q := &catalog.Items[i]
-			if q.Service == "refill" && q.Plan == request.Plan && q.Enabled {
-				quote = q
-				break
-			}
+		if request.Provider == refillProviderFendudu {
+			quote, err = s.fenduduManualQuote(ctx, &state, request.Plan, persist)
+		} else {
+			quote, err = s.manualRefillQuote(ctx, &state, request.Plan, persist)
 		}
-		if quote == nil {
-			return invalidManualRefill("所选补号套餐暂不可用")
-		}
-		if math.IsNaN(quote.Price) || math.IsInf(quote.Price, 0) || quote.Price < 0 || quote.Price > c.MaxUnitPrice {
-			return invalidManualRefill("当前单价超过允许上限或报价无效，请检查补号规则")
+		if err != nil {
+			return err
 		}
 		day := now.In(refillTimezone).Format("2006-01-02")
 		usage := state.Usage[day]
 		if usage.Count >= c.DailyMaxCount || usage.Points+quote.Price > c.DailyMaxPoints+1e-8 {
 			return invalidManualRefill("已达到本日数量或积分预算")
 		}
-		// Locally queued jobs have not reached the supplier wallet yet.
-		unsubmitted, reserveErr := s.unsubmittedPoints(ctx, &state)
-		if reserveErr != nil {
-			return invalidManualRefill(reserveErr.Error())
-		}
-		if math.IsNaN(catalog.Available) || math.IsNaN(wallet.Available) || math.Min(catalog.Available, wallet.Available)+1e-8 < quote.Price+unsubmitted {
-			if err := s.notifyRefillBalance(ctx, &state, math.Min(catalog.Available, wallet.Available), quote.Price+unsubmitted, persist); err != nil {
-				return err
-			}
-			return invalidManualRefill("号商可用积分不足（已扣除本地在途预占）")
-		}
-		state.Catalog, state.Wallet, state.Key = catalog, wallet, key
-		state.CatalogAt, state.IdentityAt = &now, &now
 		grace := c.ImportExpiryGraceMinutes
-		job := AccountRefillJob{ID: jobID, ManualRequestID: request.RequestID, ConfigRevision: request.Revision, Force: request.Force,
+		job := AccountRefillJob{ID: jobID, Provider: request.Provider, ManualRequestID: request.RequestID, ConfigRevision: request.Revision, Force: request.Force,
 			Status: "submitting", Reason: "手动补号", Plan: request.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ReasonDetail:       "管理员手动提交 1 个账号，沿用提交时保存的推送设置。",
 			ExpiryGraceMinutes: &grace, GroupID: c.GroupID, Concurrency: c.importConcurrencyForPlan(request.Plan),
@@ -214,6 +167,11 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		if request.Force {
 			job.Reason = "强制手动补号"
 			job.ReasonDetail = "管理员强制购买 1 个账号，忽略原任务待核对和在途上限；原订单继续核对，可能仍会交付并计费。"
+		}
+		if request.Provider == refillProviderFendudu {
+			job.FenduduConnectionID = state.Fendudu.ConnectionID
+			job.Reason = "粉嘟嘟" + job.Reason
+			job.ReasonDetail += " 粉嘟嘟扣减 1 次预购次数，不折算原号商积分；推号后按本单保存的设置应用。"
 		}
 		state.Jobs = trimAccountRefillJobs(append([]AccountRefillJob{job}, state.Jobs...), now)
 		usage.Count++

@@ -585,6 +585,11 @@ export async function getBatchTodayStats(accountIds: number[]): Promise<BatchTod
   return data
 }
 
+export async function getBatchLifetimeStats(accountIds: number[]): Promise<BatchTodayStatsResponse> {
+  const { data } = await apiClient.post<BatchTodayStatsResponse>('/admin/accounts/lifetime-stats/batch', { account_ids: accountIds })
+  return data
+}
+
 /**
  * Set account schedulable status
  * @param id - Account ID
@@ -1167,6 +1172,7 @@ export const accountsAPI = {
   getBatchUsage,
   getTodayStats,
   getBatchTodayStats,
+  getBatchLifetimeStats,
   clearRateLimit,
   recoverState,
   resetAccountQuota,

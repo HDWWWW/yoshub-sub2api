@@ -51,6 +51,7 @@ type AccountRefillService struct {
 	loads        accountRefillLoads
 	proxies      accountRefillProxies
 	provider     RefillProvider
+	fendudu      fenduduProvider
 	stop         chan struct{}
 	cancel       context.CancelFunc
 	once         sync.Once
@@ -58,7 +59,7 @@ type AccountRefillService struct {
 }
 
 func NewAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor, accounts AccountRepository, admin AdminService, groups GroupRepository, loads *ConcurrencyService, proxies ProxyRepository) *AccountRefillService {
-	return &AccountRefillService{store: store, encryptor: encryptor, accounts: accounts, admin: admin, groups: groups, loads: loads, proxies: proxies, provider: newHTTPRefillProvider(), stop: make(chan struct{})}
+	return &AccountRefillService{store: store, encryptor: encryptor, accounts: accounts, admin: admin, groups: groups, loads: loads, proxies: proxies, provider: newHTTPRefillProvider(), fendudu: newHTTPFenduduProvider(), stop: make(chan struct{})}
 }
 func (s *AccountRefillService) Start() {
 	ctx, stop := context.WithCancel(context.Background())
@@ -113,31 +114,33 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
-	DailyScheduleStatus       AccountRefillDailyScheduleStatus `json:"daily_schedule_status"`
-	Rules                     []AccountRefillRuleSummary       `json:"rules"`
-	RotationCursor            int                              `json:"rotation_cursor"`
-	NextPlan                  string                           `json:"next_plan"`
-	WebhookConfigured         bool                             `json:"webhook_configured"`
-	NotificationStatus        AccountRefillNotificationStatus  `json:"notification_status"`
-	LeaseSyncAt               *time.Time                       `json:"lease_sync_at"`
-	LeaseSyncMessage          string                           `json:"lease_sync_message"`
-	CapacityObservation       AccountRefillCapacityObservation `json:"capacity_observation"`
-	ForecastObservation       AccountRefillCapacityObservation `json:"forecast_observation"`
-	Config                    AccountRefillConfig              `json:"config"`
-	Revision                  int64                            `json:"revision"`
-	TokenConfigured           bool                             `json:"token_configured"`
-	Key                       *RefillKeyInfo                   `json:"key"`
-	Wallet                    *RefillWallet                    `json:"wallet"`
-	Catalog                   *RefillCatalog                   `json:"catalog"`
-	CatalogAt                 *time.Time                       `json:"catalog_at"`
-	IdentityAt                *time.Time                       `json:"identity_at"`
-	Jobs                      []AccountRefillJob               `json:"jobs"`
-	Evaluation                AccountRefillEvaluation          `json:"evaluation"`
-	Daily                     AccountRefillDailyUsage          `json:"daily"`
-	NextCheckAt               time.Time                        `json:"next_check_at"`
-	NextIntervalAt            time.Time                        `json:"next_interval_at"`
-	Message                   string                           `json:"message"`
-	ImportExpiryOffsetMinutes int                              `json:"import_expiry_offset_minutes"`
+	DailyScheduleStatuses     map[string]AccountRefillDailyScheduleStatus `json:"daily_schedule_statuses,omitempty"`
+	Fendudu                   FenduduRefillView                           `json:"fendudu"`
+	DailyScheduleStatus       AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`
+	Rules                     []AccountRefillRuleSummary                  `json:"rules"`
+	RotationCursor            int                                         `json:"rotation_cursor"`
+	NextPlan                  string                                      `json:"next_plan"`
+	WebhookConfigured         bool                                        `json:"webhook_configured"`
+	NotificationStatus        AccountRefillNotificationStatus             `json:"notification_status"`
+	LeaseSyncAt               *time.Time                                  `json:"lease_sync_at"`
+	LeaseSyncMessage          string                                      `json:"lease_sync_message"`
+	CapacityObservation       AccountRefillCapacityObservation            `json:"capacity_observation"`
+	ForecastObservation       AccountRefillCapacityObservation            `json:"forecast_observation"`
+	Config                    AccountRefillConfig                         `json:"config"`
+	Revision                  int64                                       `json:"revision"`
+	TokenConfigured           bool                                        `json:"token_configured"`
+	Key                       *RefillKeyInfo                              `json:"key"`
+	Wallet                    *RefillWallet                               `json:"wallet"`
+	Catalog                   *RefillCatalog                              `json:"catalog"`
+	CatalogAt                 *time.Time                                  `json:"catalog_at"`
+	IdentityAt                *time.Time                                  `json:"identity_at"`
+	Jobs                      []AccountRefillJob                          `json:"jobs"`
+	Evaluation                AccountRefillEvaluation                     `json:"evaluation"`
+	Daily                     AccountRefillDailyUsage                     `json:"daily"`
+	NextCheckAt               time.Time                                   `json:"next_check_at"`
+	NextIntervalAt            time.Time                                   `json:"next_interval_at"`
+	Message                   string                                      `json:"message"`
+	ImportExpiryOffsetMinutes int                                         `json:"import_expiry_offset_minutes"`
 }
 
 func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, error) {
@@ -173,7 +176,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	if err != nil {
 		return nil, err
 	}
-	return &AccountRefillView{DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
+	return &AccountRefillView{DailyScheduleStatuses: state.DailyScheduleStatuses, Fendudu: state.Fendudu.view(), DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state),
@@ -233,7 +236,16 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		if revision != state.Revision {
 			return errors.New("配置已被其他页面修改，请刷新后再保存")
 		}
-		if c.DailySchedule == nil {
+		if c.DailySchedules == nil && state.Config.DailySchedules != nil {
+			// A stale client cannot silently erase a multi-task schedule.
+			if c.DailySchedule != nil {
+				return errors.New("定时补号已升级为多任务，请刷新页面后修改")
+			}
+			c.DailySchedules = state.Config.DailySchedules
+		}
+		if c.DailySchedules != nil {
+			c.DailySchedule = nil
+		} else if c.DailySchedule == nil {
 			c.DailySchedule = state.Config.DailySchedule
 		}
 		if err := c.Validate(); err != nil {
@@ -479,6 +491,14 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				return err
 			}
 		}
+		if err := s.refreshFenduduProducts(ctx, &state, now, preview, persist); err != nil {
+			return err
+		}
+		if !preview && state.Fendudu.EncryptedToken != "" && !now.Before(state.Fendudu.RetryAt) {
+			if err := s.advanceFenduduJobs(ctx, &state, now, persist); err != nil {
+				return err
+			}
+		}
 		if now.Before(state.ProviderRetryAt) {
 			if timeoutNotice != nil {
 				state.Message = "号商限流或暂不可用，等待退避结束后重试"
@@ -516,7 +536,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return nil
 		}
 		state.NextCheckAt = now.Add(time.Duration(state.Config.CheckSeconds) * time.Second)
-		if token != "" {
+		if token != "" || state.Fendudu.EncryptedToken != "" {
 			s.syncSourceLeases(ctx, token, &state, now, preview)
 		}
 		if err := s.evaluate(ctx, &state, now); err != nil {
@@ -890,6 +910,9 @@ func (s *AccountRefillService) Retry(ctx context.Context, id string) error {
 			if !slices.Contains([]string{"blocked", "import_failed"}, j.Status) {
 				return errors.New("此任务无需人工重试")
 			}
+			if j.Provider == refillProviderFendudu && j.SupplierID == "" && j.SubmissionStartedAt != nil {
+				return errors.New("粉嘟嘟下单结果未确认，请关联原订单，或确认未受理后释放；不能重复下单")
+			}
 			j.Status = "submitting"
 			if j.SupplierID != "" {
 				j.Status = "processing"
@@ -933,91 +956,10 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		if err := validateRefillDelivery(delivery); err != nil {
 			return err
 		}
-		a := delivery.Accounts[0]
-		credentials := map[string]any{}
-		for _, key := range []string{"access_token", "refresh_token", "id_token", "client_id", "expires_at", "email", "chatgpt_account_id", "chatgpt_user_id", "organization_id", "plan_type"} {
-			if value, ok := a.Credentials[key].(string); ok && value != "" {
-				credentials[key] = value
-			}
+		input, err := s.refillDeliveryInput(ctx, j, delivery)
+		if err != nil {
+			return err
 		}
-		if value, ok := a.Credentials["expires_at"].(float64); ok {
-			credentials["expires_at"] = value
-		}
-		if credentials["access_token"] == nil {
-			return errors.New("交付缺少接入凭据")
-		}
-		deadline := a.ExpiresAt
-		if j.ExpiresAt != nil && (deadline == nil || *j.ExpiresAt < *deadline) {
-			deadline = j.ExpiresAt
-		}
-		if deadline == nil || *deadline <= time.Now().Unix() {
-			return errors.New("交付缺少有效租期")
-		}
-		if j.DeliveryConfig.ExpiryMode == "fixed" && j.DeliveryConfig.FixedExpiresAt != nil && *j.DeliveryConfig.FixedExpiresAt < *deadline {
-			deadline = j.DeliveryConfig.FixedExpiresAt
-		}
-		if *deadline <= time.Now().Unix() {
-			return errors.New("指定截止时间已过期")
-		}
-		extra := map[string]any{"same_account_retry_count": j.DeliveryConfig.sameAccountRetryCount(), "refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
-			"refill_plan":            j.Plan,
-			"codex_fingerprint_mode": j.DeliveryConfig.FingerprintMode, "openai_oauth_responses_websockets_v2_enabled": j.DeliveryConfig.WSMode != "off", "openai_oauth_responses_websockets_v2_mode": j.DeliveryConfig.WSMode}
-		if j.DeliveryConfig.OpenAIResponsesFlattenNamespaces != nil && *j.DeliveryConfig.OpenAIResponsesFlattenNamespaces {
-			extra["openai_responses_flatten_namespaces"] = true
-		}
-		graceMinutes := AccountImportExpiryOffsetMinutes
-		if j.ExpiryGraceMinutes != nil {
-			graceMinutes = *j.ExpiryGraceMinutes
-		}
-		deadline, extra = ImportedAccountExpiryWithGrace(deadline, extra, graceMinutes)
-		// The supplier lease is independent of a locally shortened deadline.
-		if a.ExpiresAt != nil {
-			extra[AccountSourceExpiryExtraKey] = *a.ExpiresAt
-		}
-		if j.ExpiresAt != nil {
-			extra[AccountSourceExpiryExtraKey] = *j.ExpiresAt
-		}
-		extra[AccountSourceExpiryOriginExtraKey] = "supplier_api"
-		extra[AccountSourceExpiryCheckedExtraKey] = time.Now().UTC().Format(time.RFC3339)
-		if len(j.DeliveryConfig.ModelMapping) > 0 {
-			credentials["model_mapping"] = j.DeliveryConfig.ModelMapping
-		}
-		email, _ := credentials["email"].(string)
-		name := a.Name
-		if name == "" {
-			name = email
-		}
-		if name == "" {
-			name = "补号 " + j.SupplierID
-		}
-		expires := time.Unix(*deadline, 0)
-		pushTime := time.Now()
-		if j.DeliveryConfig.NameTemplate != "" {
-			name = refillTemplate(j.DeliveryConfig.NameTemplate, name, email, j.SupplierID, j.Plan, pushTime, expires)
-		}
-		var notes *string
-		if j.DeliveryConfig.NotesTemplate != "" {
-			n := refillTemplate(j.DeliveryConfig.NotesTemplate, a.Name, email, j.SupplierID, j.Plan, pushTime, expires)
-			notes = &n
-		}
-		autoPause := j.DeliveryConfig.AutoPauseOnExpired
-		var proxyID *int64
-		if j.DeliveryConfig.ProxyMode != "random" && j.DeliveryConfig.ProxyMode != "ovh_ipv6" {
-			proxyID, err = s.selectProxy(ctx, j.DeliveryConfig)
-			if err != nil {
-				return err
-			}
-		}
-		var load *int
-		if j.DeliveryConfig.LoadFactor > 0 {
-			v := j.DeliveryConfig.LoadFactor
-			load = &v
-		}
-		// Start disabled until all delivery settings and bindings have committed.
-		input := &CreateAccountInput{Name: name, Notes: notes, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: credentials, Extra: extra,
-			PrivacyEnabled: j.DeliveryConfig.PrivacyEnabled,
-			GroupIDs:       j.DeliveryGroupIDs, Concurrency: j.Concurrency, Priority: j.DeliveryConfig.Priority, RateMultiplier: &j.DeliveryConfig.RateMultiplier, LoadFactor: load,
-			ExpiresAt: deadline, AutoPauseOnExpired: &autoPause, ProxyID: proxyID, InitiallyInactive: true, SkipDefaultGroupBind: true}
 		if j.DeliveryConfig.ProxyMode == "random" || j.DeliveryConfig.ProxyMode == "ovh_ipv6" {
 			creator, ok := s.admin.(interface {
 				CreateAccountWithProxySelection(context.Context, *CreateAccountInput) (*Account, error)
@@ -1034,16 +976,20 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 			return err
 		}
 	}
-	if err := s.accounts.BindGroups(ctx, account.ID, j.DeliveryGroupIDs); err != nil {
+	return s.finishRefillImport(ctx, account.ID, j)
+}
+
+func (s *AccountRefillService) finishRefillImport(ctx context.Context, accountID int64, j *AccountRefillJob) error {
+	if err := s.accounts.BindGroups(ctx, accountID, j.DeliveryGroupIDs); err != nil {
 		return err
 	}
-	if err := s.accounts.SetSchedulable(ctx, account.ID, j.DeliveryConfig.Schedulable); err != nil {
+	if err := s.accounts.SetSchedulable(ctx, accountID, j.DeliveryConfig.Schedulable); err != nil {
 		return err
 	}
-	if _, err := s.admin.UpdateAccount(ctx, account.ID, &UpdateAccountInput{Status: j.DeliveryConfig.Status}); err != nil {
+	if _, err := s.admin.UpdateAccount(ctx, accountID, &UpdateAccountInput{Status: j.DeliveryConfig.Status}); err != nil {
 		return err
 	}
-	j.AccountID = account.ID
+	j.AccountID = accountID
 	return nil
 }
 
@@ -1142,7 +1088,7 @@ func (s *AccountRefillService) DismissRejected(ctx context.Context, id string) e
 func nextAccountRefillJob(jobs []AccountRefillJob, c AccountRefillConfig, now time.Time) int {
 	selected := -1
 	for i, j := range jobs {
-		if !j.pending() || now.Before(j.NextAttemptAt) || j.Status == "blocked" || j.Status == "import_failed" || (!c.PushEnabled && j.Status == "awaiting_push") {
+		if j.Provider != "" || !j.pending() || now.Before(j.NextAttemptAt) || j.Status == "blocked" || j.Status == "import_failed" || (!c.PushEnabled && j.Status == "awaiting_push") {
 			continue
 		}
 		if selected >= 0 && refillJobTimedOut(c, j, now) != refillJobTimedOut(c, jobs[selected], now) {

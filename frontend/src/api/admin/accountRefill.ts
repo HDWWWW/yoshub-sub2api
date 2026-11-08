@@ -21,7 +21,8 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
-  daily_schedule?: { enabled: boolean; time: string; quantity: number }
+  daily_schedule?: { enabled: boolean; time: string; quantity: number; plan?: string }
+  daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string }[] | null
 	rotation_enabled: boolean
 	rotation: { plan: string; count: number }[]
   notifications: { refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
@@ -62,6 +63,8 @@ export interface RefillConfig {
   delivery: RefillDeliveryConfig
 }
 export interface RefillJob {
+  provider?: 'fendudu'
+  submission_started_at?: string
   daily_batch_id?: string
   force?: boolean
   timeout_retry_of?: string
@@ -89,6 +92,7 @@ export interface RefillJob {
   next_attempt_at: string
 }
 export interface ManualRefillRequest {
+  provider?: 'fendudu'
 	force?: boolean
 	group_id?: number
   request_id: string
@@ -101,7 +105,9 @@ export interface RefillCapacityObservation {
   no_capacity?: boolean
 }
 export interface RefillView {
+  fendudu?: { token_configured: boolean; connection_id: string; products: { product: string; label: string; available_now: number; blocked_reason: string; expired: boolean }[] | null; checked_at: string | null }
   daily_schedule_status?: { next_at: string; last_at: string; last_quantity: number; last_batch_id?: string; retry_at: string; message: string }
+  daily_schedule_statuses?: Record<string, { next_at: string; last_at: string; last_quantity: number; message: string }>
 	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_plan: string }[]
 	rotation_cursor: number
 	next_plan: string
@@ -136,6 +142,12 @@ export interface RefillView {
   import_expiry_offset_minutes: number
 }
 export const accountRefillAPI = {
+  async configureFendudu(groupID: number, api_token: string, connection_id: string, revision: number) {
+    return (await apiClient.put<RefillView>('/admin/accounts/refill/fendudu', { api_token, connection_id, revision }, { params: { group_id: groupID }, timeout: 70000 })).data
+  },
+  async reconcileFendudu(id: string, groupID: number, supplier_id: string) {
+    return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/fendudu-reconcile`, { supplier_id }, { params: { group_id: groupID }, timeout: 40000 })).data
+  },
   async download(id: string, groupID: number) {
     const { data } = await apiClient.get<string>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/delivery`, {
       params: { group_id: groupID }, timeout: 60000,

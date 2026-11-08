@@ -3,22 +3,22 @@
     <div v-if="loading" class="py-12 text-center" role="status">{{ t('common.loading') }}</div>
     <div v-else-if="view && form" class="space-y-5">
       <label class="block"><span class="input-label">{{ t('accountRefill.ruleGroup') }}</span>
-        <select :value="selectedGroup" class="input" data-testid="refill-rule-group" :disabled="busy || dirty || !!manualPending" @change="switchGroup(Number(($event.target as HTMLSelectElement).value))">
+        <select :value="selectedGroup" class="input" data-testid="refill-rule-group" :disabled="busy || dirty || fenduduDirty || !!manualPending" @change="switchGroup(Number(($event.target as HTMLSelectElement).value))">
           <option :value="0" disabled>{{ t('accountRefill.chooseGroup') }}</option>
           <option v-for="group in ruleGroups" :key="group.id" :value="group.id">{{ group.name }} (#{{ group.id }}) · {{ t(view.rules?.find(r => r.group_id === group.id)?.enabled ? 'accountRefill.ruleOn' : 'accountRefill.ruleOff') }}</option>
         </select>
         <span class="input-hint">{{ t(dirty ? 'accountRefill.groupSaveFirst' : 'accountRefill.groupRulesHint') }}</span>
       </label>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div v-if="!isFendudu" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div v-for="item in walletItems" :key="item.key" class="rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700">
           <div class="text-xs text-gray-500 dark:text-dark-300">{{ t(`accountRefill.${item.key}`) }}</div>
           <div class="mt-1 text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">{{ number(item.value) }} <span class="text-xs font-normal text-gray-500">{{ t('accountRefill.points') }}</span></div>
         </div>
       </div>
-      <p class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
+      <p v-if="!isFendudu" class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
       <div class="rounded-lg bg-gray-50 px-4 py-3 text-sm dark:bg-dark-800" aria-live="polite">{{ view.message || t('accountRefill.unconfigured') }}</div>
-      <nav class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
-        <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
+      <nav ref="tabsNav" class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
+        <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="!!manualPending && ['manual', 'fendudu'].includes(tab) && (tab === 'fendudu') !== (manualPending.provider === 'fendudu')" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
       </nav>
       <form id="refill-settings" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="busy" class="space-y-5">
@@ -48,17 +48,18 @@
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryNotifyHint') }}</p>
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryHint') }}</p>
             </div>
-            <div v-if="form.daily_schedule" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
-              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.daily_schedule.enabled" type="checkbox" data-testid="refill-daily-enabled" />{{ t('accountRefill.dailyEnabled') }}</label>
-              <div class="grid gap-3 sm:grid-cols-2">
-                <label><span class="input-label">{{ t('accountRefill.dailyTime') }}</span><input v-model="form.daily_schedule.time" type="time" required class="input" data-testid="refill-daily-time" /></label>
-                <label><span class="input-label">{{ t('accountRefill.dailyQuantity') }}</span><input v-model.number="form.daily_schedule.quantity" type="number" min="1" max="100" step="1" required class="input" data-testid="refill-daily-quantity" /></label>
+            <div class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">{{ t('accountRefill.dailyTasks') }}</span><button type="button" class="btn btn-secondary" :disabled="busy || (form.daily_schedules?.length || 0) >= 20" data-testid="refill-daily-add" @click="addDailySchedule">{{ t('accountRefill.dailyAdd') }}</button></div>
+              <div v-for="(daily, index) in form.daily_schedules" :key="daily.id" class="space-y-3 border-t border-gray-100 pt-3 dark:border-dark-700" data-testid="refill-daily-row">
+                <div class="flex items-center justify-between gap-3"><label class="flex items-center gap-2 text-sm"><input v-model="daily.enabled" type="checkbox" data-testid="refill-daily-enabled" />{{ t('accountRefill.dailyTask', { number: index + 1 }) }}</label><button type="button" class="text-sm text-red-600" :disabled="busy" data-testid="refill-daily-remove" @click="form.daily_schedules?.splice(index, 1)">{{ t('common.delete') }}</button></div>
+                <div class="grid gap-3 sm:grid-cols-3">
+                  <label><span class="input-label">{{ t('accountRefill.dailyTime') }}</span><input v-model="daily.time" type="time" required class="input" data-testid="refill-daily-time" /></label>
+                  <label><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="daily.plan" class="input" data-testid="refill-daily-plan"><option value="">{{ t('accountRefill.dailyFollowPlan') }}</option><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
+                  <label><span class="input-label">{{ t('accountRefill.dailyQuantity') }}</span><input v-model.number="daily.quantity" type="number" min="1" max="100" step="1" required class="input" data-testid="refill-daily-quantity" /></label>
+                </div>
+                <div v-if="dailyStatus(daily.id)" class="space-y-1 text-xs text-gray-500" data-testid="refill-daily-status"><p>{{ t('accountRefill.dailyNext') }}: {{ date(dailyStatus(daily.id)?.next_at) }}</p><p>{{ dailyStatus(daily.id)?.message }}</p></div>
               </div>
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.dailyHint') }}</p>
-              <div v-if="view.config.daily_schedule?.enabled && view.daily_schedule_status" class="space-y-1 text-xs text-gray-500" data-testid="refill-daily-status">
-                <p>{{ t('accountRefill.dailyNext') }}: {{ date(view.daily_schedule_status.next_at) }}</p>
-                <p>{{ view.daily_schedule_status.message }}</p>
-              </div>
             </div>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.mode') }}</span><select v-model="form.mode" class="input"><option v-for="mode in ['capacity', 'fixed', 'interval']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
@@ -152,12 +153,20 @@
           </div>
         </fieldset>
       </form>
-      <div v-if="activeTab === 'manual'" class="space-y-4">
-        <p class="text-sm leading-6 text-gray-500">{{ t('accountRefill.manualHint') }}</p>
+      <div v-if="activeTab === 'manual' || isFendudu" class="space-y-4">
+        <details v-if="isFendudu" :open="!view.fendudu?.token_configured || fenduduDirty" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="fendudu-connection">
+          <summary class="cursor-pointer text-sm font-medium">{{ t('accountRefill.fenduduConnectionSettings') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</summary>
+          <label class="block"><span class="input-label">{{ t('accountRefill.fenduduToken') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span><input v-model="fenduduToken" type="password" autocomplete="new-password" class="input" placeholder="rvak_…" :disabled="busy" data-testid="fendudu-token" /><span class="input-hint">{{ t('accountRefill.tokenHint') }}</span></label>
+          <label class="block"><span class="input-label">{{ t('accountRefill.fenduduConnection') }}</span><input v-model="fenduduConnectionID" class="input" placeholder="s2e_…" :disabled="busy" data-testid="fendudu-connection-id" /><span class="input-hint">{{ t('accountRefill.fenduduConnectionHint') }}</span></label>
+          <button type="button" class="btn btn-secondary" :disabled="busy || dirty || conflict || !!manualPending" data-testid="fendudu-save" @click="saveFendudu">{{ t('accountRefill.fenduduSave') }}</button>
+          <p class="text-xs text-gray-500">{{ t('accountRefill.fenduduUpdated') }} {{ date(view.fendudu?.checked_at) }}</p>
+        </details>
+        <p class="text-sm leading-6 text-gray-500">{{ t(isFendudu ? 'accountRefill.fenduduHint' : 'accountRefill.manualHint') }}</p>
         <label class="block"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="manualPlan" class="input" :disabled="busy || !!manualPending" data-testid="manual-refill-plan"><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
         <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
-          <p>{{ t('accountRefill.quote') }}: <strong>{{ number(manualQuote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
-          <p v-if="manualQuote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ manualQuote.terms }}</p>
+          <template v-if="isFendudu"><p>{{ t('accountRefill.fenduduAvailable') }}: <strong>{{ number(fenduduProduct?.available_now) }}</strong> {{ t('accountRefill.fenduduUnit') }}</p><p v-if="fenduduProduct?.blocked_reason || fenduduProduct?.expired" class="mt-2 text-amber-700">{{ fenduduProduct.blocked_reason || t('accountRefill.expired') }}</p></template>
+          <p v-else>{{ t('accountRefill.quote') }}: <strong>{{ number(manualQuote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
+          <p v-if="!isFendudu && manualQuote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ manualQuote.terms }}</p>
         </div>
         <div class="rounded-lg border border-gray-200 p-4 text-sm dark:border-dark-700" data-testid="manual-refill-settings">
           <p class="font-medium">{{ t('accountRefill.manualSavedSettings') }}</p>
@@ -173,14 +182,14 @@
           </dl>
           <button type="button" class="mt-3 text-primary-600 underline" @click="activeTab = 'delivery'">{{ t('accountRefill.manualReviewSettings') }}</button>
         </div>
-        <p v-if="dirty || conflict" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
-        <p v-if="!view.token_configured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
+        <p v-if="dirty || conflict || (isFendudu && fenduduDirty)" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
+        <p v-if="!manualTokenConfigured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
         <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain') }}</p>
         <div class="flex flex-wrap gap-3">
-          <button type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : 'accountRefill.manualSubmit') }}</button>
+          <button type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : isFendudu ? 'accountRefill.fenduduSubmit' : 'accountRefill.manualSubmit') }}</button>
           <button type="button" class="btn btn-secondary" :disabled="manualForceDisabled" data-testid="manual-refill-force" @click="submitManual(true)">{{ t('accountRefill.manualForce') }}</button>
         </div>
-        <p class="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{{ t('accountRefill.manualForceHint') }}</p>
+        <p class="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{{ t(isFendudu ? 'accountRefill.fenduduForceHint' : 'accountRefill.manualForceHint') }}</p>
       </div>
       <div v-if="activeTab === 'progress'" class="space-y-5">
         <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
@@ -223,7 +232,7 @@
               <tbody>
                 <tr v-for="job in pagedJobs" :key="job.id" class="border-b border-gray-100 align-top dark:border-dark-800">
                   <td class="p-2">
-                    <span class="font-medium">{{ job.plan }}</span>
+                    <span class="font-medium">{{ job.plan }}</span><span v-if="job.provider === 'fendudu'" class="ml-2 text-xs text-gray-500">{{ t('accountRefill.fenduduName') }}</span>
                     <div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || t('accountRefill.supplierIDPending') }}</div>
                     <div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div>
                   </td>
@@ -236,14 +245,16 @@
                     <div v-if="job.supplier_status" class="mt-1 text-xs text-gray-500" data-testid="refill-supplier-status">{{ t('accountRefill.supplierStatus') }}: {{ supplierStateLabel(job.supplier_status) }} · {{ job.supplier_status }}</div>
                     <div v-if="job.supplier_error" class="mt-1 break-words text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.supplierError') }}: {{ job.supplier_error }}</div>
                     <div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div>
-                    <button v-if="['blocked', 'import_failed'].includes(job.status)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
+                    <button v-if="['blocked', 'import_failed'].includes(job.status) && !(job.provider === 'fendudu' && !job.supplier_id && job.submission_started_at)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
+                    <div v-if="job.provider === 'fendudu' && job.status === 'blocked' && !job.supplier_id && job.submission_started_at" class="mt-2 space-y-2"><label class="block text-xs">{{ t('accountRefill.fenduduOrderID') }}<input v-model="reconcileIDs[job.id]" class="input mt-1" placeholder="rvc_…" :disabled="busy" :data-testid="`fendudu-order-${job.id}`" /></label><button type="button" class="btn btn-secondary text-xs" :disabled="busy || !reconcileIDs[job.id]?.trim()" @click="reconcileFendudu(job)">{{ t('accountRefill.fenduduReconcile') }}</button></div>
                     <details v-if="job.status === 'blocked' && !job.supplier_id" class="mt-2 text-xs">
                       <summary class="cursor-pointer text-amber-700">{{ t('accountRefill.dismiss') }}</summary>
                       <label class="mt-2 flex gap-2"><input v-model="confirmedJobs" type="checkbox" :value="job.id" />{{ t('accountRefill.dismissHint') }}</label>
                       <button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t('accountRefill.dismiss') }}</button>
                     </details>
                   </td>
-                  <td class="p-2 tabular-nums">{{ number(job.price) }}<div class="mt-1 whitespace-nowrap text-xs text-gray-500">{{ t(`accountRefill.${job.budget_released ? 'amountReleased' : job.supplier_status === 'succeeded' ? 'amountCharged' : 'amountHeld'}`) }}</div></td>
+                  <td v-if="job.provider === 'fendudu'" class="p-2 tabular-nums">1 {{ t('accountRefill.fenduduUnit') }}<div class="mt-1 text-xs text-gray-500">{{ t('accountRefill.fenduduPrepaid') }}</div></td>
+                  <td v-else class="p-2 tabular-nums">{{ number(job.price) }}<div class="mt-1 whitespace-nowrap text-xs text-gray-500">{{ t(`accountRefill.${job.budget_released ? 'amountReleased' : job.supplier_status === 'succeeded' ? 'amountCharged' : 'amountHeld'}`) }}</div></td>
                   <td class="whitespace-nowrap p-2 tabular-nums">{{ elapsed(job) }}</td>
                   <td class="whitespace-nowrap p-2 text-xs">{{ date(job.created_at) }}</td>
                   <td class="p-2">
@@ -275,7 +286,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getCodexFingerprintModeOptions } from '@/utils/codexFingerprintMode'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -292,13 +303,14 @@ import { saveAs } from 'file-saver'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
-const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual'; proxies?: Proxy[] }>()
+const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' | 'fendudu'; proxies?: Proxy[] }>()
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
 const codexFingerprintModeOptions = computed(() => getCodexFingerprintModeOptions(t))
 const app = useAppStore()
-const tabs = ['connection', 'rules', 'delivery', 'manual', 'notifications', 'progress'] as const
+const tabs = ['connection', 'rules', 'delivery', 'manual', 'fendudu', 'notifications', 'progress'] as const
 const activeTab = ref<typeof tabs[number]>('connection')
+const tabsNav = ref<HTMLElement | null>(null)
 const view = ref<RefillView | null>(null)
 const form = ref<RefillConfig | null>(null)
 const selectedGroup = ref(0)
@@ -313,6 +325,13 @@ const jobsPage = ref(1)
 const pagedJobs = computed(() => view.value?.jobs.slice((jobsPage.value - 1) * jobsPageSize, jobsPage.value * jobsPageSize) || [])
 const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
 const webhook = ref('')
+const fenduduToken = ref(''), fenduduConnectionID = ref('')
+const reconcileIDs = ref<Record<string, string>>({})
+const isFendudu = computed(() => activeTab.value === 'fendudu')
+const fenduduDirty = computed(() => fenduduToken.value !== '' || fenduduConnectionID.value !== (view.value?.fendudu?.connection_id || ''))
+const manualTokenConfigured = computed(() => isFendudu.value ? view.value?.fendudu?.token_configured : view.value?.token_configured)
+const fenduduProduct = computed(() => view.value?.fendudu?.products?.find(p => p.product === manualPlan.value))
+const pendingProviderMismatch = computed(() => !!manualPending.value && (manualPending.value.provider === 'fendudu') !== isFendudu.value)
 const manualPlan = ref('pro5x'), manualPending = ref<ManualRefillRequest | null>(null)
 const manualStorageKey = 'yoshub:manual-refill:pending'
 const notifiedManualImports = new Set<string>()
@@ -331,8 +350,8 @@ const usageItems = computed(() => {
 const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === (form.value?.rotation_enabled ? (dirty.value ? form.value.rotation[0]?.plan : view.value?.next_plan) : form.value?.plan) && q.enabled))
 const manualQuote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && q.enabled))
 const manualGroups = computed(() => view.value?.config.delivery_group_ids.map(id => groups.value.find(g => g.id === id)?.name || `#${id}`).join('、'))
-const manualDisabled = computed(() => busy.value || !view.value || (!manualPending.value && (dirty.value || conflict.value || !view.value.token_configured || !view.value.config.push_enabled)))
-const manualForceDisabled = computed(() => busy.value || !view.value || dirty.value || conflict.value || !view.value.token_configured || !view.value.config.push_enabled)
+const manualDisabled = computed(() => busy.value || !view.value || pendingProviderMismatch.value || (!manualPending.value && (dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)))
+const manualForceDisabled = computed(() => busy.value || !view.value || pendingProviderMismatch.value || dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)
 const keyDays = computed(() => { const at = view.value?.key?.expires_at; return at && !at.startsWith('0001') ? (Date.parse(at) - now.value) / 86400000 : null })
 const keyRemaining = computed(() => keyDays.value === null ? '' : keyDays.value <= 0 ? t('accountRefill.expired') : t('accountRefill.keyRemaining', { days: Math.floor(keyDays.value * 10) / 10 }))
 const fixedExpiry = computed({ get: () => form.value?.delivery.fixed_expires_at ? new Date(form.value.delivery.fixed_expires_at * 1000 + 8 * 3600000).toISOString().slice(0, 16) : '', set: v => { if (form.value) form.value.delivery.fixed_expires_at = v ? Math.floor(Date.parse(`${v}:00+08:00`) / 1000) : null } })
@@ -352,6 +371,7 @@ const date = (v: string | null | undefined) => !v || v.startsWith('0001') ? '—
 const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`accountRefill.states.${state}`) : state
 const supplierStateLabel = (state: string) => ['queued', 'processing', 'succeeded', 'failed', 'review'].includes(state) ? stateLabel(state) : t('accountRefill.states.supplier_unknown')
 function downloadReason(job: RefillJob) {
+  if (job.provider === 'fendudu') return 'accountRefill.fenduduDownload'
   if (job.status === 'delivery_expired' || (job.expires_at != null && job.expires_at * 1000 <= now.value)) return 'accountRefill.downloadExpired'
   if (!job.supplier_id || job.supplier_status !== 'succeeded' || !job.result_ready) return 'accountRefill.downloadNotReady'
   return ''
@@ -398,7 +418,8 @@ function accept(data: RefillView, reset: boolean) {
   data.config.timeout_retry_enabled ??= true
   data.config.timeout_retry_notify ??= true
   data.config.timeout_retry_minutes ??= 10
-  data.config.daily_schedule ??= { enabled: false, time: '08:00', quantity: 1 }
+  data.config.daily_schedules ??= data.config.daily_schedule ? [{ id: 'legacy', plan: '', ...data.config.daily_schedule }] : []
+  delete data.config.daily_schedule
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}
@@ -435,7 +456,11 @@ function accept(data: RefillView, reset: boolean) {
   } else {
     jobsPage.value = Math.min(jobsPage.value, Math.max(1, Math.ceil(data.jobs.length / jobsPageSize)))
   }
+  if (reset || !fenduduDirty.value) fenduduConnectionID.value = data.fendudu?.connection_id || ''
   view.value = data
+  if (reset && isFendudu.value && !manualPending.value && !data.fendudu?.products?.some(p => p.product === manualPlan.value && p.available_now > 0 && !p.expired && !p.blocked_reason)) {
+    manualPlan.value = data.fendudu?.products?.find(p => ['pro5x', 'pro20x'].includes(p.product) && p.available_now > 0 && !p.expired && !p.blocked_reason)?.product || manualPlan.value
+  }
   if (manualPending.value && data.jobs.some(j => j.manual_request_id === manualPending.value?.request_id)) {
     clearManualRequest(); activeTab.value = 'progress'; jobsPage.value = 1
   }
@@ -450,13 +475,20 @@ async function refresh(reset: boolean) {
   catch { if (current === generation) error.value = t('accountRefill.loadError') }
   finally { fetching = false }
 }
+function addDailySchedule() {
+  if (!form.value || busy.value || (form.value.daily_schedules?.length || 0) >= 20) return
+  form.value.daily_schedules ??= []
+  form.value.daily_schedules.push({ id: crypto.randomUUID(), enabled: false, time: '08:00', quantity: 1, plan: form.value.plan })
+}
+function dailyStatus(id: string) {
+  return view.value?.daily_schedule_statuses?.[id] || (id === 'legacy' ? view.value?.daily_schedule_status : undefined)
+}
 async function save() {
   if (!form.value || busy.value || conflict.value) return
   if (!Number.isInteger(form.value.timeout_retry_minutes) || form.value.timeout_retry_minutes! < 1 || form.value.timeout_retry_minutes! > 1440) {
     error.value = t('accountRefill.timeoutRetryInvalid'); activeTab.value = 'rules'; return
   }
-  const daily = form.value.daily_schedule
-  if (daily && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(daily.time) || !Number.isInteger(daily.quantity) || daily.quantity < 1 || daily.quantity > 100)) {
+  if ((form.value.daily_schedules?.length || 0) > 20 || form.value.daily_schedules?.some(daily => !/^([01]\d|2[0-3]):[0-5]\d$/.test(daily.time) || !Number.isInteger(daily.quantity) || daily.quantity < 1 || daily.quantity > 100 || !['', 'pro5x', 'pro20x'].includes(daily.plan))) {
     error.value = t('accountRefill.dailyInvalid'); activeTab.value = 'rules'; return
   }
   let parsed: unknown
@@ -471,6 +503,23 @@ async function save() {
   } catch (e) { error.value = message(e) }
   finally { busy.value = false }
 }
+async function saveFendudu() {
+  if (busy.value || dirty.value || conflict.value || manualPending.value) return
+  busy.value = true; error.value = ''; generation++
+  try {
+    const data = await accountRefillAPI.configureFendudu(selectedGroup.value, fenduduToken.value, fenduduConnectionID.value, revision)
+    fenduduToken.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
+  } catch (e) { error.value = message(e) }
+  finally { busy.value = false }
+}
+async function reconcileFendudu(job: RefillJob) {
+  const id = reconcileIDs.value[job.id]?.trim()
+  if (busy.value || !id) return
+  busy.value = true; error.value = ''; generation++
+  try { accept(await accountRefillAPI.reconcileFendudu(job.id, selectedGroup.value, id), false); delete reconcileIDs.value[job.id] }
+  catch (e) { error.value = message(e) }
+  finally { busy.value = false }
+}
 async function check() { if (busy.value || dirty.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.check(selectedGroup.value), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
 async function retry(id: string) { if (busy.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.retry(id, selectedGroup.value), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
 async function dismiss(id: string) { if (busy.value || !confirmedJobs.value.includes(id)) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.dismiss(id, selectedGroup.value), false); confirmedJobs.value = confirmedJobs.value.filter(v => v !== id) } catch (e) { error.value = message(e) } finally { busy.value = false } }
@@ -483,15 +532,15 @@ function restoreManualRequest() {
     const raw = sessionStorage.getItem(manualStorageKey)
     if (raw) {
       const request = JSON.parse(raw) as ManualRefillRequest
-      if (typeof request.request_id === 'string' && ['pro5x', 'pro20x'].includes(request.plan) && Number.isInteger(request.revision)) {
-        manualPending.value = request; manualPlan.value = request.plan
+      if (typeof request.request_id === 'string' && ['pro5x', 'pro20x'].includes(request.plan) && Number.isInteger(request.revision) && (request.provider == null || request.provider === 'fendudu')) {
+        manualPending.value = request; manualPlan.value = request.plan; activeTab.value = request.provider === 'fendudu' ? 'fendudu' : 'manual'
       }
     }
   } catch { /* Invalid session data cannot initiate a purchase. */ }
 }
 async function submitManual(force = false) {
   if (force ? manualForceDisabled.value : manualDisabled.value) return
-  const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(force ? { force: true } : {}) }
+  const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(isFendudu.value ? { provider: 'fendudu' as const } : {}), ...(force ? { force: true } : {}) }
   try { sessionStorage.setItem(manualStorageKey, JSON.stringify(request)) }
   catch { error.value = t('accountRefill.manualStorageError'); return }
   manualPending.value = request; busy.value = true; error.value = ''; generation++
@@ -508,11 +557,15 @@ async function submitManual(force = false) {
     error.value = message(e)
   } finally { busy.value = false }
 }
+watch([activeTab, loading], async () => {
+  await nextTick()
+  tabsNav.value?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+})
 function close() { if (!busy.value) emit('close') }
 watch(() => props.show, async show => {
   const current = ++generation
   if (timer) clearInterval(timer)
-  token.value = ''
+  token.value = ''; fenduduToken.value = ''; fenduduConnectionID.value = ''; reconcileIDs.value = {}
   webhook.value = ''
   downloadStepUp.onCancel()
   if (!show) return
@@ -528,5 +581,5 @@ watch(() => props.show, async show => {
   finally { if (current === generation) loading.value = false }
   if (current === generation) timer = setInterval(() => { now.value = Date.now(); void refresh(false) }, 15000)
 }, { immediate: true })
-onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; webhook.value = ''; if (timer) clearInterval(timer) })
+onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; fenduduToken.value = ''; webhook.value = ''; if (timer) clearInterval(timer) })
 </script>

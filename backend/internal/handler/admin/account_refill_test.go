@@ -46,6 +46,17 @@ func TestRefillConfigPlanConcurrencyReplacementAndLegacyClient(t *testing.T) {
 	}
 }
 
+func TestRefillMultiScheduleRejectsStaleSingleTaskEdit(t *testing.T) {
+	current := service.DefaultAccountRefillConfig()
+	current.DailySchedules = []service.AccountRefillDailySchedule{{ID: "legacy", Time: "08:00", Quantity: 1}}
+	_, err := decodeAccountRefillConfig(current, json.RawMessage(`{"daily_schedule":{"enabled":true,"time":"09:00","quantity":3}}`))
+	require.Error(t, err)
+	updated, err := decodeAccountRefillConfig(current, json.RawMessage(`{"daily_schedules":[]}`))
+	require.NoError(t, err)
+	require.NotNil(t, updated.DailySchedules)
+	require.Empty(t, updated.DailySchedules)
+}
+
 func TestExternalAccountImportExpiryScope(t *testing.T) {
 	for _, auth := range []string{"jwt", "admin_api_key"} {
 		t.Run(auth, func(t *testing.T) {

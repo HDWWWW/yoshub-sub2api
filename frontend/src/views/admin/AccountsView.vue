@@ -16,6 +16,7 @@
               <AccountRetryDefaults />
               <button class="btn btn-secondary" data-testid="open-account-refill" @click="refillInitialTab = 'connection'; showAccountRefill = true">{{ t('accountRefill.title') }}</button>
               <button class="btn btn-secondary" data-testid="open-manual-refill" @click="refillInitialTab = 'manual'; showAccountRefill = true">{{ t('accountRefill.manual') }}</button>
+              <button class="btn btn-secondary" data-testid="open-fendudu-refill" @click="refillInitialTab = 'fendudu'; showAccountRefill = true">{{ t('accountRefill.fendudu') }}</button>
               <button
                 class="btn btn-secondary"
                 :disabled="!params.group || loading"
@@ -339,6 +340,10 @@
               :error="todayStatsError"
             />
           </template>
+
+          <template #cell-account_stats="{ row }">
+            <div :title="t('admin.accounts.lifetimeStatsHint')"><AccountTodayStatsCell :stats="lifetimeStatsByAccountId[String(row.id)] ?? null" :loading="lifetimeStatsLoading" :error="lifetimeStatsError" /></div>
+          </template>
           <template #cell-groups="{ row }">
             <AccountGroupsCell :groups="accountGroupsForRow(row)" :max-display="4" />
           </template>
@@ -640,7 +645,7 @@ const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
 const showAccountRefill = ref(false)
-const refillInitialTab = ref<'connection' | 'manual'>('connection')
+const refillInitialTab = ref<'connection' | 'manual' | 'fendudu'>('connection')
 const showScheduling = ref(false)
 const schedulingMetadata = ref<Record<number, AccountSchedulingMetadata>>({})
 const schedulingMetadataFailed = ref(false)
@@ -705,7 +710,7 @@ const accountToolsDropdownStyle = computed(() => ({
   width: `${accountToolsDropdownPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
+const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'account_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
@@ -790,6 +795,10 @@ const todayStatsByAccountId = ref<Record<string, WindowStats>>({})
 const todayStatsLoading = ref(false)
 const todayStatsError = ref<string | null>(null)
 const todayStatsReqSeq = ref(0)
+const lifetimeStatsByAccountId = ref<Record<string, WindowStats>>({})
+const lifetimeStatsLoading = ref(false)
+const lifetimeStatsError = ref<string | null>(null)
+let lifetimeStatsReqSeq = 0
 const pendingTodayStatsRefresh = ref(false)
 const usageManualRefreshToken = ref(0)
 
@@ -995,6 +1004,31 @@ const refreshTodayStatsBatch = async () => {
   }
 }
 
+const refreshLifetimeStatsBatch = async () => {
+  const seq = ++lifetimeStatsReqSeq
+  const ids = accounts.value.map(account => account.id)
+  const visible = new Set(ids.map(String))
+  lifetimeStatsByAccountId.value = Object.fromEntries(Object.entries(lifetimeStatsByAccountId.value).filter(([id]) => visible.has(id)))
+  lifetimeStatsError.value = null
+  if (hiddenColumns.has('account_stats') || ids.length === 0) {
+    lifetimeStatsByAccountId.value = {}
+    lifetimeStatsLoading.value = false
+    return
+  }
+  lifetimeStatsLoading.value = true
+  try {
+    const result = await adminAPI.accounts.getBatchLifetimeStats(ids)
+    if (seq !== lifetimeStatsReqSeq) return
+    lifetimeStatsByAccountId.value = Object.fromEntries(Object.entries(result.stats || {}).filter(([id]) => visible.has(id)))
+  } catch (error) {
+    if (seq !== lifetimeStatsReqSeq) return
+    lifetimeStatsError.value = 'Failed'
+    console.error('Failed to load account lifetime stats:', error)
+  } finally {
+    if (seq === lifetimeStatsReqSeq) lifetimeStatsLoading.value = false
+  }
+}
+
 const autoRefreshIntervalLabel = (sec: number) => {
   if (sec === 5) return t('admin.accounts.refreshInterval5s')
   if (sec === 10) return t('admin.accounts.refreshInterval10s')
@@ -1101,6 +1135,13 @@ const saveAutoRefreshToStorage = () => {
 
 if (typeof window !== 'undefined') {
   loadSavedColumns()
+  try {
+    if (!localStorage.getItem('account-lifetime-column-initialized')) {
+      hiddenColumns.add('account_stats')
+      saveColumnsToStorage()
+      localStorage.setItem('account-lifetime-column-initialized', '1')
+    }
+  } catch { hiddenColumns.add('account_stats') }
   loadSavedAutoRefresh()
 }
 
@@ -1132,6 +1173,7 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   saveColumnsToStorage()
+  if (key === 'account_stats') void refreshLifetimeStatsBatch()
   if ((key === 'today_stats' || key === 'usage') && wasHidden) {
     refreshTodayStatsBatch().catch((error) => {
       console.error('Failed to load account today stats after showing column:', error)
@@ -1457,6 +1499,7 @@ watch(loading, (isLoading, wasLoading) => {
 })
 
 watch(accounts, (rows) => {
+  void refreshLifetimeStatsBatch()
   const visibleIDs = new Set(rows.map((row) => String(row.id)))
   usageBatchByAccountId.value = Object.fromEntries(
     Object.entries(usageBatchByAccountId.value).filter(([key]) => visibleIDs.has(key))
@@ -1912,7 +1955,8 @@ const allColumns = computed(() => {
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
     { key: 'force_fast', label: t('admin.accounts.columns.forceFast'), sortable: false },
-    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
+    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false },
+    { key: 'account_stats', label: t('admin.accounts.columns.accountStats'), sortable: false }
   ]
   if (!authStore.isSimpleMode) {
     c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })

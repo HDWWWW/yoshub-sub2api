@@ -39,10 +39,34 @@ func (s *AccountRefillService) syncSourceLeases(ctx context.Context, token strin
 			failed++
 			continue
 		}
-		remote, err := s.provider.Status(ctx, token, j.SupplierID)
+		var remote *RefillProviderJob
+		var err error
+		if j.Provider == refillProviderFendudu {
+			if now.Before(state.Fendudu.RetryAt) {
+				continue
+			}
+			var secret string
+			secret, err = s.encryptor.Decrypt(state.Fendudu.EncryptedToken)
+			if err == nil {
+				var cycle *fenduduCycle
+				cycle, err = s.fenduduClient().Cycle(ctx, secret, j.SupplierID)
+				if err == nil {
+					err = validateFenduduCycle(cycle, *j)
+				}
+				if err == nil {
+					remote = &RefillProviderJob{ID: cycle.ID, ExpiresAt: cycle.expiresAt()}
+				}
+			}
+		} else if token != "" {
+			remote, err = s.provider.Status(ctx, token, j.SupplierID)
+		}
 		var providerErr *refillProviderError
 		if errors.As(err, &providerErr) && providerErr.code == 429 {
-			state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
+			if j.Provider == refillProviderFendudu {
+				state.Fendudu.RetryAt = now.Add(refillRetryDelay(err, 1))
+			} else {
+				state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
+			}
 			failed++
 			break
 		}

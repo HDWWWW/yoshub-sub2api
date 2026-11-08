@@ -3,8 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountRefillModal from '../AccountRefillModal.vue'
 import type { Proxy } from '@/types'
 
-const { get, save, check, retry, manual, download, saveAs, showSuccess } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn() }))
-vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, save, check, retry, manual, download } }))
+const { get, save, check, retry, manual, download, saveAs, showSuccess, configureFendudu, reconcileFendudu } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn(), configureFendudu: vi.fn(), reconcileFendudu: vi.fn() }))
+vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, save, check, retry, manual, download, configureFendudu, reconcileFendudu } }))
 vi.mock('file-saver', () => ({ saveAs }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { name: 'TotpStepUpDialog', props: ['controller'], template: '<div />' } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
@@ -47,6 +47,7 @@ describe('AccountRefillModal', () => {
  afterEach(() => vi.useRealTimers())
  it('saves an independent daily clock and quantity while automation is off, then reopens', async () => {
   let w = await open()
+  await w.get('[data-testid="refill-daily-add"]').trigger('click')
   expect(w.get<HTMLInputElement>('[data-testid="refill-daily-enabled"]').element.checked).toBe(false)
   expect(w.get<HTMLInputElement>('[data-testid="refill-daily-time"]').element.value).toBe('08:00')
   await w.get('[data-testid="refill-daily-enabled"]').setValue(true)
@@ -55,8 +56,9 @@ describe('AccountRefillModal', () => {
   await vi.advanceTimersByTimeAsync(15000); await flushPromises()
   expect(w.get<HTMLInputElement>('[data-testid="refill-daily-time"]').element.value).toBe('21:35')
   await w.get('form').trigger('submit'); await flushPromises()
-  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false, daily_schedule: { enabled: true, time: '21:35', quantity: 4 } }), '', 1, '')
-  get.mockResolvedValue({ ...response(2), config: structuredClone(save.mock.calls[0]![0]), daily_schedule_status: { next_at: '2026-11-09T13:35:00Z', message: '等待每日定时补号' } })
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false, daily_schedules: [{ id: expect.any(String), enabled: true, time: '21:35', quantity: 4, plan: 'pro5x' }] }), '', 1, '')
+  const taskID = save.mock.calls[0]![0].daily_schedules[0].id
+  get.mockResolvedValue({ ...response(2), config: structuredClone(save.mock.calls[0]![0]), daily_schedule_statuses: { [taskID]: { next_at: '2026-11-09T13:35:00Z', message: '等待每日定时补号' } } })
   w.unmount(); w = await open()
   expect(w.get<HTMLInputElement>('[data-testid="refill-daily-enabled"]').element.checked).toBe(true)
   expect(w.get<HTMLInputElement>('[data-testid="refill-daily-time"]').element.value).toBe('21:35')
@@ -67,11 +69,36 @@ describe('AccountRefillModal', () => {
  })
  it.each([0, 1.5, 101])('rejects invalid daily quantity %s without saving', async quantity => {
   const w = await open()
+  await w.get('[data-testid="refill-daily-add"]').trigger('click')
   await w.get('[data-testid="refill-daily-enabled"]').setValue(true)
   await w.get('[data-testid="refill-daily-quantity"]').setValue(quantity)
   await w.get('form').trigger('submit'); await flushPromises()
   expect(save).not.toHaveBeenCalled()
   expect(w.text()).toContain('accountRefill.dailyInvalid')
+  w.unmount()
+ })
+ it('keeps the legacy task and saves independently typed schedules, including deletion', async () => {
+  get.mockResolvedValue({ ...response(), config: { ...config, daily_schedule: { enabled: true, time: '06:30', quantity: 2 } } })
+  const w = await open()
+  expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined()
+  await w.get('[data-testid="refill-daily-add"]').trigger('click')
+  const rows = w.findAll('[data-testid="refill-daily-row"]')
+  expect(rows).toHaveLength(2)
+  await rows[1]!.get('[data-testid="refill-daily-enabled"]').setValue(true)
+  await rows[1]!.get('[data-testid="refill-daily-time"]').setValue('18:45')
+  await rows[1]!.get('[data-testid="refill-daily-plan"]').setValue('pro20x')
+  await rows[1]!.get('[data-testid="refill-daily-quantity"]').setValue(3)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save.mock.calls[0]![0].daily_schedules).toEqual([
+   { id: 'legacy', enabled: true, time: '06:30', quantity: 2, plan: '' },
+   { id: expect.any(String), enabled: true, time: '18:45', quantity: 3, plan: 'pro20x' }
+  ])
+  expect(save.mock.calls[0]![0].daily_schedule).toBeUndefined()
+  await w.findAll('[data-testid="refill-daily-remove"]')[0]!.trigger('click')
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save.mock.calls[1]![0].daily_schedules).toHaveLength(1)
+  expect(save.mock.calls[1]![0].daily_schedules[0].plan).toBe('pro20x')
+  expect(manual).not.toHaveBeenCalled(); expect(check).not.toHaveBeenCalled()
   w.unmount()
  })
  it('persists the independent timeout notification switch', async () => {
@@ -720,5 +747,62 @@ describe('AccountRefillModal', () => {
   await vi.advanceTimersByTimeAsync(15000); await flushPromises(); expect(w.text()).toContain('accountRefill.conflict')
   await w.get('form').trigger('submit'); expect(save).not.toHaveBeenCalled()
   await w.setProps({ show: false }); const count = get.mock.calls.length; await vi.advanceTimersByTimeAsync(30000); expect(get).toHaveBeenCalledTimes(count); w.unmount()
+ })
+})
+
+
+describe('Fendudu manual refill', () => {
+ function fenduduResponse() { return { ...response(), token_configured: false, fendudu: { token_configured: true, connection_id: 's2e_fixture', products: [{ product: 'pro20x', available_now: 5, blocked_reason: '', expired: false }], checked_at: '2026-11-09T00:00:00Z' } } }
+ async function openFendudu() {
+  const w = mount(AccountRefillModal, { props: { show: true, initialTab: 'fendudu' }, global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' } } } })
+  await flushPromises(); return w
+ }
+ beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(fenduduResponse()); manual.mockResolvedValue(fenduduResponse()) })
+ afterEach(() => vi.useRealTimers())
+ it('uses the shared settings and sends the backup provider without the primary key', async () => {
+  const w = await openFendudu()
+  expect(w.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]').element.value).toBe('pro20x')
+  expect(w.get('[data-testid="refill-manual-concurrency"]').text()).toBe('60')
+  expect(w.get('[data-testid="manual-refill-submit"]').attributes('disabled')).toBeUndefined()
+  await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+  expect(manual).toHaveBeenCalledWith(expect.objectContaining({ provider: 'fendudu', plan: 'pro20x', revision: 1, group_id: 2 }))
+  expect(configureFendudu).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('reuses an uncertain request after reopening and prevents switching its supplier', async () => {
+  manual.mockRejectedValue({ status: 503 })
+  let w = await openFendudu()
+  await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+  const first = structuredClone(manual.mock.calls[0]![0])
+  w.unmount(); w = await openFendudu()
+  const oldTab = w.findAll('nav button').find(b => b.text() === 'accountRefill.manual')!
+  expect(oldTab.attributes('disabled')).toBeDefined()
+  await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+  expect(manual).toHaveBeenLastCalledWith(first)
+  w.unmount()
+ })
+ it('saves only backup connection settings and keeps the secret out of session storage', async () => {
+  const w = await openFendudu()
+  configureFendudu.mockResolvedValue({ ...fenduduResponse(), revision: 2 })
+  await w.get('[data-testid="fendudu-token"]').setValue('rvak_fixture')
+  expect(w.get('[data-testid="manual-refill-submit"]').attributes('disabled')).toBeDefined()
+  await w.get('[data-testid="fendudu-save"]').trigger('click'); await flushPromises()
+  expect(configureFendudu).toHaveBeenCalledWith(2, 'rvak_fixture', 's2e_fixture', 1)
+  expect(w.get<HTMLInputElement>('[data-testid="fendudu-token"]').element.value).toBe('')
+  expect(JSON.stringify(sessionStorage)).not.toContain('rvak_fixture')
+  expect(manual).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled()
+  w.unmount()
+ })
+ it('links an uncertain supplier order without posting another purchase', async () => {
+  const data = { ...fenduduResponse(), jobs: [{ ...responseWithJobs(1).jobs[0]!, provider: 'fendudu', supplier_id: '', status: 'blocked', submission_started_at: new Date().toISOString() }] }
+  get.mockResolvedValue(data); reconcileFendudu.mockResolvedValue(data)
+  const w = await openFendudu()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
+  await w.get('[data-testid="fendudu-order-order-1"]').setValue('rvc_fixture')
+  await w.findAll('button').find(b => b.text() === 'accountRefill.fenduduReconcile')!.trigger('click'); await flushPromises()
+  expect(reconcileFendudu).toHaveBeenCalledWith('order-1', 2, 'rvc_fixture')
+  expect(manual).not.toHaveBeenCalled(); expect(retry).not.toHaveBeenCalled()
+  expect(w.get('[data-testid="refill-download"]').attributes('disabled')).toBeDefined()
+  w.unmount()
  })
 })

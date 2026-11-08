@@ -124,6 +124,11 @@ func decodeAccountRefillConfig(current service.AccountRefillConfig, raw json.Raw
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return current, err
 	}
+	if _, legacy := fields["daily_schedule"]; legacy && current.DailySchedules != nil {
+		if _, updated := fields["daily_schedules"]; !updated {
+			return current, errors.New("定时补号已升级为多任务，请刷新页面后修改")
+		}
+	}
 	if _, present := fields["plan_quota_thresholds"]; present {
 		current.PlanQuotaThresholds = nil
 	}
@@ -237,6 +242,52 @@ func (h *AccountHandler) DismissAccountRefill(c *gin.Context) {
 		return
 	}
 	if err := svc.DismissRejected(c.Request.Context(), c.Param("job_id")); err != nil {
+		refillResponseError(c, err)
+		return
+	}
+	h.GetAccountRefill(c)
+}
+
+func (h *AccountHandler) ConfigureFenduduRefill(c *gin.Context) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		APIToken     string `json:"api_token"`
+		ConnectionID string `json:"connection_id"`
+		Revision     int64  `json:"revision"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	if c.ShouldBindJSON(&req) != nil {
+		response.BadRequest(c, "粉嘟嘟连接设置无效")
+		return
+	}
+	middleware.SetAuditAction(c, "admin.accounts.refill.fendudu.configure")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	if err := svc.ConfigureFendudu(ctx, req.APIToken, req.ConnectionID, req.Revision); err != nil {
+		refillResponseError(c, err)
+		return
+	}
+	h.GetAccountRefill(c)
+}
+
+func (h *AccountHandler) ReconcileFenduduRefill(c *gin.Context) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		SupplierID string `json:"supplier_id"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	if c.ShouldBindJSON(&req) != nil {
+		response.BadRequest(c, "粉嘟嘟订单 ID 无效")
+		return
+	}
+	middleware.SetAuditAction(c, "admin.accounts.refill.fendudu.reconcile")
+	if err := svc.ReconcileFendudu(c.Request.Context(), c.Param("job_id"), req.SupplierID); err != nil {
 		refillResponseError(c, err)
 		return
 	}

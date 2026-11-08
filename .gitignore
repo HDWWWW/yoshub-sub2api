@@ -151,6 +151,7 @@ docs/*
 !docs/smartws.md
 !docs/account-risk-detection.md
 !docs/account-test-parameters.md
+!docs/account-refill-fendudu.md
 !docs/legal/
 !docs/legal/*.md
 !docs/screenshots/

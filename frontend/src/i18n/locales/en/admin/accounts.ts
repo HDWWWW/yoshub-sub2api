@@ -270,6 +270,7 @@ export default {
         viewTempUnschedDetails: 'View temp unschedulable details',
         tempUnschedulableUntil: 'Resumes {time}'
       },
+      lifetimeStatsHint: 'Lifetime requests, tokens, account cost and user cost. Retained after request log cleanup; removed when the account is deleted.',
       columns: {
         name: 'Name',
         id: 'Account ID',
@@ -287,6 +288,7 @@ export default {
         schedulable: 'Schedulable',
         forceFast: 'Force Fast',
         todayStats: 'Today Stats',
+        accountStats: 'Account Stats',
         groups: 'Groups',
         usageWindows: 'Usage Windows',
         proxy: 'Proxy',

@@ -36,6 +36,7 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
+	DailySchedules            []AccountRefillDailySchedule           `json:"daily_schedules"`
 	DailySchedule             *AccountRefillDailySchedule            `json:"daily_schedule,omitempty"`
 	TimeoutRetryEnabled       *bool                                  `json:"timeout_retry_enabled,omitempty"`
 	TimeoutRetryNotify        *bool                                  `json:"timeout_retry_notify,omitempty"`
@@ -109,7 +110,7 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
-	if err := validateRefillDailySchedule(c.DailySchedule); err != nil {
+	if err := validateRefillDailySchedules(c); err != nil {
 		return err
 	}
 	if c.TimeoutRetryMinutes != nil && (*c.TimeoutRetryMinutes < 1 || *c.TimeoutRetryMinutes > 1440) {
@@ -198,6 +199,9 @@ func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {
 }
 
 type AccountRefillJob struct {
+	Provider               string                      `json:"provider,omitempty"`
+	FenduduConnectionID    string                      `json:"fendudu_connection_id,omitempty"`
+	SubmissionStartedAt    *time.Time                  `json:"submission_started_at,omitempty"`
 	TimeoutIgnoredAt       *time.Time                  `json:"timeout_ignored_at,omitempty"`
 	TimeoutNotificationAt  *time.Time                  `json:"timeout_notification_at,omitempty"`
 	DailyBatchID           string                      `json:"daily_batch_id,omitempty"`
@@ -288,45 +292,47 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
-	DailyScheduleStatus  AccountRefillDailyScheduleStatus   `json:"daily_schedule_status"`
-	RotationGeneration   int64                              `json:"rotation_generation,omitempty"`
-	ExpiryDemands        []accountRefillExpiryDemand        `json:"expiry_demands,omitempty"`
-	ExpiryCheckedAt      time.Time                          `json:"expiry_checked_at,omitempty"`
-	RotationCursor       int                                `json:"rotation_cursor"`
-	EncryptedWebhook     string                             `json:"encrypted_webhook,omitempty"`
-	NotificationStatus   AccountRefillNotificationStatus    `json:"notification_status"`
-	LowBalanceAlerted    bool                               `json:"low_balance_alerted"`
-	RefillNeededAlerted  bool                               `json:"refill_needed_alerted"`
-	RefillNeededRetryAt  time.Time                          `json:"refill_needed_retry_at"`
-	NextNeededCheckAt    time.Time                          `json:"next_needed_check_at"`
-	NextNeededIntervalAt time.Time                          `json:"next_needed_interval_at"`
-	LowBalanceRequired   float64                            `json:"low_balance_required"`
-	NextBalanceCheckAt   time.Time                          `json:"next_balance_check_at"`
-	LeaseSyncAt          *time.Time                         `json:"lease_sync_at,omitempty"`
-	LeaseSyncMessage     string                             `json:"lease_sync_message"`
-	LeaseSyncCursor      int                                `json:"lease_sync_cursor"`
-	Config               AccountRefillConfig                `json:"config"`
-	EncryptedToken       string                             `json:"encrypted_token,omitempty"`
-	Revision             int64                              `json:"revision"`
-	Jobs                 []AccountRefillJob                 `json:"jobs"`
-	Catalog              *RefillCatalog                     `json:"catalog,omitempty"`
-	CatalogAt            *time.Time                         `json:"catalog_at,omitempty"`
-	Evaluation           AccountRefillEvaluation            `json:"evaluation"`
-	NextCheckAt          time.Time                          `json:"next_check_at"`
-	TimeoutCheckedAt     time.Time                          `json:"timeout_checked_at"`
-	TimeoutNoticeKey     string                             `json:"timeout_notice_key,omitempty"`
-	TimeoutNoticeContent string                             `json:"timeout_notice_content,omitempty"`
-	TimeoutNoticeRetryAt time.Time                          `json:"timeout_notice_retry_at"`
-	LastSubmitAt         time.Time                          `json:"last_submit_at"`
-	DemandSince          *time.Time                         `json:"demand_since,omitempty"`
-	Usage                map[string]AccountRefillDailyUsage `json:"usage"`
-	NextIntervalAt       time.Time                          `json:"next_interval_at"`
-	IntervalRemaining    int                                `json:"interval_remaining"`
-	Wallet               *RefillWallet                      `json:"wallet,omitempty"`
-	Key                  *RefillKeyInfo                     `json:"key,omitempty"`
-	IdentityAt           *time.Time                         `json:"identity_at,omitempty"`
-	Message              string                             `json:"message"`
-	ProviderRetryAt      time.Time                          `json:"provider_retry_at"`
+	Fendudu               fenduduRefillState                          `json:"fendudu"`
+	DailyScheduleStatus   AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`
+	DailyScheduleStatuses map[string]AccountRefillDailyScheduleStatus `json:"daily_schedule_statuses,omitempty"`
+	RotationGeneration    int64                                       `json:"rotation_generation,omitempty"`
+	ExpiryDemands         []accountRefillExpiryDemand                 `json:"expiry_demands,omitempty"`
+	ExpiryCheckedAt       time.Time                                   `json:"expiry_checked_at,omitempty"`
+	RotationCursor        int                                         `json:"rotation_cursor"`
+	EncryptedWebhook      string                                      `json:"encrypted_webhook,omitempty"`
+	NotificationStatus    AccountRefillNotificationStatus             `json:"notification_status"`
+	LowBalanceAlerted     bool                                        `json:"low_balance_alerted"`
+	RefillNeededAlerted   bool                                        `json:"refill_needed_alerted"`
+	RefillNeededRetryAt   time.Time                                   `json:"refill_needed_retry_at"`
+	NextNeededCheckAt     time.Time                                   `json:"next_needed_check_at"`
+	NextNeededIntervalAt  time.Time                                   `json:"next_needed_interval_at"`
+	LowBalanceRequired    float64                                     `json:"low_balance_required"`
+	NextBalanceCheckAt    time.Time                                   `json:"next_balance_check_at"`
+	LeaseSyncAt           *time.Time                                  `json:"lease_sync_at,omitempty"`
+	LeaseSyncMessage      string                                      `json:"lease_sync_message"`
+	LeaseSyncCursor       int                                         `json:"lease_sync_cursor"`
+	Config                AccountRefillConfig                         `json:"config"`
+	EncryptedToken        string                                      `json:"encrypted_token,omitempty"`
+	Revision              int64                                       `json:"revision"`
+	Jobs                  []AccountRefillJob                          `json:"jobs"`
+	Catalog               *RefillCatalog                              `json:"catalog,omitempty"`
+	CatalogAt             *time.Time                                  `json:"catalog_at,omitempty"`
+	Evaluation            AccountRefillEvaluation                     `json:"evaluation"`
+	NextCheckAt           time.Time                                   `json:"next_check_at"`
+	TimeoutCheckedAt      time.Time                                   `json:"timeout_checked_at"`
+	TimeoutNoticeKey      string                                      `json:"timeout_notice_key,omitempty"`
+	TimeoutNoticeContent  string                                      `json:"timeout_notice_content,omitempty"`
+	TimeoutNoticeRetryAt  time.Time                                   `json:"timeout_notice_retry_at"`
+	LastSubmitAt          time.Time                                   `json:"last_submit_at"`
+	DemandSince           *time.Time                                  `json:"demand_since,omitempty"`
+	Usage                 map[string]AccountRefillDailyUsage          `json:"usage"`
+	NextIntervalAt        time.Time                                   `json:"next_interval_at"`
+	IntervalRemaining     int                                         `json:"interval_remaining"`
+	Wallet                *RefillWallet                               `json:"wallet,omitempty"`
+	Key                   *RefillKeyInfo                              `json:"key,omitempty"`
+	IdentityAt            *time.Time                                  `json:"identity_at,omitempty"`
+	Message               string                                      `json:"message"`
+	ProviderRetryAt       time.Time                                   `json:"provider_retry_at"`
 }
 
 type AccountRefillDailyUsage struct {

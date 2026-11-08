@@ -116,6 +116,7 @@ export default {
         failed: '更新优先级失败'
       },
       groupCountTotal: '共 {count} 个分组',
+      lifetimeStatsHint: '累计请求数、Token、账号费用和用户费用；清理请求明细不会重置，删除账号后清除。',
       columns: {
         name: '名称',
         id: '账号ID',
@@ -133,6 +134,7 @@ export default {
         schedulable: '调度',
         forceFast: '强制 Fast',
         todayStats: '今日统计',
+        accountStats: '账号统计',
         groups: '分组',
         usageWindows: '用量窗口',
         proxy: '代理',

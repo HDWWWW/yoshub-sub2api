@@ -85,6 +85,9 @@ func (s *AccountRefillService) DownloadDelivery(ctx context.Context, id string) 
 	if job == nil {
 		return nil, refillDownloadError(http.StatusNotFound, "当前分组没有此补号任务")
 	}
+	if job.Provider == refillProviderFendudu {
+		return nil, refillDownloadError(http.StatusBadRequest, "粉嘟嘟通过连接推号，不提供交付 JSON；请在账号列表导出")
+	}
 	if job.Status == "delivery_expired" || refillDeliveryExpired(job.ExpiresAt, time.Now()) {
 		return nil, refillDownloadError(http.StatusGone, "号商交付已过租期，无法下载 JSON")
 	}

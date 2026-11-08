@@ -37,7 +37,8 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 	if err != nil {
 		return "", err
 	}
-	if old.EncryptedToken == "" {
+	fendudu := old.Fendudu
+	if old.EncryptedToken == "" || fendudu.EncryptedToken == "" {
 		if stores, ok := s.root.(AccountRefillGroupStore); ok {
 			rows, err := stores.ListRules(ctx)
 			if err != nil {
@@ -55,8 +56,13 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 				if err != nil {
 					return "", err
 				}
-				if candidate.EncryptedToken != "" {
+				if old.EncryptedToken == "" && candidate.EncryptedToken != "" {
 					old = candidate
+				}
+				if fendudu.EncryptedToken == "" && candidate.Fendudu.EncryptedToken != "" {
+					fendudu = candidate.Fendudu
+				}
+				if old.EncryptedToken != "" && fendudu.EncryptedToken != "" {
 					break
 				}
 			}
@@ -66,6 +72,7 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 	state.Config.GroupID = s.groupID
 	state.Config.DeliveryGroupIDs = []int64{s.groupID}
 	state.EncryptedToken, state.EncryptedWebhook = old.EncryptedToken, old.EncryptedWebhook
+	state.Fendudu = fendudu
 	state.Key, state.Wallet, state.Catalog = old.Key, old.Wallet, old.Catalog
 	state.IdentityAt, state.CatalogAt = old.IdentityAt, old.CatalogAt
 	b, err := json.Marshal(state)
@@ -105,7 +112,7 @@ func (s *AccountRefillService) groupService(id int64, store AccountRefillGroupSt
 	child := &AccountRefillService{
 		store:     &seededRefillGroupStore{AccountRefillStore: store.ForGroup(id), root: s.store, groupID: id},
 		encryptor: s.encryptor, accounts: s.accounts, admin: s.admin, groups: s.groups,
-		loads: s.loads, proxies: s.proxies, provider: s.provider, notifier: s.notifier,
+		loads: s.loads, proxies: s.proxies, provider: s.provider, fendudu: s.fendudu, notifier: s.notifier,
 		ruleRoot: s, ruleGroupID: id,
 	}
 	s.ruleServices[id] = child
