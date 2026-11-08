@@ -359,7 +359,7 @@
                         :data-test="`moderation-input-${row.id}`"
                         @click="openInputDetail(row)"
                       >
-                        <ModerationHighlightedText class="min-w-0 flex-1 whitespace-pre-wrap break-words" :text="inputSummaryText(row)" :keyword="row.matched_keyword" />
+                        <ModerationHighlightedText class="min-w-0 flex-1 truncate" :text="inputSummaryText(row)" :keyword="row.matched_keyword" />
                         <Icon name="eye" size="xs" class="flex-shrink-0 text-gray-300 transition-colors group-hover:text-primary-500 dark:text-gray-500" />
                       </button>
                     </td>
