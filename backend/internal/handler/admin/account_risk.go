@@ -74,3 +74,37 @@ func (h *AccountHandler) UpdateAccountRiskDetection(c *gin.Context) {
 	}
 	response.Success(c, view)
 }
+
+func (h *AccountHandler) TestAccountRiskDetection(c *gin.Context) {
+	groupID, ok := h.riskRequest(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 24<<10)
+	var req struct {
+		AccountID int64                      `json:"account_id"`
+		Revision  int64                      `json:"revision"`
+		Config    *service.AccountRiskConfig `json:"config"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Config == nil || req.AccountID <= 0 {
+		response.BadRequest(c, "请选择测试账号并填写有效配置")
+		return
+	}
+	if err := req.Config.Validate(); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.accountRisk.TestNow(c.Request.Context(), groupID, req.AccountID, req.Revision, *req.Config)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrAccountRiskBusy), errors.Is(err, service.ErrAccountRiskConflict):
+			response.Error(c, 409, err.Error())
+		case errors.Is(err, service.ErrAccountRiskTestAccount):
+			response.BadRequest(c, err.Error())
+		default:
+			response.Error(c, 503, "测试未完成，请稍后重试")
+		}
+		return
+	}
+	response.Success(c, result)
+}

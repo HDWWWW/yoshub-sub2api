@@ -7,7 +7,7 @@
       <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('accountRisk.scope') }}</p>
       <label class="block">
         <span class="input-label">{{ t('accountRisk.group') }}</span>
-        <select v-model.number="groupID" class="input" data-testid="risk-group" :disabled="saving" @change="load">
+        <select v-model.number="groupID" class="input" data-testid="risk-group" :disabled="saving || testing" @change="load">
           <option :value="0" disabled>{{ t('accountRisk.chooseGroup') }}</option>
           <option v-for="group in openAIGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
         </select>
@@ -15,7 +15,7 @@
       <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
       <p v-if="loading" class="text-sm text-gray-500">{{ t('common.loading') }}</p>
       <form v-if="draft && view" class="space-y-5" @submit.prevent="save">
-        <fieldset :disabled="saving || loading" class="space-y-5">
+        <fieldset :disabled="saving || loading || testing" class="space-y-5">
           <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
             <input v-model="draft.enabled" data-testid="risk-enabled" type="checkbox" class="rounded" />
             <span class="text-sm font-medium">{{ t('accountRisk.enabled') }}</span>
@@ -35,6 +35,14 @@
               </select>
             </label>
             <p class="text-xs text-gray-500">{{ t('accountRisk.modelMismatchHint') }}</p>
+          </section>
+          <section class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+            <label class="flex items-center gap-3"><input v-model="draft.rate_limit_429_enabled" data-testid="risk-429-enabled" type="checkbox" class="rounded" /><span class="text-sm font-semibold">{{ t('accountRisk.rateLimit429Title') }}</span></label>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label><span class="input-label">{{ t('accountRisk.rateLimit429Window') }}</span><input v-model.number="draft.rate_limit_429_window_seconds" class="input" data-testid="risk-429-window" type="number" min="1" max="3600" step="1" required /></label>
+              <label><span class="input-label">{{ t('accountRisk.rateLimit429Threshold') }}</span><input v-model.number="draft.rate_limit_429_threshold" class="input" data-testid="risk-429-threshold" type="number" min="1" max="10000" step="1" required /></label>
+            </div>
+            <p class="text-xs text-gray-500">{{ t('accountRisk.rateLimit429Hint') }}</p>
           </section>
           <section class="space-y-3">
             <h3 class="text-sm font-semibold">{{ t('accountRisk.multiTitle') }}</h3>
@@ -63,6 +71,17 @@
             </div>
             <label class="block"><span class="input-label">{{ t('accountRisk.prompt') }}</span><textarea v-model="draft.probe_prompt" class="input min-h-20" data-testid="risk-prompt" rows="3" maxlength="8192" required /></label>
             <label class="block"><span class="input-label">{{ t('accountRisk.expected') }}</span><input v-model="draft.expected_text" class="input" data-testid="risk-expected" maxlength="256" required /></label>
+          </section>
+          <section class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+            <h3 class="text-sm font-semibold">{{ t('accountRisk.manualTitle') }}</h3>
+            <p class="text-xs text-gray-500">{{ t('accountRisk.manualHint') }}</p>
+            <label class="block"><span class="input-label">{{ t('accountRisk.manualAccount') }}</span><select v-model.number="testAccountID" class="input" data-testid="risk-test-account"><option :value="0" disabled>{{ t('accountRisk.chooseAccount') }}</option><option v-for="account in view.test_accounts || []" :key="account.id" :value="account.id">#{{ account.id }} {{ account.name }} · {{ account.schedulable ? t('accountRisk.schedulingOn') : t('accountRisk.schedulingOff') }}</option></select></label>
+            <button type="button" class="btn btn-secondary" data-testid="risk-test-now" :disabled="!valid || !testAccountID || testing" @click="testNow">{{ testing ? t('accountRisk.testing') : t('accountRisk.testNow') }}</button>
+            <div v-if="testResult" role="status" data-testid="risk-test-result" class="space-y-2 text-sm">
+              <p :class="testResult.matched === true ? 'text-green-600' : 'text-amber-600'">{{ testResult.message }}</p>
+              <pre v-if="testResult.text" class="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 dark:bg-dark-700">{{ testResult.text }}</pre>
+              <p v-if="testResult.truncated" class="text-xs text-gray-500">{{ t('accountRisk.replyTruncated') }}</p>
+            </div>
           </section>
           <p class="text-xs text-gray-500">{{ t('accountRisk.stopHint') }}</p>
           <button type="submit" class="btn btn-primary" data-testid="risk-save" :disabled="!valid">{{ t('common.save') }}</button>
@@ -94,7 +113,7 @@
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">
           <h3 class="font-semibold">{{ t('accountRisk.history') }}</h3>
-          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.action" class="text-xs" data-testid="risk-event-action">{{ t(`accountRisk.action.${event.action}`) }}</p><p v-if="(event.occurrences || 0) > 1" class="text-xs">{{ t('accountRisk.occurrences', { count: event.occurrences }) }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
+          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.action" class="text-xs" data-testid="risk-event-action">{{ t(`accountRisk.action.${event.action}`) }}</p><p v-if="event.kind !== 'rate_limit_429' && (event.occurrences || 0) > 1" class="text-xs">{{ t('accountRisk.occurrences', { count: event.occurrences }) }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
         </section>
       </form>
     </div>
@@ -106,12 +125,13 @@ import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { accountRiskAPI, type AccountRiskConfig, type AccountRiskRule } from '@/api/admin/accountRisk'
+import { accountRiskAPI, type AccountRiskConfig, type AccountRiskRule, type AccountRiskManualResult } from '@/api/admin/accountRisk'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const props = defineProps<{ groups: { id: number; name: string; platform: string }[]; initialGroup?: string | number }>()
 const { t } = useI18n()
 const show = ref(false), loading = ref(false), saving = ref(false), refreshing = ref(false), saved = ref(false)
+const testing = ref(false), testAccountID = ref(0), testResult = ref<AccountRiskManualResult | null>(null)
 const groupID = ref(0), error = ref(''), now = ref(Date.now())
 const view = ref<AccountRiskRule | null>(null), draft = ref<AccountRiskConfig | null>(null)
 const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
@@ -121,7 +141,8 @@ const capacityAnomalies = computed(() => Object.values(view.value?.observation.c
   .sort((a, b) => Date.parse(a.anomaly_since!) - Date.parse(b.anomaly_since!) || a.target.account_id - b.target.account_id))
 const valid = computed(() => {
   const c = draft.value
-  return !!c && Number.isInteger(c.first_below_percent) && c.first_below_percent >= 1 && c.first_below_percent <= c.second_at_least_percent &&
+  return !!c && Number.isInteger(c.rate_limit_429_window_seconds) && c.rate_limit_429_window_seconds >= 1 && c.rate_limit_429_window_seconds <= 3600 &&
+    Number.isInteger(c.rate_limit_429_threshold) && c.rate_limit_429_threshold >= 1 && c.rate_limit_429_threshold <= 10000 && Number.isInteger(c.first_below_percent) && c.first_below_percent >= 1 && c.first_below_percent <= c.second_at_least_percent &&
     Number.isInteger(c.second_at_least_percent) && c.second_at_least_percent <= 100 &&
     Number.isInteger(c.sustain_seconds) && c.sustain_seconds >= 1 && c.sustain_seconds <= 3600 &&
     Number.isInteger(c.probe_interval_seconds) && c.probe_interval_seconds >= 10 && c.probe_interval_seconds <= 86400 &&
@@ -136,13 +157,13 @@ async function open() {
   if (!timer) timer = setInterval(() => { now.value = Date.now(); void refresh() }, 5000)
   await load()
 }
-function close() { if (saving.value) return; show.value = false; generation++; if (timer) clearInterval(timer); timer = undefined }
+function close() { if (saving.value || testing.value) return; show.value = false; generation++; if (timer) clearInterval(timer); timer = undefined }
 async function load() {
   const current = ++generation
-  view.value = null; draft.value = null; error.value = ''; saved.value = false
+  view.value = null; draft.value = null; testResult.value = null; testAccountID.value = 0; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_notify_only: data.config.probe_notify_only ?? false, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_notify_only: data.config.probe_notify_only ?? false, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { if (current === generation) loading.value = false }
 }
@@ -151,17 +172,27 @@ async function refresh() {
   const current = generation
   refreshing.value = true
   // Refresh actual state without overwriting the draft or its revision guard.
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events; view.value.webhook_status = data.webhook_status } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events; view.value.webhook_status = data.webhook_status; view.value.test_accounts = data.test_accounts } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { refreshing.value = false }
 }
 async function save() {
-  if (!valid.value || !view.value || !draft.value || loading.value || saving.value) return
+  if (!valid.value || !view.value || !draft.value || loading.value || saving.value || testing.value) return
   generation++
   saving.value = true; error.value = ''; saved.value = false
   try { view.value = await accountRiskAPI.save(groupID.value, view.value.revision, { ...draft.value }); draft.value = { ...view.value.config }; saved.value = true }
   catch (e) { error.value = extractApiErrorMessage(e, t('accountRisk.saveError')) }
   finally { saving.value = false }
+}
+async function testNow() {
+  if (!valid.value || !draft.value || !view.value || !testAccountID.value || testing.value || saving.value) return
+  const current = generation
+  testing.value = true; testResult.value = null; error.value = ''
+  try {
+    const result = await accountRiskAPI.test(groupID.value, testAccountID.value, view.value.revision, { ...draft.value })
+    if (current === generation) testResult.value = result
+  } catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.testError')) }
+  finally { testing.value = false }
 }
 onUnmounted(() => { generation++; if (timer) clearInterval(timer) })
 </script>

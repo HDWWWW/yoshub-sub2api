@@ -28,27 +28,42 @@ var ErrAccountRiskBusy = errors.New("风控检测正在更新，请稍后重试"
 var ErrAccountRiskConflict = errors.New("配置已被修改，请刷新后重试")
 
 type AccountRiskConfig struct {
-	Enabled              bool   `json:"enabled"`
-	NotifyEnabled        bool   `json:"notify_enabled"`
-	CapacityNotifyOnly   bool   `json:"capacity_notify_only"`
-	ProbeNotifyOnly      bool   `json:"probe_notify_only"`
-	ModelMismatchAction  string `json:"model_mismatch_action"`
-	FirstBelowPercent    int    `json:"first_below_percent"`
-	SecondAtLeastPercent int    `json:"second_at_least_percent"`
-	SustainSeconds       int    `json:"sustain_seconds"`
-	ProbeIntervalSeconds int    `json:"probe_interval_seconds"`
-	ProbePrompt          string `json:"probe_prompt"`
-	ExpectedText         string `json:"expected_text"`
-	Model                string `json:"model"`
-	ReasoningEffort      string `json:"reasoning_effort"`
+	RateLimit429Enabled       bool   `json:"rate_limit_429_enabled"`
+	RateLimit429WindowSeconds int    `json:"rate_limit_429_window_seconds"`
+	RateLimit429Threshold     int    `json:"rate_limit_429_threshold"`
+	Enabled                   bool   `json:"enabled"`
+	NotifyEnabled             bool   `json:"notify_enabled"`
+	CapacityNotifyOnly        bool   `json:"capacity_notify_only"`
+	ProbeNotifyOnly           bool   `json:"probe_notify_only"`
+	ModelMismatchAction       string `json:"model_mismatch_action"`
+	FirstBelowPercent         int    `json:"first_below_percent"`
+	SecondAtLeastPercent      int    `json:"second_at_least_percent"`
+	SustainSeconds            int    `json:"sustain_seconds"`
+	ProbeIntervalSeconds      int    `json:"probe_interval_seconds"`
+	ProbePrompt               string `json:"probe_prompt"`
+	ExpectedText              string `json:"expected_text"`
+	Model                     string `json:"model"`
+	ReasoningEffort           string `json:"reasoning_effort"`
 }
 
 func DefaultAccountRiskConfig() AccountRiskConfig {
-	return AccountRiskConfig{ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
+	return AccountRiskConfig{RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
 		ProbePrompt: "请只回复数字 21，不要输出其他内容。", ExpectedText: "21", Model: "gpt-6.1-sol", ReasoningEffort: "high"}
 }
 
+func (c *AccountRiskConfig) Normalize429() {
+	if c.RateLimit429WindowSeconds == 0 {
+		c.RateLimit429WindowSeconds = 60
+	}
+	if c.RateLimit429Threshold == 0 {
+		c.RateLimit429Threshold = 20
+	}
+}
+
 func (c AccountRiskConfig) Validate() error {
+	if c.RateLimit429Enabled && (c.RateLimit429WindowSeconds < 1 || c.RateLimit429Threshold < 1) || c.RateLimit429WindowSeconds < 0 || c.RateLimit429WindowSeconds > 3600 || c.RateLimit429Threshold < 0 || c.RateLimit429Threshold > 10000 {
+		return errors.New("429 时间窗口须为 1–3600 秒，次数须为 1–10000")
+	}
 	if !slices.Contains([]string{"", "off", "stop", "notify_only"}, c.ModelMismatchAction) {
 		return errors.New("模型响应不一致的处理方式无效")
 	}
@@ -177,6 +192,7 @@ type accountRiskProber interface {
 }
 
 type AccountRiskService struct {
+	counter429       AccountRisk429Counter
 	store            AccountRiskStore
 	accounts         accountRiskAccounts
 	groups           accountRiskGroups
@@ -244,7 +260,17 @@ func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountR
 	if r == nil {
 		r = &AccountRiskRule{GroupID: groupID, Config: DefaultAccountRiskConfig(), Events: []AccountRiskEvent{}, Observation: AccountRiskObservation{Mode: "disabled", Message: "检测未启用"}}
 	}
-	v := &AccountRiskView{AccountRiskRule: r, WebhookStatus: "unavailable"}
+	v := &AccountRiskView{AccountRiskRule: r, WebhookStatus: "unavailable", TestAccounts: []AccountRiskTestAccount{}}
+	accounts, err := s.accounts.ListByGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range accounts {
+		if a.Platform == PlatformOpenAI {
+			v.TestAccounts = append(v.TestAccounts, AccountRiskTestAccount{ID: a.ID, Name: a.Name, Schedulable: a.Schedulable})
+		}
+	}
+	sort.Slice(v.TestAccounts, func(i, j int) bool { return v.TestAccounts[i].ID < v.TestAccounts[j].ID })
 	if s.notifier != nil {
 		ready, err := s.notifier.RiskWebhookConfigured(ctx, groupID)
 		if err == nil {
@@ -261,6 +287,7 @@ func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision in
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	c.Normalize429()
 	g, err := s.groups.GetByID(ctx, groupID)
 	if err != nil || g == nil || g.Platform != PlatformOpenAI || (c.Enabled && g.Status != StatusActive) {
 		return errors.New("请选择有效的 OpenAI 分组")
@@ -358,7 +385,7 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 	var job *accountRiskJob
 	err := s.store.Update(ctx, func(state *AccountRiskState, _ AccountRiskStop) error {
 		if state.Pending != nil && !state.Pending.ExpiresAt.After(now) {
-			if r := state.Rules[state.Pending.GroupID]; r != nil {
+			if r := state.Rules[state.Pending.GroupID]; r != nil && state.Pending.Kind != "manual_probe" {
 				r.Observation.LastProbeResult = "检测中断，未据此停调度"
 				r.Observation.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
 				if check := r.Observation.CapacityChecks[state.Pending.AccountID]; check != nil {

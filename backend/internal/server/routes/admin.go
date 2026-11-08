@@ -371,6 +371,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/auto-fast", h.Admin.Account.GetAccountAutoFast)
 		accounts.PUT("/auto-fast", h.Admin.Account.UpdateAccountAutoFast)
 		accounts.PUT("/risk-detection", h.Admin.Account.UpdateAccountRiskDetection)
+		accounts.POST("/risk-detection/test", h.Admin.Account.TestAccountRiskDetection)
 		accounts.POST("/scheduling-metadata", h.Admin.Account.GetAccountSchedulingMetadata)
 		accounts.GET("/scheduling-preview", h.Admin.Account.GetAccountSchedulingPreview)
 		accounts.PUT("/refill", h.Admin.Account.UpdateAccountRefill)

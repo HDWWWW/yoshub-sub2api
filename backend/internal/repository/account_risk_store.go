@@ -36,6 +36,9 @@ func decodeAccountRiskState(raw string) (*service.AccountRiskState, error) {
 		return nil, errors.New("risk rule limit exceeded")
 	}
 	for id, rule := range state.Rules {
+		if rule != nil {
+			rule.Config.Normalize429()
+		}
 		if rule == nil || rule.GroupID != id || rule.Config.Validate() != nil {
 			return nil, errors.New("invalid risk rule")
 		}

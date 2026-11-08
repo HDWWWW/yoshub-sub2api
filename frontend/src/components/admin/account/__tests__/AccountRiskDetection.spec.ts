@@ -3,12 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountRiskDetection from '../AccountRiskDetection.vue'
 import type { AccountRiskRule } from '@/api/admin/accountRisk'
 
-const { get, save } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn() }))
-vi.mock('@/api/admin/accountRisk', () => ({ accountRiskAPI: { get, save } }))
+const { get, save, test } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), test: vi.fn() }))
+vi.mock('@/api/admin/accountRisk', () => ({ accountRiskAPI: { get, save, test } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const baseline: AccountRiskRule = {
-  group_id: 7, revision: 3,
-  config: { enabled: false, notify_enabled: false, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
+  group_id: 7, revision: 3, test_accounts: [{ id: 1, name: 'Stopped account', schedulable: false }],
+  config: { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
@@ -47,7 +47,7 @@ describe('account risk detection', () => {
     await w.get('[data-testid="risk-notify-enabled"]').setValue(true)
     for (const [field, value] of Object.entries({ first: 55, second: 95, duration: 17, interval: 420, model: 'gpt-6-astra', effort: 'xhigh', prompt: 'Compute three times seven', expected: '21' })) await w.get(`[data-testid="risk-${field}"]`).setValue(value)
     await w.get('form').trigger('submit'); await flushPromises()
-    expect(save).toHaveBeenCalledWith(7, 3, { enabled: true, notify_enabled: true, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
+    expect(save).toHaveBeenCalledWith(7, 3, { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: true, notify_enabled: true, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
     expect(w.get('[role="status"]').text()).toContain('saved'); w.unmount()
   })
   it.each([['first', 0], ['second', 101], ['duration', 0], ['interval', 9], ['prompt', ''], ['expected', ''], ['model', '']])('blocks invalid %s', async (field, value) => {
@@ -146,5 +146,46 @@ describe('account risk detection', () => {
     await w.get('form').trigger('submit'); await flushPromises()
     expect(save.mock.calls[1]?.[1]).toBe(4)
     w.unmount(); vi.useRealTimers()
+  })
+})
+
+
+describe('429 controls and manual testing', () => {
+  beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => structuredClone(baseline)); save.mockImplementation(async (group_id, revision, config) => ({ ...structuredClone(baseline), group_id, revision: revision + 1, config })) })
+  it('saves a custom rolling window and strict threshold', async () => {
+    const w = await open()
+    await w.get('[data-testid="risk-429-enabled"]').setValue(true)
+    await w.get('[data-testid="risk-429-window"]').setValue(120)
+    await w.get('[data-testid="risk-429-threshold"]').setValue(35)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ rate_limit_429_enabled: true, rate_limit_429_window_seconds: 120, rate_limit_429_threshold: 35 })
+    w.unmount()
+  })
+  it('tests stopped accounts using unsaved parameters and escapes text', async () => {
+    test.mockResolvedValue({ account_id: 1, completed: true, matched: false, message: 'mismatch', text: '<script>alert(1)</script>', truncated: false })
+    const w = await open()
+    await w.get('[data-testid="risk-prompt"]').setValue('my unsaved message')
+    await w.get('[data-testid="risk-test-account"]').setValue(1)
+    await w.get('[data-testid="risk-test-now"]').trigger('click'); await flushPromises()
+    expect(test).toHaveBeenCalledWith(7, 1, 3, expect.objectContaining({ probe_prompt: 'my unsaved message' }))
+    expect(save).not.toHaveBeenCalled()
+    expect(w.get('[data-testid="risk-test-result"]').text()).toContain('mismatch')
+    expect(w.get('pre').text()).toBe('<script>alert(1)</script>')
+    expect(w.find('script').exists()).toBe(false)
+    w.unmount()
+  })
+  it('prevents duplicate tests and distinguishes incomplete results', async () => {
+    let finish!: (value: unknown) => void
+    test.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const w = await open()
+    await w.get('[data-testid="risk-test-account"]').setValue(1)
+    await w.get('[data-testid="risk-test-now"]').trigger('click')
+    await w.get('[data-testid="risk-test-now"]').trigger('click')
+    expect(test).toHaveBeenCalledTimes(1)
+    finish({ account_id: 1, completed: false, matched: null, message: 'incomplete', text: '', truncated: false })
+    await flushPromises()
+    expect(w.get('[data-testid="risk-test-result"]').text()).toContain('incomplete')
+    expect(w.find('pre').exists()).toBe(false)
+    w.unmount()
   })
 })

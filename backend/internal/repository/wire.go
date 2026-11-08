@@ -67,6 +67,7 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 var ProviderSet = wire.NewSet(
 	NewAccountRefillStore,
 	NewAccountRiskStore,
+	NewAccountRisk429Counter,
 	NewAccountAutoFastStore,
 	NewUserRepository,
 	NewMCPOAuthRepository,

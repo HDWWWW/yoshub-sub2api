@@ -12,7 +12,8 @@ import (
 
 type AccountRiskView struct {
 	*AccountRiskRule
-	WebhookStatus string `json:"webhook_status"`
+	TestAccounts  []AccountRiskTestAccount `json:"test_accounts"`
+	WebhookStatus string                   `json:"webhook_status"`
 }
 
 type accountRiskNotifier interface {

@@ -1,6 +1,9 @@
 import { apiClient } from '../client'
 
 export interface AccountRiskConfig {
+  rate_limit_429_enabled: boolean
+  rate_limit_429_window_seconds: number
+  rate_limit_429_threshold: number
   enabled: boolean
   notify_enabled: boolean
   capacity_notify_only: boolean
@@ -33,6 +36,7 @@ export interface AccountRiskCapacityCheck {
 export interface AccountRiskRule {
   group_id: number
   revision: number
+  test_accounts?: { id: number; name: string; schedulable: boolean }[]
   webhook_status?: 'ready' | 'missing' | 'unavailable'
   config: AccountRiskConfig
   observation: {
@@ -52,7 +56,20 @@ export interface AccountRiskRule {
   }
   events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'stop' | 'notify_only'; occurrences?: number; notification?: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
 }
+export interface AccountRiskManualResult {
+  account_id: number
+  completed: boolean
+  matched: boolean | null
+  text: string
+  truncated: boolean
+  message: string
+  input_tokens: number
+  output_tokens: number
+}
 export const accountRiskAPI = {
+  async test(groupID: number, accountID: number, revision: number, config: AccountRiskConfig): Promise<AccountRiskManualResult> {
+    return (await apiClient.post<AccountRiskManualResult>('/admin/accounts/risk-detection/test', { account_id: accountID, revision, config }, { params: { group_id: groupID }, timeout: 100000 })).data
+  },
   async get(groupID: number): Promise<AccountRiskRule> {
     return (await apiClient.get<AccountRiskRule>('/admin/accounts/risk-detection', { params: { group_id: groupID } })).data
   },
