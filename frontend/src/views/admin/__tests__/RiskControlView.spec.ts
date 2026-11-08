@@ -360,6 +360,50 @@ describe('admin RiskControlView', () => {
     wrapper.unmount()
   })
 
+  it.each(Array.from({ length: 8 }, (_, mask) => [Boolean(mask & 1), Boolean(mask & 2), Boolean(mask & 4)]))(
+    'saves and restores independent checks api=%s keywords=%s rules=%s', async (api, keywords, rules) => {
+      getConfig.mockResolvedValue({ ...baseConfig(), blocked_keywords: ['saved keyword'], rule_filter: { ...defaultRuleFilter(), enabled: true, custom_patterns: [{ name: 'saved-rule', pattern: 'retained-rule-marker', weight: 100 }] } })
+      const wrapper = await mountAudits([])
+      await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+      await findButtonByText(wrapper, 'admin.riskControl.tabs.keywords').trigger('click')
+      const expected = { api, keywords, rules }
+      for (const [check, enabled] of Object.entries(expected)) {
+        await wrapper.get<HTMLInputElement>(`[data-test="moderation-check-${check}"]`).setValue(enabled)
+      }
+      expect(wrapper.get<HTMLTextAreaElement>('textarea').element.disabled).toBe(!keywords)
+      await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+      await flushPromises()
+      expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
+        keyword_blocking_mode: api ? (keywords ? 'keyword_and_api' : 'api_only') : (keywords ? 'keyword_only' : 'disabled'),
+        blocked_keywords: ['saved keyword'],
+        rule_filter: expect.objectContaining({ enabled: rules, custom_patterns: [expect.objectContaining({ name: 'saved-rule' })] }),
+      }))
+      await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+      await findButtonByText(wrapper, 'admin.riskControl.tabs.keywords').trigger('click')
+      for (const [check, enabled] of Object.entries(expected)) {
+        expect(wrapper.get<HTMLInputElement>(`[data-test="moderation-check-${check}"]`).element.checked).toBe(enabled)
+      }
+      if (!api && !keywords && !rules) expect(wrapper.text()).toContain('moderationChecks.none')
+      wrapper.unmount()
+    }
+  )
+
+  it('keeps the combination switch in sync across both settings tabs', async () => {
+    const wrapper = await mountAudits([])
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.keywords').trigger('click')
+    await wrapper.get<HTMLInputElement>('[data-test="moderation-check-rules"]').setValue(true)
+    await findButtonByText(wrapper, 'admin.riskControl.ruleFilter.title').trigger('click')
+    const toggle = wrapper.findAllComponents({ name: 'Toggle' }).find(item => item.attributes('data-test') === 'rule-filter-enabled')!
+    expect(toggle.props('modelValue')).toBe(true)
+    toggle.vm.$emit('update:modelValue', false)
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.keywords').trigger('click')
+    expect(wrapper.get<HTMLInputElement>('[data-test="moderation-check-rules"]').element.checked).toBe(false)
+    expect(wrapper.get<HTMLInputElement>('[data-test="moderation-check-api"]').element.checked).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('[data-test="moderation-check-keywords"]').element.checked).toBe(true)
+    wrapper.unmount()
+  })
+
   it('saves editable local rules and loads the saved configuration again', async () => {
     getConfig.mockResolvedValue({ ...baseConfig(), rule_filter: { ...defaultRuleFilter(), enabled: true, custom_patterns: [{ name: 'Editable rule', pattern: 'local-sentinel-marker', weight: 100 }] } })
     const wrapper = await mountAudits([])

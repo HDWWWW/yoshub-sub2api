@@ -76,7 +76,9 @@ export interface ModerationEngineMeta {
   rules_version: string
   skipped_images: number
 }
-export type KeywordBlockingMode = 'keyword_only' | 'keyword_and_api' | 'api_only'
+// API and keyword switches share this backward-compatible storage field.
+// Combination rules are controlled independently by rule_filter.enabled.
+export type KeywordBlockingMode = 'keyword_only' | 'keyword_and_api' | 'api_only' | 'disabled'
 export type ContentModerationModelFilterType = 'all' | 'include' | 'exclude'
 
 export interface ContentModerationModelFilter {

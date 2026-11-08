@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -44,4 +45,37 @@ func TestRuleFilterHandlerRoundTrip(t *testing.T) {
 	w = call("PUT", "/config", `{"record_non_hits":true}`)
 	require.Equal(t, 200, w.Code)
 	require.Contains(t, settings.value, `"rule_filter":{"enabled":true`)
+}
+
+func TestContentModerationChecksHandlerRoundTrip(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	settings := &moderationEngineSettings{value: `{"api_keys":["retained-secret"],"blocked_keywords":["retained-keyword"]}`}
+	h := NewContentModerationHandler(service.NewContentModerationService(settings, nil, nil, nil, nil, nil, nil, nil))
+	r := gin.New()
+	r.PUT("/config", h.UpdateConfig)
+	r.GET("/config", h.GetConfig)
+	for _, mode := range []string{"disabled", "api_only", "keyword_only", "keyword_and_api"} {
+		for _, enabled := range []bool{true, false} {
+			cfg := service.DefaultContentModerationRuleFilter()
+			cfg.Enabled = enabled
+			body, err := json.Marshal(map[string]any{"keyword_blocking_mode": mode, "rule_filter": cfg})
+			require.NoError(t, err)
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("PUT", "/config", strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(w, req)
+			require.Equal(t, 200, w.Code, w.Body.String())
+			w = httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("GET", "/config", nil))
+			var result struct {
+				Data service.ContentModerationConfigView `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+			require.Equal(t, mode, result.Data.KeywordBlockingMode)
+			require.Equal(t, enabled, result.Data.RuleFilter.Enabled)
+			require.NotContains(t, w.Body.String(), "retained-secret")
+			require.Contains(t, settings.value, "retained-secret")
+			require.Equal(t, []string{"retained-keyword"}, result.Data.BlockedKeywords)
+		}
+	}
 }

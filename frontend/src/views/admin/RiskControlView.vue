@@ -1028,34 +1028,33 @@
               </div>
             </div>
 
-            <div class="space-y-2">
-              <label class="input-label">{{ t('admin.riskControl.keywordBlockingMode') }}</label>
+            <fieldset class="space-y-2">
+              <legend class="input-label">{{ t('admin.riskControl.moderationChecks.title') }}</legend>
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <button
-                  v-for="option in keywordBlockingModeOptions"
+                <label
+                  v-for="option in moderationCheckOptions"
                   :key="option.value"
-                  type="button"
-                  class="rounded-lg border p-3 text-left transition-colors"
-                  :class="configForm.keyword_blocking_mode === option.value
+                  class="cursor-pointer rounded-lg border p-3 text-left transition-colors focus-within:ring-2 focus-within:ring-primary-500"
+                  :class="option.enabled
                     ? 'border-primary-300 bg-primary-50 text-primary-900 shadow-sm dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-100'
                     : 'border-gray-100 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-700/60'"
-                  @click="configForm.keyword_blocking_mode = option.value"
                 >
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-sm font-semibold">{{ option.label }}</span>
-                    <span
-                      class="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border"
-                      :class="configForm.keyword_blocking_mode === option.value
-                        ? 'border-primary-500 bg-primary-500 text-white'
-                        : 'border-gray-300 text-transparent dark:border-dark-500'"
-                    >
-                      <Icon name="check" size="xs" :stroke-width="2" />
-                    </span>
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 flex-shrink-0 accent-primary-500"
+                      :checked="option.enabled"
+                      :aria-label="option.label"
+                      :data-test="`moderation-check-${option.value}`"
+                      @change="setModerationCheck(option.value, ($event.target as HTMLInputElement).checked)"
+                    />
                   </div>
                   <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ option.description }}</p>
-                </button>
+                </label>
               </div>
-            </div>
+              <p class="text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.moderationChecks.hint') }}</p>
+            </fieldset>
 
             <div>
               <div class="mb-2 flex items-center justify-between">
@@ -1068,7 +1067,7 @@
                 v-model="configForm.blocked_keywords_text"
                 class="input min-h-52 resize-y font-mono text-sm"
                 :placeholder="t('admin.riskControl.blockedKeywordsPlaceholder')"
-                :disabled="configForm.keyword_blocking_mode === 'api_only'"
+                :disabled="!keywordBlockingEnabled"
               ></textarea>
               <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.riskControl.blockedKeywordsLimit', { max: blockedKeywordMax }) }}
@@ -1470,23 +1469,41 @@ const modeOptions = computed<SelectOption[]>(() => [
   { value: 'off', label: t('admin.riskControl.modeOff') },
 ])
 
-const keywordBlockingModeOptions = computed<Array<{ value: KeywordBlockingMode; label: string; description: string }>>(() => [
+type ModerationCheck = 'api' | 'keywords' | 'rules'
+const apiModerationEnabled = computed(() => ['keyword_and_api', 'api_only'].includes(configForm.keyword_blocking_mode))
+const keywordBlockingEnabled = computed(() => ['keyword_and_api', 'keyword_only'].includes(configForm.keyword_blocking_mode))
+const moderationCheckOptions = computed<Array<{ value: ModerationCheck; enabled: boolean; label: string; description: string }>>(() => [
   {
-    value: 'keyword_and_api',
-    label: t('admin.riskControl.keywordModeKeywordAndApi'),
-    description: t('admin.riskControl.keywordModeKeywordAndApiDesc'),
+    value: 'api',
+    enabled: apiModerationEnabled.value,
+    label: t('admin.riskControl.moderationChecks.api'),
+    description: t('admin.riskControl.moderationChecks.apiDesc'),
   },
   {
-    value: 'keyword_only',
-    label: t('admin.riskControl.keywordModeKeywordOnly'),
-    description: t('admin.riskControl.keywordModeKeywordOnlyDesc'),
+    value: 'keywords',
+    enabled: keywordBlockingEnabled.value,
+    label: t('admin.riskControl.moderationChecks.keywords'),
+    description: t('admin.riskControl.moderationChecks.keywordsDesc'),
   },
   {
-    value: 'api_only',
-    label: t('admin.riskControl.keywordModeApiOnly'),
-    description: t('admin.riskControl.keywordModeApiOnlyDesc'),
+    value: 'rules',
+    enabled: configForm.rule_filter.enabled,
+    label: t('admin.riskControl.moderationChecks.rules'),
+    description: t('admin.riskControl.moderationChecks.rulesDesc'),
   },
 ])
+
+function setModerationCheck(check: ModerationCheck, enabled: boolean) {
+  if (check === 'rules') {
+    configForm.rule_filter.enabled = enabled
+    return
+  }
+  const api = check === 'api' ? enabled : apiModerationEnabled.value
+  const keywords = check === 'keywords' ? enabled : keywordBlockingEnabled.value
+  configForm.keyword_blocking_mode = api
+    ? (keywords ? 'keyword_and_api' : 'api_only')
+    : (keywords ? 'keyword_only' : 'disabled')
+}
 
 const modelFilterOptions = computed<Array<{ value: ContentModerationModelFilterType; label: string; description: string }>>(() => [
   {
@@ -1531,32 +1548,31 @@ const keywordNoticeTones = {
 }
 
 const keywordNotice = computed<KeywordNoticeView>(() => {
-  const strategy = configForm.keyword_blocking_mode
-  if (strategy === 'api_only') {
+  if (!configForm.enabled || configForm.mode === 'off') {
     return {
-      ...keywordNoticeTones.info,
-      title: t('admin.riskControl.keywordModeApiOnlyNotice'),
-      description: t('admin.riskControl.keywordModeApiOnlyDesc'),
+      ...keywordNoticeTones.warning,
+      title: t('admin.riskControl.moderationChecks.paused'),
+      description: t('admin.riskControl.moderationChecks.pausedDesc'),
+    }
+  }
+  if (!moderationCheckOptions.value.some(option => option.enabled)) {
+    return {
+      ...keywordNoticeTones.warning,
+      title: t('admin.riskControl.moderationChecks.none'),
+      description: t('admin.riskControl.moderationChecks.noneDesc'),
     }
   }
   if (configForm.mode !== 'pre_block') {
     return {
       ...keywordNoticeTones.warning,
-      title: t('admin.riskControl.blockedKeywordsModeWarning', { mode: modeLabel(configForm.mode) }),
-      description: t('admin.riskControl.blockedKeywordsDescription'),
-    }
-  }
-  if (strategy === 'keyword_only') {
-    return {
-      ...keywordNoticeTones.info,
-      title: t('admin.riskControl.keywordModeKeywordOnlyNotice'),
-      description: t('admin.riskControl.keywordModeKeywordOnlyDesc'),
+      title: t('admin.riskControl.moderationChecks.observe'),
+      description: t('admin.riskControl.moderationChecks.observeDesc'),
     }
   }
   return {
     ...keywordNoticeTones.info,
     title: t('admin.riskControl.blockedKeywordsPreBlockHint'),
-    description: t('admin.riskControl.blockedKeywordsDescription'),
+    description: t('admin.riskControl.moderationChecks.order'),
   }
 })
 
@@ -2502,7 +2518,7 @@ function parseApiKeys(value: string): string[] {
 }
 
 function normalizeKeywordBlockingMode(value: unknown): KeywordBlockingMode {
-  if (value === 'keyword_only' || value === 'api_only' || value === 'keyword_and_api') {
+  if (value === 'keyword_only' || value === 'api_only' || value === 'keyword_and_api' || value === 'disabled') {
     return value
   }
   return 'keyword_and_api'

@@ -35,7 +35,7 @@ func DefaultContentModerationRuleFilter() *ContentModerationRuleFilter {
 
 func cloneRuleFilter(in *ContentModerationRuleFilter) *ContentModerationRuleFilter {
 	if in == nil {
-		return DefaultContentModerationRuleFilter()
+		return nil
 	}
 	raw, _ := json.Marshal(in)
 	var out ContentModerationRuleFilter

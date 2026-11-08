@@ -47,6 +47,9 @@ const (
 	ContentModerationKeywordModeKeywordOnly   = "keyword_only"
 	ContentModerationKeywordModeKeywordAndAPI = "keyword_and_api"
 	ContentModerationKeywordModeAPIOnly       = "api_only"
+	// Disabled leaves both the keyword list and moderation API off. The local
+	// rule filter has its own independent Enabled switch.
+	ContentModerationKeywordModeDisabled = "disabled"
 
 	ContentModerationModelFilterAll     = "all"
 	ContentModerationModelFilterInclude = "include"
@@ -990,7 +993,9 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"configured_models", cfg.ModelFilter.Models)
 		return allow, nil
 	}
-	if cfg.RuleFilter != nil && cfg.RuleFilter.Enabled {
+	// An explicit rule_filter configuration owns the combination switch.
+	// Turning it off must not reactivate the retired combination engine.
+	if cfg.RuleFilter != nil {
 		if ruleDecision := s.checkRuleFilter(ctx, input, runtimeSnapshot); ruleDecision != nil {
 			return ruleDecision, nil
 		}
@@ -998,7 +1003,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return ruleDecision, nil
 	}
 	if cfg.Mode == ContentModerationModePreBlock {
-		if cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {
+		if cfg.keywordBlockingEnabled() && len(cfg.BlockedKeywords) > 0 {
 			keywordText := extractContentModerationKeywordText(input.Protocol, input.Body)
 			if keyword, hit := runtimeSnapshot.matchBlockedKeyword(keywordText); hit {
 				metricAction := ContentModerationActionKeywordBlock
@@ -1030,16 +1035,14 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 				}, nil
 			}
 		}
-		if cfg.KeywordBlockingMode == ContentModerationKeywordModeKeywordOnly {
+	}
+	// Apply the API switch in both pre-block and observe modes, before hash
+	// checks or enqueueing work that would call the moderation API.
+	if !cfg.apiModerationEnabled() {
+		if cfg.Mode == ContentModerationModePreBlock {
 			s.recordPreBlockSyncMetric(0, ContentModerationActionAllow)
-			slog.Info("content_moderation.skip_api_keyword_only",
-				"user_id", input.UserID,
-				"api_key_id", input.APIKeyID,
-				"group_id", contentModerationLogGroupID(input.GroupID),
-				"endpoint", input.Endpoint,
-				"protocol", input.Protocol)
-			return allow, nil
 		}
+		return allow, nil
 	}
 	content := ExtractContentModerationInput(input.Protocol, input.Body)
 	if content.IsEmpty() {
@@ -1336,6 +1339,11 @@ func (s *ContentModerationService) worker(id int) {
 			cancel()
 			continue
 		}
+		// A worker may have been waiting for a task while an administrator
+		// changed the switches. Use the latest published snapshot after dequeue.
+		if latest := s.runtimeSnapshot.Load(); latest != nil {
+			runtimeSnapshot, cfg = latest, latest.config
+		}
 		func() {
 			defer cancel()
 			defer func() {
@@ -1360,7 +1368,7 @@ func (s *ContentModerationService) worker(id int) {
 				s.asyncProcessed.Add(1)
 				return
 			}
-			if !cfg.Enabled || cfg.Mode == ContentModerationModeOff || len(cfg.apiKeys()) == 0 {
+			if !runtimeSnapshot.riskControlEnabled || !cfg.Enabled || cfg.Mode == ContentModerationModeOff || !cfg.apiModerationEnabled() || len(cfg.apiKeys()) == 0 {
 				return
 			}
 			if !cfg.includesGroup(task.input.GroupID) {
@@ -1629,11 +1637,10 @@ func parseContentModerationConfig(raw string) (*ContentModerationConfig, error) 
 		return nil, err
 	}
 	cfg.CombinationRules = rules
-	if cfg.RuleFilter == nil {
-		cfg.RuleFilter = DefaultContentModerationRuleFilter()
-	}
-	if err := validateRuleFilter(cfg.RuleFilter); err != nil {
-		return nil, err
+	if cfg.RuleFilter != nil {
+		if err := validateRuleFilter(cfg.RuleFilter); err != nil {
+			return nil, err
+		}
 	}
 	if !validModerationEngine(cfg.Engine) {
 		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_ENGINE", "内容审计引擎无效")
@@ -3007,6 +3014,8 @@ func normalizeBlockedKeywords(in []string) []string {
 
 func normalizeKeywordBlockingMode(mode string) string {
 	switch strings.TrimSpace(mode) {
+	case ContentModerationKeywordModeDisabled:
+		return ContentModerationKeywordModeDisabled
 	case ContentModerationKeywordModeKeywordOnly:
 		return ContentModerationKeywordModeKeywordOnly
 	case ContentModerationKeywordModeAPIOnly:
@@ -3016,6 +3025,14 @@ func normalizeKeywordBlockingMode(mode string) string {
 	default:
 		return ContentModerationKeywordModeKeywordAndAPI
 	}
+}
+
+func (cfg *ContentModerationConfig) keywordBlockingEnabled() bool {
+	return cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && cfg.KeywordBlockingMode != ContentModerationKeywordModeDisabled
+}
+
+func (cfg *ContentModerationConfig) apiModerationEnabled() bool {
+	return cfg.KeywordBlockingMode != ContentModerationKeywordModeKeywordOnly && cfg.KeywordBlockingMode != ContentModerationKeywordModeDisabled
 }
 
 func normalizeContentModerationModelFilter(filter ContentModerationModelFilter) ContentModerationModelFilter {
