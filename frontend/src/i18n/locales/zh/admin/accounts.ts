@@ -22,7 +22,7 @@ export default {
       refreshInterval10s: '10 秒',
       refreshInterval15s: '15 秒',
       refreshInterval30s: '30 秒',
-      autoRefreshCountdown: '自动刷新：{seconds}s',
+      autoRefreshCountdown: '自动刷新：{seconds} 秒',
       listPendingSyncHint: '列表存在待同步变更，点击同步可补齐最新数据。',
       listPendingSyncAction: '立即同步',
       syncFromCrs: '从 CRS 同步',

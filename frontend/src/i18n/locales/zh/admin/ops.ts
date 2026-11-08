@@ -68,7 +68,7 @@ export default {
       noData: '暂无数据',
       loadingText: '加载中...',
       ready: '就绪',
-      autoRefreshRemaining: '剩余 {seconds}s',
+      autoRefreshRemaining: '剩余 {seconds} 秒',
       systemLogs: {
         title: '系统日志',
         description: '优先显示最新日志，可按条件筛选、搜索和清理。',
@@ -798,7 +798,7 @@ export default {
         displayAlertEventsHint: '控制运维监控仪表盘中告警事件卡片是否显示，默认开启。',
         displayOpenAITokenStats: '展示 Token 请求统计',
         displayOpenAITokenStatsHint: '按模型统计所有平台的 Token 请求，支持平台和分组筛选，默认关闭。',
-        autoRefreshCountdown: '自动刷新：{seconds}s',
+        autoRefreshCountdown: '自动刷新：{seconds} 秒',
         validation: {
           title: '请先修正以下问题',
           retentionDaysRange: '保留天数必须在 0-365 天之间（0 = 每次清理时清空所有）',
@@ -833,7 +833,7 @@ export default {
         reconnecting: '实时重连中',
         offline: '实时离线',
         closed: '实时已关闭',
-        reconnectIn: '重连 {seconds}s'
+        reconnectIn: '重连 {seconds} 秒'
       },
       queryMode: {
         auto: 'Auto（自动）',

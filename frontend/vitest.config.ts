@@ -1,13 +1,15 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
 import vue from '@vitejs/plugin-vue'
+import { i18nAlias, i18nDefines } from './i18n.build'
 
 export default defineConfig({
+  define: i18nDefines,
   plugins: [vue()],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
-      'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js'
+      'vue-i18n': i18nAlias
     }
   },
   test: {

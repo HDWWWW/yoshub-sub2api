@@ -38,6 +38,8 @@ frontend/dist/
 *.local
 *.tsbuildinfo
 vite.config.d.ts
+frontend/i18n.build.d.ts
+frontend/i18n.build.js
 vite.config.js.timestamp-*
 
 # 日志
