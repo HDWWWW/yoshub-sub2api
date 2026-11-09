@@ -43,8 +43,9 @@ func (p *fenduduTestProvider) Cycle(context.Context, string, string) (*fenduduCy
 
 type fenduduTestAdmin struct {
 	*refillTestAccounts
-	input *CreateAccountInput
-	adopt int
+	input  *CreateAccountInput
+	adopt  int
+	closed int
 }
 
 func (a *fenduduTestAdmin) AdoptRefillAccount(_ context.Context, id int64, in *CreateAccountInput) (*Account, error) {
@@ -56,11 +57,29 @@ func (a *fenduduTestAdmin) AdoptRefillAccount(_ context.Context, id int64, in *C
 	v.ID = id
 	for i := range a.accounts {
 		if a.accounts[i].ID == id {
+			v.CreatedAt = a.accounts[i].CreatedAt
 			a.accounts[i] = *v
 			return &a.accounts[i], nil
 		}
 	}
 	return nil, ErrAccountNotFound
+}
+
+func (a *fenduduTestAdmin) RecordExpiredRefillAccount(_ context.Context, id int64, in *CreateAccountInput) error {
+	for i := range a.accounts {
+		v := &a.accounts[i]
+		if v.ID == id {
+			a.closed++
+			old := v.ExpiresAt
+			ApplyAccountExpiryExtra(v, in.Extra)
+			if old != nil && old.Before(*v.ExpiresAt) {
+				ApplyAccountExpiryWrite(context.Background(), v, old.Unix())
+			}
+			v.Status, v.Schedulable = "inactive", false
+			return nil
+		}
+	}
+	return ErrAccountNotFound
 }
 
 func fenduduHarness(t *testing.T) (*AccountRefillService, *refillTestStore, *fenduduTestProvider, *fenduduTestAdmin) {
@@ -128,7 +147,8 @@ func TestFenduduManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 	require.Equal(t, []int64{2, 3}, a.GroupIDs)
 	require.Equal(t, "fendudu_api", a.Extra["import_source"])
 	require.Equal(t, map[string]string{"a": "b"}, a.Credentials["model_mapping"])
-	require.Equal(t, lease.Add(30*time.Minute).Unix(), a.ExpiresAt.Unix())
+	require.Equal(t, a.CreatedAt.Add(130*time.Minute).Unix(), a.ExpiresAt.Unix())
+	require.Equal(t, a.CreatedAt.Add(100*time.Minute).Unix(), a.Extra[AccountSourceExpiryExtraKey])
 	require.True(t, a.Schedulable)
 	require.Equal(t, StatusActive, a.Status)
 	state, err := decodeAccountRefillState(store.raw)
@@ -241,6 +261,11 @@ func TestFenduduHTTPContract(t *testing.T) {
 		case "/cycle-detail":
 			require.Equal(t, "rvc_fixture", r.URL.Query().Get("id"))
 			_, _ = w.Write([]byte(`{"success":true,"cycle":{"id":"rvc_fixture","product":"pro20x","sub2api_account_id":"344"}}`))
+		case "/cycles":
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "200", r.URL.Query().Get("limit"))
+			require.Equal(t, "cursor/+fixture", r.URL.Query().Get("cursor"))
+			_, _ = w.Write([]byte(`{"success":true,"items":[{"id":"rvc_fixture"}],"has_more":false,"next_cursor":""}`))
 		default:
 			t.Errorf("unexpected endpoint %s", r.URL.Path)
 		}
@@ -261,6 +286,9 @@ func TestFenduduHTTPContract(t *testing.T) {
 	cycle, err := p.Cycle(context.Background(), "rvak_fixture", "rvc_fixture")
 	require.NoError(t, err)
 	require.Equal(t, "344", cycle.AccountID)
+	page, err := p.Cycles(context.Background(), "rvak_fixture", "cursor/+fixture")
+	require.NoError(t, err)
+	require.Equal(t, "rvc_fixture", page.Items[0].ID)
 }
 
 func TestFenduduHTTPBusinessFailureAndRedirect(t *testing.T) {
@@ -435,7 +463,7 @@ func TestFenduduPauseResumesSavedImportAndLeaseSync(t *testing.T) {
 	require.True(t, accounts.accounts[0].Schedulable)
 	p.cycle.RevokeAt = lease.Add(time.Hour).Format(time.RFC3339)
 	require.NoError(t, s.Check(ctx))
-	require.Equal(t, lease.Add(time.Hour).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
+	require.Equal(t, accounts.accounts[0].CreatedAt.Add(100*time.Minute).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
 	require.Equal(t, 1, p.orders)
 }
 

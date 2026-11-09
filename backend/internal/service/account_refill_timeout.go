@@ -145,6 +145,30 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 	}
 	now := time.Now()
 	if state.TimeoutNoticeContent != "" && !state.TimeoutNoticeRetryAt.IsZero() {
+		ids := strings.Split(state.TimeoutNoticeKey, ":")
+		unresolved := map[string]bool{}
+		for _, job := range state.Jobs {
+			if slices.Contains(ids, job.ID) && refillJobTimedOut(state.Config, job, now) {
+				unresolved[job.ID] = true
+			}
+		}
+		if len(unresolved) != len(ids) {
+			// A queued message must not report completed jobs as still blocked.
+			// Rebuild only its remaining unresolved entries from current state.
+			for i := range state.Jobs {
+				if unresolved[state.Jobs[i].ID] {
+					state.Jobs[i].TimeoutNotificationAt = nil
+				}
+			}
+			state.TimeoutNoticeKey, state.TimeoutNoticeContent = "", ""
+			state.TimeoutNoticeRetryAt = time.Time{}
+			notice = captureRefillTimeoutNotice(state, now)
+			if err := persist(); err != nil {
+				return err
+			}
+		}
+	}
+	if state.TimeoutNoticeContent != "" && !state.TimeoutNoticeRetryAt.IsZero() {
 		// Keep an unsent alert even when other orders reach their deadlines.
 		if now.Before(state.TimeoutNoticeRetryAt) {
 			return nil
@@ -164,6 +188,19 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 	if notice == nil {
 		return nil
 	}
+	var current []AccountRefillJob
+	for _, captured := range notice.jobs {
+		for _, job := range state.Jobs {
+			if job.ID == captured.ID && refillJobTimedOut(state.Config, job, now) {
+				current = append(current, job)
+				break
+			}
+		}
+	}
+	if len(current) == 0 {
+		return nil
+	}
+	notice.jobs = current
 	result := "尚未创建新订单：" + state.Message
 	for _, job := range state.Jobs {
 		if job.DailyBatchID != "" && !job.CreatedAt.Before(started) {

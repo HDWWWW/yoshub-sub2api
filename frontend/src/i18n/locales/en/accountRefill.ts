@@ -7,7 +7,7 @@ export default {
   "fenduduName": "Fendudu",
   "fenduduToken": "Fendudu API key",
   "fenduduConnection": "Fendudu push connection ID",
-  "fenduduConnectionHint": "Use the ID from My push connections, or leave blank for the default. It must point to this SUB2 instance. Saved settings are applied after the account arrives.",
+  "fenduduConnectionHint": "Use the ID from My push connections, or leave blank for the default. It must point to this SUB2 instance. The lease ends 100 minutes after first import; saved cutoff and retention rules then apply.",
   "fenduduSave": "Save connection and refresh quotas",
   "fenduduAvailable": "Available orders for this plan",
   "fenduduUnit": "orders",

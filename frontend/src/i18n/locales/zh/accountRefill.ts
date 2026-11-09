@@ -7,7 +7,7 @@ export default {
   "fenduduName": "粉嘟嘟",
   "fenduduToken": "粉嘟嘟 API 对接码",
   "fenduduConnection": "粉嘟嘟推送连接 ID",
-  "fenduduConnectionHint": "填写粉嘟嘟「我的推送连接」中的 ID；留空使用默认连接。连接必须指向当前 SUB2，推号后按本次保存的设置应用。",
+  "fenduduConnectionHint": "填写粉嘟嘟「我的推送连接」中的 ID；留空使用默认连接。连接必须指向当前 SUB2。号商回收时间按首次导入后 100 分钟计算，再应用已保存的截止时间和保留规则。",
   "fenduduSave": "保存连接并刷新次数",
   "fenduduAvailable": "当前套餐可用次数",
   "fenduduUnit": "次",

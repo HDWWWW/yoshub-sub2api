@@ -144,3 +144,40 @@ func TestFenduduAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
 		})
 	}
 }
+
+func TestFenduduExpiredReceiptPreservesEarlierExpiryAndCredentials(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	earlier := time.Now().Add(-time.Hour).Truncate(time.Second)
+	proxyID := int64(8)
+	repo := &refillAdoptTestRepository{t: t, account: Account{
+		ID: 344, Name: "keep-name", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, ProxyID: &proxyID, ExpiresAt: &earlier,
+		Credentials: map[string]any{"email": "fixture@example.test", "access_token": "fresh-access"},
+		Extra:       map[string]any{"existing": "preserved"},
+	}}
+	proxy := &scopedSelectionProxyRepo{id: 9}
+	admin := &adminServiceImpl{accountRepo: repo, proxyRepo: proxy, groupRepo: &scopedAdminWriteTestGroups{}, entClient: dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(int64(344)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SELECT id FROM accounts`).WithArgs(int64(344)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SELECT account_id FROM account_groups`).WithArgs(int64(344)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	lease := earlier.Add(7 * time.Minute).Unix()
+	deadline, extra := ImportedAccountExpiryWithGrace(&lease, map[string]any{"refill_job_id": "local-job", "refill_supplier_id": "rvc_fixture", "import_source": "fendudu_api"}, 10)
+	input := &CreateAccountInput{Credentials: map[string]any{"email": "fixture@example.test"}, Extra: extra, ExpiresAt: deadline, ProxyMode: "random"}
+	require.NoError(t, admin.RecordExpiredRefillAccount(context.Background(), 344, input))
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.Equal(t, 1, repo.commits)
+	require.Equal(t, "local-job", repo.account.Extra["refill_job_id"])
+	require.Equal(t, lease, repo.account.Extra[AccountSourceExpiryExtraKey])
+	require.Equal(t, "preserved", repo.account.Extra["existing"])
+	require.Equal(t, earlier.Unix(), repo.account.ExpiresAt.Unix())
+	require.Equal(t, "fresh-access", repo.account.Credentials["access_token"])
+	require.Equal(t, "keep-name", repo.account.Name)
+	require.Equal(t, "inactive", repo.account.Status)
+	require.False(t, repo.account.Schedulable)
+	require.EqualValues(t, 8, *repo.account.ProxyID)
+	require.Zero(t, proxy.calls)
+}

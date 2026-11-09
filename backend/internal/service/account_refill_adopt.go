@@ -7,6 +7,19 @@ import (
 	"strings"
 )
 
+func validateRefillAdoption(account *Account, input *CreateAccountInput) error {
+	email, _ := account.Credentials["email"].(string)
+	expected, _ := input.Credentials["email"].(string)
+	marker, _ := input.Extra["refill_job_id"].(string)
+	if !account.IsOpenAIOAuth() || account.IsShadow() || marker == "" || expected == "" || !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(expected)) {
+		return errors.New("推送账号身份不匹配")
+	}
+	if old, _ := account.Extra["refill_job_id"].(string); old != "" && old != marker {
+		return errors.New("账号已关联其他补号任务")
+	}
+	return nil
+}
+
 // AdoptRefillAccount applies the common import input to a supplier-pushed
 // account. The existing account, exclusive proxy allocation, expiry metadata
 // and recovery marker commit together; the caller activates it afterwards.
@@ -16,16 +29,10 @@ func (s *adminServiceImpl) AdoptRefillAccount(ctx context.Context, id int64, inp
 		if err != nil {
 			return nil, err
 		}
-		email, _ := account.Credentials["email"].(string)
-		expected, _ := input.Credentials["email"].(string)
-		marker, _ := input.Extra["refill_job_id"].(string)
-		if !account.IsOpenAIOAuth() || account.IsShadow() || marker == "" || expected == "" || !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(expected)) {
-			return nil, errors.New("推送账号身份不匹配")
+		if err := validateRefillAdoption(account, input); err != nil {
+			return nil, err
 		}
 		if old, _ := account.Extra["refill_job_id"].(string); old != "" {
-			if old != marker {
-				return nil, errors.New("账号已关联其他补号任务")
-			}
 			return account, nil
 		}
 		extra := maps.Clone(account.Extra)
@@ -77,4 +84,41 @@ func (s *adminServiceImpl) AdoptRefillAccount(ctx context.Context, id int64, inp
 		}
 		return s.accountRepo.GetByID(txctx, id)
 	})
+}
+
+// A lost receipt can be recovered after the supplier has already closed the
+// lease. Record its identity and original deadline atomically without allocating
+// another proxy, overwriting credentials, or reviving the expired account.
+func (s *adminServiceImpl) RecordExpiredRefillAccount(ctx context.Context, id int64, input *CreateAccountInput) error {
+	_, err := s.scopedAdminTransaction(ctx, id, false, func(txctx context.Context) (*Account, error) {
+		account, err := s.accountRepo.GetByID(txctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateRefillAdoption(account, input); err != nil {
+			return nil, err
+		}
+		var earlierDeadline *int64
+		if account.ExpiresAt != nil && input.ExpiresAt != nil && account.ExpiresAt.Unix() < *input.ExpiresAt {
+			v := account.ExpiresAt.Unix()
+			earlierDeadline = &v
+		}
+		updates := map[string]any{}
+		for key, value := range input.Extra {
+			if IsAccountExpiryExtra(key) || key == "import_source" || key == "refill_job_id" || key == "refill_supplier_id" || key == "refill_plan" {
+				updates[key] = value
+			}
+		}
+		if err := s.accountRepo.UpdateExtra(txctx, id, updates); err != nil {
+			return nil, err
+		}
+		if _, err := s.UpdateAccount(txctx, id, &UpdateAccountInput{Status: "inactive", ExpiresAt: earlierDeadline}); err != nil {
+			return nil, err
+		}
+		if err := s.accountRepo.SetSchedulable(txctx, id, false); err != nil {
+			return nil, err
+		}
+		return s.accountRepo.GetByID(txctx, id)
+	})
+	return err
 }

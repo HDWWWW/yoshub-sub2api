@@ -8,6 +8,12 @@ import (
 
 // Both download deliveries and supplier-pushed accounts use the same saved policy.
 func (s *AccountRefillService) refillDeliveryInput(ctx context.Context, j *AccountRefillJob, delivery *RefillDelivery) (*CreateAccountInput, error) {
+	return s.buildRefillDeliveryInput(ctx, j, delivery, false)
+}
+
+// allowExpired is used only to record a confirmed, already ended pushed order.
+// Such input must never pass through the normal account activation path.
+func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *AccountRefillJob, delivery *RefillDelivery, allowExpired bool) (*CreateAccountInput, error) {
 	if err := validateRefillDelivery(delivery); err != nil {
 		return nil, err
 	}
@@ -28,13 +34,13 @@ func (s *AccountRefillService) refillDeliveryInput(ctx context.Context, j *Accou
 	if j.ExpiresAt != nil && (deadline == nil || *j.ExpiresAt < *deadline) {
 		deadline = j.ExpiresAt
 	}
-	if deadline == nil || *deadline <= time.Now().Unix() {
+	if deadline == nil || *deadline <= 0 || *deadline > 253402214399 || (!allowExpired && *deadline <= time.Now().Unix()) {
 		return nil, errors.New("交付缺少有效租期")
 	}
 	if j.DeliveryConfig.ExpiryMode == "fixed" && j.DeliveryConfig.FixedExpiresAt != nil && *j.DeliveryConfig.FixedExpiresAt < *deadline {
 		deadline = j.DeliveryConfig.FixedExpiresAt
 	}
-	if *deadline <= time.Now().Unix() {
+	if !allowExpired && *deadline <= time.Now().Unix() {
 		return nil, errors.New("指定截止时间已过期")
 	}
 	extra := map[string]any{"same_account_retry_count": j.DeliveryConfig.sameAccountRetryCount(), "refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
@@ -83,7 +89,7 @@ func (s *AccountRefillService) refillDeliveryInput(ctx context.Context, j *Accou
 	}
 	autoPause := j.DeliveryConfig.AutoPauseOnExpired
 	var proxyID *int64
-	if j.DeliveryConfig.ProxyMode != "random" && j.DeliveryConfig.ProxyMode != "ovh_ipv6" {
+	if !allowExpired && j.DeliveryConfig.ProxyMode != "random" && j.DeliveryConfig.ProxyMode != "ovh_ipv6" {
 		var err error
 		proxyID, err = s.selectProxy(ctx, j.DeliveryConfig)
 		if err != nil {

@@ -54,7 +54,7 @@ func (s *AccountRefillService) syncSourceLeases(ctx context.Context, token strin
 					err = validateFenduduCycle(cycle, *j)
 				}
 				if err == nil {
-					remote = &RefillProviderJob{ID: cycle.ID, ExpiresAt: cycle.expiresAt()}
+					remote = &RefillProviderJob{ID: cycle.ID, ExpiresAt: fenduduSourceExpiry(&matches[0])}
 				}
 			}
 		} else if token != "" {

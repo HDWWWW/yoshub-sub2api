@@ -40,6 +40,7 @@ type fenduduCycle struct {
 	AccountID    string `json:"sub2api_account_id"`
 	Email        string `json:"account_email"`
 	CreatedAt    string `json:"created_at"`
+	PushedAt     string `json:"pushed_at"`
 	RevokeAt     string `json:"revoke_at"`
 	DeadlineAt   string `json:"deadline_at"`
 }
@@ -61,6 +62,18 @@ type fenduduProvider interface {
 	Products(context.Context, string) ([]FenduduProduct, error)
 	Order(context.Context, string, AccountRefillJob) (*fenduduOrder, error)
 	Cycle(context.Context, string, string) (*fenduduCycle, error)
+}
+
+type fenduduCyclePage struct {
+	Success    bool           `json:"success"`
+	Items      []fenduduCycle `json:"items"`
+	HasMore    bool           `json:"has_more"`
+	NextCursor string         `json:"next_cursor"`
+}
+
+// Recovery only reads existing orders; it never retries the purchasing POST.
+type fenduduCycleReader interface {
+	Cycles(context.Context, string, string) (*fenduduCyclePage, error)
 }
 
 type httpFenduduProvider struct {
@@ -167,4 +180,15 @@ func (p *httpFenduduProvider) Cycle(ctx context.Context, token, id string) (*fen
 		return nil, errors.New("粉嘟嘟未返回匹配的原订单")
 	}
 	return &out.Cycle, nil
+}
+
+func (p *httpFenduduProvider) Cycles(ctx context.Context, token, cursor string) (*fenduduCyclePage, error) {
+	var out fenduduCyclePage
+	if err := p.request(ctx, token, http.MethodGet, "/cycles?limit=200&cursor="+url.QueryEscape(cursor), nil, &out); err != nil {
+		return nil, err
+	}
+	if !out.Success || out.Items == nil || len(out.Items) > 200 || (out.HasMore && (out.NextCursor == "" || out.NextCursor == cursor)) {
+		return nil, errors.New("粉嘟嘟订单列表响应不完整，继续保留原任务")
+	}
+	return &out, nil
 }
