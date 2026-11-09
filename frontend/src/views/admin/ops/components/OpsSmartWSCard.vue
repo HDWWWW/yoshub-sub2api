@@ -1,7 +1,23 @@
 <template>
   <section class="rounded-xl border border-gray-200 bg-white p-5 dark:border-dark-600 dark:bg-dark-800" aria-labelledby="smart-ws-title">
-    <h3 id="smart-ws-title" class="font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.ops.smartWS.title') }}</h3>
-    <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.smartWS.scope') }}</p>
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h3 id="smart-ws-title" class="font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.ops.smartWS.title') }}</h3>
+        <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.smartWS.scope') }}</p>
+      </div>
+      <button
+        type="button"
+        class="flex shrink-0 items-center gap-1.5 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600"
+        :disabled="loading"
+        :aria-busy="loading"
+        @click="loadMetrics"
+      >
+        <svg class="h-4 w-4" :class="{ 'animate-spin': loading }" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        {{ t('common.refresh') }}
+      </button>
+    </div>
     <p v-if="error" class="mt-3 text-sm text-red-600" role="alert">{{ t('admin.ops.smartWS.loadFailed') }}</p>
     <p v-else-if="!data" class="mt-3 text-sm text-gray-500">{{ t('admin.ops.loadingText') }}</p>
     <template v-if="data">
@@ -48,6 +64,7 @@ const props = defineProps<{ refreshToken: number }>()
 const { t } = useI18n()
 const data = ref<SmartWSMetrics | null>(null)
 const error = ref(false)
+const loading = ref(false)
 let controller: AbortController | undefined
 const latency = (ms: number, count: number) => count ? `${ms.toLocaleString()} ms` : '—'
 const poolItems = computed(() => {
@@ -77,16 +94,20 @@ const items = computed(() => {
     ...['attempted', 'succeeded', 'background_accepted', 'failed', 'incomplete', 'canceled', 'handshakes', 'handshake_failed', 'reused', 'safe_http_fallback', 'queue_rejected', 'capacity_rejected', 'upstream_terminal_error', 'transport_error', 'dispatch_uncertain', 'handshake_rate_limited', 'handshake_401', 'handshake_403', 'handshake_rejection', 'rejection_bypass', 'continuation_unavailable', 'handshake_unsupported', 'queued', 'queue_wait_ms'].map(key => ({ key, value: c[key] ?? 0 }))
   ]
 })
-watch(() => props.refreshToken, async () => {
+async function loadMetrics() {
   controller?.abort()
   const current = new AbortController()
   controller = current
+  loading.value = true
   try {
     const next = await getSmartWSMetrics({ signal: current.signal })
     if (!current.signal.aborted) { data.value = next; error.value = false }
   } catch {
     if (!current.signal.aborted) error.value = true
+  } finally {
+    if (controller === current) loading.value = false
   }
-}, { immediate: true })
+}
+watch(() => props.refreshToken, loadMetrics, { immediate: true })
 onBeforeUnmount(() => controller?.abort())
 </script>
