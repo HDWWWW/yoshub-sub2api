@@ -45,6 +45,27 @@ async function openProgress() {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('saves workday mode per task and restores calendar status on reopen', async () => {
+  let w = await open()
+  await w.get('[data-testid="refill-daily-add"]').trigger('click')
+  await w.get('[data-testid="refill-daily-enabled"]').setValue(true)
+  await w.get('[data-testid="refill-daily-day-mode"]').setValue('china_workday')
+  expect(w.get('[data-testid="refill-workday-calendar"]').text()).toContain('accountRefill.calendarPending')
+  await w.get('[data-testid="refill-daily-add"]').trigger('click')
+  await w.get('form').trigger('submit'); await flushPromises()
+  const saved = structuredClone(save.mock.calls[0]![0])
+  expect(saved.daily_schedules[0].day_mode).toBe('china_workday')
+  expect(saved.daily_schedules[1].day_mode).toBe('')
+  get.mockResolvedValue({ ...response(2), config: saved, workday_calendar: { years: [2026, 2027], synced_at: '2026-11-09T04:00:00Z', checked_at: '2026-11-09T04:00:00Z', message: '日历同步成功' } })
+  w.unmount(); w = await open()
+  expect(w.findAll<HTMLSelectElement>('[data-testid="refill-daily-day-mode"]')[0]!.element.value).toBe('china_workday')
+  expect(w.findAll<HTMLSelectElement>('[data-testid="refill-daily-day-mode"]')[1]!.element.value).toBe('')
+  expect(w.get('[data-testid="refill-workday-calendar"]').text()).toContain('2026、2027')
+  expect(w.get('[data-testid="refill-workday-calendar"]').text()).toContain('日历同步成功')
+  expect(w.get('[data-testid="refill-save"]').attributes('disabled')).toBeDefined()
+  expect(manual).not.toHaveBeenCalled(); expect(check).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it('saves an independent daily clock and quantity while automation is off, then reopens', async () => {
   let w = await open()
   await w.get('[data-testid="refill-daily-add"]').trigger('click')
@@ -56,7 +77,7 @@ describe('AccountRefillModal', () => {
   await vi.advanceTimersByTimeAsync(15000); await flushPromises()
   expect(w.get<HTMLInputElement>('[data-testid="refill-daily-time"]').element.value).toBe('21:35')
   await w.get('form').trigger('submit'); await flushPromises()
-  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false, daily_schedules: [{ id: expect.any(String), enabled: true, time: '21:35', quantity: 4, plan: 'pro5x' }] }), '', 1, '')
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false, daily_schedules: [{ id: expect.any(String), enabled: true, time: '21:35', quantity: 4, plan: 'pro5x', day_mode: '' }] }), '', 1, '')
   const taskID = save.mock.calls[0]![0].daily_schedules[0].id
   get.mockResolvedValue({ ...response(2), config: structuredClone(save.mock.calls[0]![0]), daily_schedule_statuses: { [taskID]: { next_at: '2026-11-09T13:35:00Z', message: '等待每日定时补号' } } })
   w.unmount(); w = await open()
@@ -90,8 +111,8 @@ describe('AccountRefillModal', () => {
   await rows[1]!.get('[data-testid="refill-daily-quantity"]').setValue(3)
   await w.get('form').trigger('submit'); await flushPromises()
   expect(save.mock.calls[0]![0].daily_schedules).toEqual([
-   { id: 'legacy', enabled: true, time: '06:30', quantity: 2, plan: '' },
-   { id: expect.any(String), enabled: true, time: '18:45', quantity: 3, plan: 'pro20x' }
+   { id: 'legacy', enabled: true, time: '06:30', quantity: 2, plan: '', day_mode: '' },
+   { id: expect.any(String), enabled: true, time: '18:45', quantity: 3, plan: 'pro20x', day_mode: '' }
   ])
   expect(save.mock.calls[0]![0].daily_schedule).toBeUndefined()
   await w.findAll('[data-testid="refill-daily-remove"]')[0]!.trigger('click')

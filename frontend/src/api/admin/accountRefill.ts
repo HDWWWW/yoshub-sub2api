@@ -21,8 +21,8 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
-  daily_schedule?: { enabled: boolean; time: string; quantity: number; plan?: string }
-  daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string }[] | null
+  daily_schedule?: { enabled: boolean; time: string; quantity: number; plan?: string; day_mode?: '' | 'china_workday' }
+  daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string; day_mode?: '' | 'china_workday' }[] | null
 	rotation_enabled: boolean
 	rotation: { plan: string; count: number }[]
   notifications: { refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
@@ -105,6 +105,7 @@ export interface RefillCapacityObservation {
   no_capacity?: boolean
 }
 export interface RefillView {
+  workday_calendar?: { years: number[]; synced_at: string; checked_at: string; message: string }
   fendudu?: { token_configured: boolean; connection_id: string; products: { product: string; label: string; available_now: number; blocked_reason: string; expired: boolean }[] | null; checked_at: string | null }
   daily_schedule_status?: { next_at: string; last_at: string; last_quantity: number; last_batch_id?: string; retry_at: string; message: string }
   daily_schedule_statuses?: Record<string, { next_at: string; last_at: string; last_quantity: number; message: string }>

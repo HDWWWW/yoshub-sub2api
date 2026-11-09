@@ -9,6 +9,23 @@ import (
 	"testing"
 )
 
+func TestDecodeAccountRefillConfigPreservesWorkdaysByTaskID(t *testing.T) {
+	current := service.DefaultAccountRefillConfig()
+	current.DailySchedules = []service.AccountRefillDailySchedule{
+		{ID: "first", DayMode: "china_workday", Time: "08:00", Quantity: 1},
+		{ID: "second", Time: "09:00", Quantity: 2},
+	}
+	updated, err := decodeAccountRefillConfig(current, json.RawMessage(`{"daily_schedules":[{"id":"second","time":"10:00","quantity":3},{"id":"first","time":"08:00","quantity":1},{"id":"new","time":"11:00","quantity":1}]}`))
+	require.NoError(t, err)
+	require.Empty(t, updated.DailySchedules[0].DayMode)
+	require.Equal(t, "china_workday", updated.DailySchedules[1].DayMode)
+	require.Empty(t, updated.DailySchedules[2].DayMode)
+	require.Equal(t, "first", current.DailySchedules[0].ID, "decoding must not mutate the previous configuration")
+	updated, err = decodeAccountRefillConfig(current, json.RawMessage(`{"daily_schedules":[{"id":"first","day_mode":"","time":"08:00","quantity":1}]}`))
+	require.NoError(t, err)
+	require.Empty(t, updated.DailySchedules[0].DayMode, "explicit every-day selection still clears the restriction")
+}
+
 func TestRefillConfigPlanQuotaReplacementAndLegacyClient(t *testing.T) {
 	current := service.DefaultAccountRefillConfig()
 	current.PlanQuotaThresholds = map[string]service.AccountRefillQuotaThreshold{

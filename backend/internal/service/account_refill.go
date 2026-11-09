@@ -292,6 +292,7 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
+	WorkdayCalendar       *refillWorkdayCalendar                      `json:"workday_calendar,omitempty"`
 	Fendudu               fenduduRefillState                          `json:"fendudu"`
 	DailyScheduleStatus   AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`
 	DailyScheduleStatuses map[string]AccountRefillDailyScheduleStatus `json:"daily_schedule_statuses,omitempty"`

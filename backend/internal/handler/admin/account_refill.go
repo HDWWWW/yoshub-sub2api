@@ -135,7 +135,33 @@ func decodeAccountRefillConfig(current service.AccountRefillConfig, raw json.Raw
 	if _, present := fields["plan_import_concurrency"]; present {
 		current.PlanImportConcurrency = nil
 	}
+	// Match omitted day modes by stable task ID, not slice position. Older
+	// clients must not erase workday restrictions when saving/reordering tasks.
+	previousModes := map[string]string{}
+	for _, schedule := range current.DailySchedules {
+		previousModes[schedule.ID] = schedule.DayMode
+	}
+	if current.DailySchedules == nil && current.DailySchedule != nil {
+		previousModes["legacy"] = current.DailySchedule.DayMode
+	}
+	var schedules []struct {
+		ID      string  `json:"id"`
+		DayMode *string `json:"day_mode"`
+	}
+	if rows, present := fields["daily_schedules"]; present {
+		if err := json.Unmarshal(rows, &schedules); err != nil {
+			return current, err
+		}
+		current.DailySchedules = nil
+	}
 	err := json.Unmarshal(raw, &current)
+	if err == nil {
+		for i, schedule := range schedules {
+			if schedule.DayMode == nil {
+				current.DailySchedules[i].DayMode = previousModes[schedule.ID]
+			}
+		}
+	}
 	return current, err
 }
 

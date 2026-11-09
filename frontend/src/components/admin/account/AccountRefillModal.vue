@@ -52,6 +52,8 @@
               <div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">{{ t('accountRefill.dailyTasks') }}</span><button type="button" class="btn btn-secondary" :disabled="busy || (form.daily_schedules?.length || 0) >= 20" data-testid="refill-daily-add" @click="addDailySchedule">{{ t('accountRefill.dailyAdd') }}</button></div>
               <div v-for="(daily, index) in form.daily_schedules" :key="daily.id" class="space-y-3 border-t border-gray-100 pt-3 dark:border-dark-700" data-testid="refill-daily-row">
                 <div class="flex items-center justify-between gap-3"><label class="flex items-center gap-2 text-sm"><input v-model="daily.enabled" type="checkbox" data-testid="refill-daily-enabled" />{{ t('accountRefill.dailyTask', { number: index + 1 }) }}</label><button type="button" class="text-sm text-red-600" :disabled="busy" data-testid="refill-daily-remove" @click="form.daily_schedules?.splice(index, 1)">{{ t('common.delete') }}</button></div>
+                <label class="block"><span class="input-label">{{ t('accountRefill.dailyDayMode') }}</span><select v-model="daily.day_mode" class="input" data-testid="refill-daily-day-mode"><option value="">{{ t('accountRefill.dailyEveryDay') }}</option><option value="china_workday">{{ t('accountRefill.dailyChinaWorkday') }}</option></select></label>
+                <p v-if="daily.day_mode === 'china_workday'" class="input-hint">{{ t('accountRefill.dailyWorkdayHint') }}</p>
                 <div class="grid gap-3 sm:grid-cols-3">
                   <label><span class="input-label">{{ t('accountRefill.dailyTime') }}</span><input v-model="daily.time" type="time" required class="input" data-testid="refill-daily-time" /></label>
                   <label><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="daily.plan" class="input" data-testid="refill-daily-plan"><option value="">{{ t('accountRefill.dailyFollowPlan') }}</option><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
@@ -60,6 +62,13 @@
                 <div v-if="dailyStatus(daily.id)" class="space-y-1 text-xs text-gray-500" data-testid="refill-daily-status"><p>{{ t('accountRefill.dailyNext') }}: {{ date(dailyStatus(daily.id)?.next_at) }}</p><p>{{ dailyStatus(daily.id)?.message }}</p></div>
               </div>
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.dailyHint') }}</p>
+              <div v-if="form.daily_schedules?.some(daily => daily.day_mode === 'china_workday')" class="space-y-1 text-xs text-gray-500 dark:text-gray-400" data-testid="refill-workday-calendar">
+                <template v-if="view.workday_calendar">
+                  <p>{{ t('accountRefill.calendarYears') }}: {{ view.workday_calendar.years.join('、') || '—' }} · {{ t('accountRefill.calendarSyncedAt') }}: {{ date(view.workday_calendar.synced_at) }}</p>
+                  <p>{{ view.workday_calendar.message }}</p>
+                </template>
+                <p v-else>{{ t('accountRefill.calendarPending') }}</p>
+              </div>
             </div>
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.mode') }}</span><select v-model="form.mode" class="input"><option v-for="mode in ['capacity', 'fixed', 'interval']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
@@ -419,6 +428,7 @@ function accept(data: RefillView, reset: boolean) {
   data.config.timeout_retry_notify ??= true
   data.config.timeout_retry_minutes ??= 10
   data.config.daily_schedules ??= data.config.daily_schedule ? [{ id: 'legacy', plan: '', ...data.config.daily_schedule }] : []
+  for (const daily of data.config.daily_schedules) daily.day_mode ??= ''
   delete data.config.daily_schedule
   data.config.rotation ??= []
   data.config.rotation_enabled ??= false
@@ -478,7 +488,7 @@ async function refresh(reset: boolean) {
 function addDailySchedule() {
   if (!form.value || busy.value || (form.value.daily_schedules?.length || 0) >= 20) return
   form.value.daily_schedules ??= []
-  form.value.daily_schedules.push({ id: crypto.randomUUID(), enabled: false, time: '08:00', quantity: 1, plan: form.value.plan })
+  form.value.daily_schedules.push({ id: crypto.randomUUID(), enabled: false, time: '08:00', quantity: 1, plan: form.value.plan, day_mode: '' })
 }
 function dailyStatus(id: string) {
   return view.value?.daily_schedule_statuses?.[id] || (id === 'legacy' ? view.value?.daily_schedule_status : undefined)

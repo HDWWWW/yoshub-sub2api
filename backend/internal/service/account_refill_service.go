@@ -36,26 +36,28 @@ type accountRefillLoads interface {
 }
 
 type AccountRefillService struct {
-	rulesMu      sync.Mutex
-	ruleRoot     *AccountRefillService
-	ruleGroupID  int64
-	ruleServices map[int64]*AccountRefillService
-	notifier     refillNotifier
-	capacityMu   sync.Mutex
-	capacity     refillCapacityTracker
-	store        AccountRefillStore
-	encryptor    SecretEncryptor
-	accounts     accountRefillAccounts
-	admin        accountRefillAdmin
-	groups       accountRefillGroups
-	loads        accountRefillLoads
-	proxies      accountRefillProxies
-	provider     RefillProvider
-	fendudu      fenduduProvider
-	stop         chan struct{}
-	cancel       context.CancelFunc
-	once         sync.Once
-	wg           sync.WaitGroup
+	calendarWake  chan struct{}
+	calendarFetch func(context.Context, int) (refillWorkdayYear, error)
+	rulesMu       sync.Mutex
+	ruleRoot      *AccountRefillService
+	ruleGroupID   int64
+	ruleServices  map[int64]*AccountRefillService
+	notifier      refillNotifier
+	capacityMu    sync.Mutex
+	capacity      refillCapacityTracker
+	store         AccountRefillStore
+	encryptor     SecretEncryptor
+	accounts      accountRefillAccounts
+	admin         accountRefillAdmin
+	groups        accountRefillGroups
+	loads         accountRefillLoads
+	proxies       accountRefillProxies
+	provider      RefillProvider
+	fendudu       fenduduProvider
+	stop          chan struct{}
+	cancel        context.CancelFunc
+	once          sync.Once
+	wg            sync.WaitGroup
 }
 
 func NewAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor, accounts AccountRepository, admin AdminService, groups GroupRepository, loads *ConcurrencyService, proxies ProxyRepository) *AccountRefillService {
@@ -64,6 +66,12 @@ func NewAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor
 func (s *AccountRefillService) Start() {
 	ctx, stop := context.WithCancel(context.Background())
 	s.cancel = stop
+	s.calendarWake = make(chan struct{}, 1)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runRefillCalendarSync(ctx)
+	}()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -114,6 +122,7 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
+	WorkdayCalendar           *AccountRefillCalendarView                  `json:"workday_calendar,omitempty"`
 	DailyScheduleStatuses     map[string]AccountRefillDailyScheduleStatus `json:"daily_schedule_statuses,omitempty"`
 	Fendudu                   FenduduRefillView                           `json:"fendudu"`
 	DailyScheduleStatus       AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`
@@ -179,7 +188,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	return &AccountRefillView{DailyScheduleStatuses: state.DailyScheduleStatuses, Fendudu: state.Fendudu.view(), DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
-		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state),
+		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state), WorkdayCalendar: state.WorkdayCalendar.view(),
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),
 		ForecastObservation: s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
 }
@@ -201,6 +210,7 @@ func (s *AccountRefillService) validateGroups(ctx context.Context, c AccountRefi
 	return nil
 }
 func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillConfig, token string, revision int64, webhooks ...string) error {
+	defer s.wakeRefillCalendar()
 	if s.ruleGroupID > 0 && c.GroupID != s.ruleGroupID {
 		return errors.New("规则与当前分组不匹配，请重新选择分组")
 	}

@@ -13,6 +13,7 @@ import (
 
 type AccountRefillDailySchedule struct {
 	ID       string `json:"id,omitempty"`
+	DayMode  string `json:"day_mode,omitempty"`
 	Plan     string `json:"plan,omitempty"`
 	Enabled  bool   `json:"enabled"`
 	Time     string `json:"time"`
@@ -60,6 +61,9 @@ func validateRefillDailySchedule(c *AccountRefillDailySchedule) error {
 	if c == nil {
 		return nil
 	}
+	if c.DayMode != "" && c.DayMode != refillChinaWorkday {
+		return errors.New("定时补号执行日期须为每天或中国法定工作日")
+	}
 	clock, err := time.Parse("15:04", c.Time)
 	if err != nil || clock.Format("15:04") != c.Time || c.Quantity < 1 || c.Quantity > 100 || !slices.Contains([]string{"", "pro5x", "pro20x"}, c.Plan) {
 		return errors.New("每日定时补号须设置 HH:mm 时间和 1–100 个账号")
@@ -73,10 +77,27 @@ func refillDailyTime(c *AccountRefillDailySchedule, now time.Time) time.Time {
 	return time.Date(local.Year(), local.Month(), local.Day(), clock.Hour(), clock.Minute(), 0, 0, refillTimezone)
 }
 
-func nextRefillDailyTime(c *AccountRefillDailySchedule, now, last time.Time) time.Time {
+func nextRefillDailyTime(c *AccountRefillDailySchedule, now, last time.Time, calendars ...*refillWorkdayCalendar) time.Time {
 	next := refillDailyTime(c, now)
 	if !next.After(now) || (!last.IsZero() && next.In(refillTimezone).Format("2006-01-02") <= last.In(refillTimezone).Format("2006-01-02")) {
 		next = next.AddDate(0, 0, 1)
+	}
+	if c.DayMode == refillChinaWorkday {
+		var calendar *refillWorkdayCalendar
+		if len(calendars) > 0 {
+			calendar = calendars[0]
+		}
+		for range 370 {
+			workday, known := calendar.isWorkday(next)
+			if !known {
+				return time.Time{}
+			}
+			if workday {
+				return next
+			}
+			next = next.AddDate(0, 0, 1)
+		}
+		return time.Time{}
 	}
 	return next
 }
@@ -95,11 +116,11 @@ func configureRefillDailySchedule(state *accountRefillState, c AccountRefillConf
 		status.Message = "每日定时补号已关闭"
 		return
 	}
-	if !refillDailyScheduleEnabled(state.Config) || state.Config.DailySchedule.Time != c.DailySchedule.Time || status.NextAt.IsZero() {
-		status.NextAt = nextRefillDailyTime(c.DailySchedule, now, status.LastAt)
+	if !refillDailyScheduleEnabled(state.Config) || state.Config.DailySchedule.Time != c.DailySchedule.Time || state.Config.DailySchedule.DayMode != c.DailySchedule.DayMode || status.NextAt.IsZero() {
+		status.NextAt = nextRefillDailyTime(c.DailySchedule, now, status.LastAt, state.WorkdayCalendar)
 	}
 	status.RetryAt = time.Time{}
-	status.Message = "等待每日定时补号"
+	status.Message = refillDailyWaitingMessage(c.DailySchedule, status.NextAt)
 }
 
 func configureRefillDailySchedules(state *accountRefillState, c AccountRefillConfig, now time.Time) {
@@ -123,11 +144,11 @@ func configureRefillDailySchedules(state *accountRefillState, c AccountRefillCon
 			status.NextAt, status.RetryAt = time.Time{}, time.Time{}
 			status.Message = "此定时补号任务已关闭"
 		} else {
-			if !old.Enabled || old.Time != row.Time || status.NextAt.IsZero() {
-				status.NextAt = nextRefillDailyTime(&row, now, status.LastAt)
+			if !old.Enabled || old.Time != row.Time || old.DayMode != row.DayMode || status.NextAt.IsZero() {
+				status.NextAt = nextRefillDailyTime(&row, now, status.LastAt, state.WorkdayCalendar)
 			}
 			status.RetryAt = time.Time{}
-			status.Message = "等待每日定时补号"
+			status.Message = refillDailyWaitingMessage(&row, status.NextAt)
 		}
 		state.DailyScheduleStatuses[row.ID] = status
 	}
@@ -180,8 +201,28 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	if err := c.Validate(); err != nil {
 		return blocked(err.Error())
 	}
+	if schedule.DayMode == refillChinaWorkday {
+		workday, known := state.WorkdayCalendar.isWorkday(now)
+		if !known {
+			status.NextAt = time.Time{}
+			return blocked("缺少本年度中国法定工作日日历，等待自动同步")
+		}
+		if !workday {
+			next := nextRefillDailyTime(schedule, now, status.LastAt, state.WorkdayCalendar)
+			message := "今日为休息日，跳过定时补号"
+			if next.IsZero() {
+				message += "；等待后续年度日历"
+			}
+			if status.NextAt.Equal(next) && status.RetryAt.IsZero() && status.Message == message {
+				return false, nil
+			}
+			status.NextAt, status.RetryAt, status.Message = next, time.Time{}, message
+			return false, persist()
+		}
+	}
 	if status.NextAt.IsZero() {
-		status.NextAt = nextRefillDailyTime(schedule, now, status.LastAt)
+		status.NextAt = nextRefillDailyTime(schedule, now, status.LastAt, state.WorkdayCalendar)
+		status.Message = refillDailyWaitingMessage(schedule, status.NextAt)
 		return false, persist()
 	}
 	if now.Before(status.NextAt) {
@@ -191,10 +232,17 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	// recent elapsed daily batch; do not accumulate all missed days.
 	due := refillDailyTime(schedule, now)
 	if due.After(now) {
+		// Workday tasks only catch up today's batch, never a previous day.
+		if schedule.DayMode == refillChinaWorkday {
+			status.NextAt = nextRefillDailyTime(schedule, now, status.LastAt, state.WorkdayCalendar)
+			status.RetryAt = time.Time{}
+			status.Message = refillDailyWaitingMessage(schedule, status.NextAt)
+			return false, persist()
+		}
 		due = due.AddDate(0, 0, -1)
 	}
 	if !status.LastAt.IsZero() && !due.After(status.LastAt) {
-		status.NextAt = nextRefillDailyTime(schedule, now, status.LastAt)
+		status.NextAt = nextRefillDailyTime(schedule, now, status.LastAt, state.WorkdayCalendar)
 		return false, persist()
 	}
 	if now.Before(state.ProviderRetryAt) {
@@ -280,7 +328,7 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	state.Usage[day] = usage
 	state.LastSubmitAt = now
 	status.LastAt, status.LastQuantity, status.LastBatchID = due, len(jobs), batchID
-	status.NextAt, status.RetryAt = nextRefillDailyTime(schedule, now, due), time.Time{}
+	status.NextAt, status.RetryAt = nextRefillDailyTime(schedule, now, due, state.WorkdayCalendar), time.Time{}
 	status.Message = fmt.Sprintf("每日定时补号已创建 %d 个任务，按已保存的推送设置处理", len(jobs))
 	state.Message = status.Message
 	return true, persist()
