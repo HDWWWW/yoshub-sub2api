@@ -101,7 +101,7 @@ func TestRefillDelayedNotificationThresholdAndStates(t *testing.T) {
 		{name: "failed", status: "failed", age: 6 * time.Minute},
 		{name: "expired", status: "delivery_expired", age: 6 * time.Minute},
 		{name: "dismissed", status: "dismissed", age: 6 * time.Minute},
-		{name: "manual", status: "processing", age: 6 * time.Minute, manual: true},
+		{name: "manual", status: "processing", age: 6 * time.Minute, manual: true, want: true},
 		{name: "off", status: "processing", age: 6 * time.Minute, disabled: true},
 		{name: "no webhook", status: "processing", age: 6 * time.Minute, noWebhook: true},
 		{name: "save failed", status: "processing", age: 6 * time.Minute, saveFailed: true},

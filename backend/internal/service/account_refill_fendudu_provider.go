@@ -47,13 +47,11 @@ type fenduduCycle struct {
 
 func (c fenduduCycle) expiresAt() *int64 {
 	// revoke_at is the supplier's real lease. deadline_at is a fallback only.
-	value := c.RevokeAt
-	if value == "" {
-		value = c.DeadlineAt
-	}
-	if at, err := time.Parse(time.RFC3339Nano, value); err == nil && at.Unix() > 0 {
-		v := at.Unix()
-		return &v
+	for _, value := range []string{c.RevokeAt, c.DeadlineAt} {
+		if at, err := time.Parse(time.RFC3339Nano, value); err == nil && at.Unix() > 0 && at.Unix() <= 253402214399 {
+			v := at.Unix()
+			return &v
+		}
 	}
 	return nil
 }

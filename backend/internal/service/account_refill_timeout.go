@@ -219,7 +219,7 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 	ids, details := make([]string, 0, len(notice.jobs)), make([]string, 0, len(notice.jobs))
 	for _, job := range notice.jobs {
 		ids = append(ids, job.ID)
-		details = append(details, fmt.Sprintf("原号商任务：%s；状态：%s；已等待：%s", refillSupplierTaskID(job), job.Status, now.Sub(job.CreatedAt).Round(time.Second)))
+		details = append(details, fmt.Sprintf("方式：%s；套餐：%s；原号商任务：%s；状态：%s；已等待：%s", refillNotificationMode(&job), job.Plan, refillSupplierTaskID(job), job.Status, now.Sub(job.CreatedAt).Round(time.Second)))
 		for i := range state.Jobs {
 			if state.Jobs[i].ID == job.ID {
 				state.Jobs[i].TimeoutNotificationAt = &now

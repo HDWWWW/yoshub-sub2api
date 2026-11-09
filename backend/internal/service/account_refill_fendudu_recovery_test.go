@@ -88,7 +88,7 @@ func TestFenduduLostReceiptRecoversWithoutAnotherPurchase(t *testing.T) {
 					time.Sleep(10 * time.Minute)
 					provider.cycle.RevokeAt = time.Now().Add(8 * time.Hour).Format(time.RFC3339)
 					require.NoError(t, s.Check(ctx))
-					require.Equal(t, created.Add(100*time.Minute).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
+					require.Equal(t, time.Now().Add(8*time.Hour).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey], "a subsequently available supplier expiry replaces the fallback")
 				}
 			})
 		})

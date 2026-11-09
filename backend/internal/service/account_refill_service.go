@@ -462,6 +462,13 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		var timeoutNotice *refillTimeoutNotice
 		defer func() {
 			if !preview && runErr == nil {
+				// Check delays after advancing deliveries, including early returns
+				// for paused automation or provider backoff. A completed import in
+				// this tick must not first announce that it is still missing.
+				if err := s.notifyRefillDelayed(ctx, &state, time.Now(), persist); err != nil {
+					runErr = err
+					return
+				}
 				runErr = s.notifyRefillTimeoutRetry(ctx, &state, timeoutNotice, now, persist)
 			}
 		}()
@@ -472,11 +479,6 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				}
 			}
 			if err := s.checkDisabledRefillNotification(ctx, &state, now, persist); err != nil {
-				return err
-			}
-			// Local delivery deadlines must still alert while provider requests are
-			// backed off or automatic purchasing/monitoring is paused.
-			if err := s.notifyRefillDelayed(ctx, &state, now, persist); err != nil {
 				return err
 			}
 			// Evaluate locally so supplier backoff cannot hide a due timeout.

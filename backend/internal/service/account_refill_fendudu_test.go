@@ -147,8 +147,8 @@ func TestFenduduManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 	require.Equal(t, []int64{2, 3}, a.GroupIDs)
 	require.Equal(t, "fendudu_api", a.Extra["import_source"])
 	require.Equal(t, map[string]string{"a": "b"}, a.Credentials["model_mapping"])
-	require.Equal(t, a.CreatedAt.Add(130*time.Minute).Unix(), a.ExpiresAt.Unix())
-	require.Equal(t, a.CreatedAt.Add(100*time.Minute).Unix(), a.Extra[AccountSourceExpiryExtraKey])
+	require.Equal(t, lease.Add(30*time.Minute).Unix(), a.ExpiresAt.Unix())
+	require.Equal(t, lease.Unix(), a.Extra[AccountSourceExpiryExtraKey])
 	require.True(t, a.Schedulable)
 	require.Equal(t, StatusActive, a.Status)
 	state, err := decodeAccountRefillState(store.raw)
@@ -463,7 +463,7 @@ func TestFenduduPauseResumesSavedImportAndLeaseSync(t *testing.T) {
 	require.True(t, accounts.accounts[0].Schedulable)
 	p.cycle.RevokeAt = lease.Add(time.Hour).Format(time.RFC3339)
 	require.NoError(t, s.Check(ctx))
-	require.Equal(t, accounts.accounts[0].CreatedAt.Add(100*time.Minute).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
+	require.Equal(t, lease.Add(time.Hour).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
 	require.Equal(t, 1, p.orders)
 }
 

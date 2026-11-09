@@ -22,7 +22,7 @@ func (s *AccountRefillService) syncSourceLeases(ctx context.Context, token strin
 	}
 	var eligible []int
 	for i, j := range state.Jobs {
-		if j.Status == "imported" && j.AccountID > 0 && j.SupplierID != "" {
+		if (j.Status == "imported" || (j.Provider == refillProviderFendudu && j.Status == "delivery_expired")) && j.AccountID > 0 && j.SupplierID != "" {
 			eligible = append(eligible, i)
 		}
 	}
@@ -54,7 +54,7 @@ func (s *AccountRefillService) syncSourceLeases(ctx context.Context, token strin
 					err = validateFenduduCycle(cycle, *j)
 				}
 				if err == nil {
-					remote = &RefillProviderJob{ID: cycle.ID, ExpiresAt: fenduduSourceExpiry(&matches[0])}
+					remote = &RefillProviderJob{ID: cycle.ID, ExpiresAt: fenduduSourceExpiry(cycle, &matches[0])}
 				}
 			}
 		} else if token != "" {
@@ -78,6 +78,9 @@ func (s *AccountRefillService) syncSourceLeases(ctx context.Context, token strin
 			continue
 		}
 		updates := map[string]any{AccountSourceExpiryExtraKey: *remote.ExpiresAt, AccountSourceExpiryOriginExtraKey: "supplier_api", AccountSourceExpiryCheckedExtraKey: now.UTC().Format(time.RFC3339)}
+		if j.Provider == refillProviderFendudu {
+			updates = fenduduLeaseUpdates(j, &matches[0], *remote.ExpiresAt, now)
+		}
 		if err := writer.UpdateExtra(ctx, j.AccountID, updates); err != nil {
 			failed++
 			continue

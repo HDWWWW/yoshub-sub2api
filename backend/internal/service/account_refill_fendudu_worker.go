@@ -189,14 +189,38 @@ func (s *AccountRefillService) fenduduPushedAccount(ctx context.Context, j *Acco
 
 const fenduduLeaseDuration = 100 * time.Minute
 
-// Use the immutable local creation time, never the polling/recovery time or a
-// changing supplier timestamp. Repeated imports and lease syncs cannot extend it.
-func fenduduSourceExpiry(a *Account) *int64 {
+// Prefer the supplier's lease. Only a missing lease falls back to the original
+// import time; polling, recovery and restarts never renew that fallback.
+func fenduduSourceExpiry(cycle *fenduduCycle, a *Account) *int64 {
+	if cycle != nil {
+		if expires := cycle.expiresAt(); expires != nil {
+			return expires
+		}
+	}
 	if a == nil || a.CreatedAt.IsZero() {
 		return nil
 	}
+	if a.Extra["import_source"] == "fendudu_api" {
+		if saved := expiryTimestamp(a.Extra[AccountSourceExpiryExtraKey]); saved > 0 {
+			return &saved
+		}
+	}
 	expires := a.CreatedAt.Add(fenduduLeaseDuration).Unix()
 	return &expires
+}
+
+func fenduduLeaseUpdates(j *AccountRefillJob, a *Account, expires int64, now time.Time) map[string]any {
+	updates := map[string]any{AccountSourceExpiryExtraKey: expires, AccountSourceExpiryOriginExtraKey: "supplier_api", AccountSourceExpiryCheckedExtraKey: now.UTC().Format(time.RFC3339)}
+	if a.HasNativeExpiry() {
+		base := expires
+		if j.DeliveryConfig.ExpiryMode == "fixed" && j.DeliveryConfig.FixedExpiresAt != nil {
+			base = refillMin(base, *j.DeliveryConfig.FixedExpiresAt)
+		}
+		// Follow the supplier lease while respecting the saved fixed cutoff and
+		// the account's current manual deadline / retention policy.
+		updates[AccountExpiryBaseExtraKey] = base
+	}
+	return updates
 }
 
 func (s *AccountRefillService) importFenduduDelivery(ctx context.Context, j *AccountRefillJob, cycle *fenduduCycle, activate bool) error {
@@ -205,10 +229,21 @@ func (s *AccountRefillService) importFenduduDelivery(ctx context.Context, j *Acc
 		return err
 	}
 	id := a.ID
-	j.ExpiresAt = fenduduSourceExpiry(a)
+	j.ExpiresAt = fenduduSourceExpiry(cycle, a)
 	ended := cycle.Status == "closed" || refillDeliveryExpired(j.ExpiresAt, time.Now()) ||
 		(j.DeliveryConfig.ExpiryMode == "fixed" && refillDeliveryExpired(j.DeliveryConfig.FixedExpiresAt, time.Now()))
 	if marker, _ := a.Extra["refill_job_id"].(string); marker == j.ID && !ended {
+		if writer, ok := s.accounts.(interface {
+			UpdateExtra(context.Context, int64, map[string]any) error
+		}); ok {
+			if err := writer.UpdateExtra(ctx, id, fenduduLeaseUpdates(j, a, *j.ExpiresAt, time.Now())); err != nil {
+				return err
+			}
+			a, err = s.fenduduPushedAccount(ctx, j, cycle)
+			if err != nil {
+				return err
+			}
+		}
 		if !activate {
 			if err := s.accounts.SetSchedulable(ctx, id, false); err != nil {
 				return err
