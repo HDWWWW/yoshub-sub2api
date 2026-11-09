@@ -1574,6 +1574,7 @@ type TLSProfileConfig struct {
 
 // GatewaySchedulingConfig accounts scheduling configuration.
 type GatewaySchedulingConfig struct {
+	PreserveProcessSlots bool `mapstructure:"preserve_process_slots"`
 	// AccountExpiryPriorityEnabled derives expiry ranks for each candidate pool without rewriting native priorities.
 	AccountExpiryPriorityEnabled bool `mapstructure:"account_expiry_priority_enabled"`
 	// OpenAIAstraPriorityEnabled drains lower numeric account priorities first for GPT-6 Astra.
@@ -2676,6 +2677,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.snapshot_mget_chunk_size", 128)
 	viper.SetDefault("gateway.scheduling.snapshot_write_chunk_size", 256)
 	viper.SetDefault("gateway.scheduling.slot_cleanup_interval", 30*time.Second)
+	viper.SetDefault("gateway.scheduling.preserve_process_slots", true)
 	viper.SetDefault("gateway.scheduling.db_fallback_enabled", true)
 	viper.SetDefault("gateway.scheduling.db_fallback_timeout_seconds", 0)
 	viper.SetDefault("gateway.scheduling.db_fallback_max_qps", 0)
