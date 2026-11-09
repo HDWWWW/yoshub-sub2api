@@ -19,10 +19,11 @@ func TestCollectOpenAIEncryptedContentDigestsRaw(t *testing.T) {
 		{"type":"reasoning"},
 		{"type":"message","encrypted_content":"cipher-alien"}
 	]}`))
-	// 剥离端处理不了的类型（message）不收摘要，否则该摘要永远命中却剥不掉。
+	// Message encryption is now supported by both digest tracking and stripping.
 	require.Equal(t, []string{
 		openAIEncryptedContentDigest("cipher-a"),
 		openAIEncryptedContentDigest("cipher-b"),
+		openAIEncryptedContentDigest("cipher-alien"),
 	}, digests)
 
 	require.Nil(t, collectOpenAIEncryptedContentDigestsRaw([]byte(`{"model":"gpt-5"}`)))

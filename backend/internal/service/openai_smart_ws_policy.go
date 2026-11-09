@@ -57,15 +57,6 @@ func (s *OpenAIGatewayService) smartWSDecision(c *gin.Context, account *Account)
 	return s.smartWSEligibleAccount(account)
 }
 
-// SupportsSmartWSHTTPContinuation uses the same transport policy as dispatch.
-// The HTTP handler must not reject OAuth continuation that will use WS, nor
-// admit it on compact, disabled groups, force-HTTP accounts or plugin routes.
-func (s *OpenAIGatewayService) SupportsSmartWSHTTPContinuation(c *gin.Context, account *Account) bool {
-	return s != nil && c != nil && c.Request != nil &&
-		strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses") &&
-		s.smartWSDecision(c, account).Transport == OpenAIUpstreamTransportResponsesWebsocketV2
-}
-
 // A group opt-in never declares arbitrary compatible hosts WS-capable. Custom
 // API-key providers must also opt in with the existing account WS setting.
 func (s *OpenAIGatewayService) smartWSEligibleAccount(account *Account) OpenAIWSProtocolDecision {

@@ -3,8 +3,10 @@ package repository
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
@@ -34,14 +36,66 @@ type reqClientOptions struct {
 // 2. 复用底层连接池，减少 TLS 握手开销
 // 3. LoadOrStore 保证并发安全，避免重复创建
 var sharedReqClients sync.Map
+var sharedReqClientPruneMu sync.Mutex
+var sharedReqClientLastPrune atomic.Int64
+
+const sharedReqClientCapacity = 4096
+const sharedReqClientIdleTTL = 10 * time.Minute
+
+type sharedReqClientEntry struct {
+	client   *req.Client
+	lastUsed atomic.Int64
+}
+
+func pruneSharedReqClients(now time.Time, force bool) {
+	if !force && now.Unix()-sharedReqClientLastPrune.Load() < 60 {
+		return
+	}
+	sharedReqClientPruneMu.Lock()
+	defer sharedReqClientPruneMu.Unlock()
+	if !force && now.Unix()-sharedReqClientLastPrune.Load() < 60 {
+		return
+	}
+	sharedReqClientLastPrune.Store(now.Unix())
+	type candidate struct {
+		key   any
+		entry *sharedReqClientEntry
+		used  int64
+	}
+	var entries []candidate
+	sharedReqClients.Range(func(k, v any) bool {
+		e, ok := v.(*sharedReqClientEntry)
+		if !ok {
+			return true
+		}
+		used := e.lastUsed.Load()
+		if now.Sub(time.Unix(0, used)) > sharedReqClientIdleTTL {
+			if sharedReqClients.CompareAndDelete(k, e) {
+				e.client.GetTransport().CloseIdleConnections()
+			}
+		} else {
+			entries = append(entries, candidate{k, e, used})
+		}
+		return true
+	})
+	sort.Slice(entries, func(i, j int) bool { return entries[i].used < entries[j].used })
+	for i := 0; i < len(entries)-sharedReqClientCapacity; i++ {
+		e := entries[i]
+		if sharedReqClients.CompareAndDelete(e.key, e.entry) {
+			e.entry.client.GetTransport().CloseIdleConnections()
+		}
+	}
+}
 
 // getSharedReqClient 获取共享的 req 客户端实例
 // 性能优化：相同配置复用同一客户端，避免重复创建
 func getSharedReqClient(opts reqClientOptions) (*req.Client, error) {
+	pruneSharedReqClients(time.Now(), false)
 	key := buildReqClientKey(opts)
 	if cached, ok := sharedReqClients.Load(key); ok {
-		if c, ok := cached.(*req.Client); ok {
-			return c, nil
+		if e, ok := cached.(*sharedReqClientEntry); ok {
+			e.lastUsed.Store(time.Now().UnixNano())
+			return e.client, nil
 		}
 	}
 
@@ -66,9 +120,15 @@ func getSharedReqClient(opts reqClientOptions) (*req.Client, error) {
 	}
 	client = instrumentReqClient(client)
 
-	actual, _ := sharedReqClients.LoadOrStore(key, client)
-	if c, ok := actual.(*req.Client); ok {
-		return c, nil
+	entry := &sharedReqClientEntry{client: client}
+	entry.lastUsed.Store(time.Now().UnixNano())
+	actual, loaded := sharedReqClients.LoadOrStore(key, entry)
+	if e, ok := actual.(*sharedReqClientEntry); ok {
+		if loaded {
+			client.GetTransport().CloseIdleConnections()
+		}
+		e.lastUsed.Store(time.Now().UnixNano())
+		return e.client, nil
 	}
 	return client, nil
 }

@@ -117,6 +117,7 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
+	groupFirstTokenCache        sync.Map
 	scopedAdminKeyRepo          ScopedAdminKeyRepository
 	scopedAdminKeyEncryptor     SecretEncryptor
 	settingRepo                 SettingRepository

@@ -63,5 +63,8 @@ func (s *OpenAIGatewayService) startOpenAIResponseSignals(ctx context.Context, c
 			initialDelay = &delay
 		}
 	}
+	if initialDelay == nil && heartbeat <= 0 && s.newOpenAIEarlyControlFilter(c, account) != nil {
+		return startOpenAISSEControlWriter(c)
+	}
 	return startOpenAISSESignals(c, heartbeat, initialDelay, initialFrame...)
 }

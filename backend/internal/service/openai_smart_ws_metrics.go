@@ -38,6 +38,7 @@ type SmartWSLatency struct {
 }
 type SmartWSSnapshot struct {
 	Scope       string           `json:"scope"`
+	SmartPool   map[string]any   `json:"smart_pool,omitempty"`
 	StartedAt   time.Time        `json:"started_at"`
 	Connections int              `json:"connections"`
 	Acquiring   int              `json:"acquiring"`
@@ -127,7 +128,9 @@ func (s *OpsService) GetSmartWSMetrics(ctx context.Context) (SmartWSSnapshot, er
 	if s.openAIGatewayService == nil {
 		return SmartWSSnapshot{Scope: "process"}, nil
 	}
-	return s.openAIGatewayService.getOpenAIWSConnPool().SmartWSSnapshot(), nil
+	snapshot := s.openAIGatewayService.getOpenAIWSConnPool().SmartWSSnapshot()
+	snapshot.SmartPool = s.openAIGatewayService.independentSmartWSStats()
+	return snapshot, nil
 }
 
 func (o *smartWSObservation) finish(ctx context.Context, result *OpenAIForwardResult, err error) {

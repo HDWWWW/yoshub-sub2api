@@ -49,7 +49,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	return s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, mappedModel, "")
 }
 
-func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
+func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (_ *openaiStreamingResult, resultErr error) {
+	invalidEncryptedContent := false
+	defer func() { resultErr = wrapOpenAIInvalidEncryptedContentError(resultErr, invalidEncryptedContent) }()
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -60,6 +62,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 	guardFirstOutput := firstOutputTimeout > 0
 	stageFirstOutput := account != nil && account.Platform == PlatformOpenAI
+	earlyControlFilter := s.newOpenAIEarlyControlFilter(c, account)
 	var attemptResponseHeaders http.Header
 	if stageFirstOutput {
 		if s.responseHeaderFilter != nil {
@@ -396,7 +399,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		clientOutputStarted = true
 		lastDownstreamWriteAt = time.Now()
 	}
+	var processRawSSELine func(string, bool)
 	finalizeStream := func() (*openaiStreamingResult, error) {
+		for _, line := range earlyControlFilter.Finish() {
+			processRawSSELine(line, true)
+		}
+		if streamEarlyErr != nil {
+			return resultWithUsage(), streamEarlyErr
+		}
 		if stageFirstOutput && eventInProgress {
 			// EOF dispatches the final SSE event even without a trailing blank line.
 			completeGuardedEvent(true)
@@ -507,7 +517,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		sendErrorEvent(code, message)
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", scanErr), true
 	}
-	processSSELine := func(line string, queueDrained bool) {
+	processRawSSELine = func(line string, queueDrained bool) {
 		if streamEarlyErr != nil {
 			return
 		}
@@ -565,6 +575,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					sawResponseFailed = true
 				}
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
+				invalidEncryptedContent = invalidEncryptedContent || isOpenAIInvalidEncryptedContentResponse(dataBytes, failedMessage)
 				if failedMessage == "" {
 					failedMessage = "Upstream response failed"
 				}
@@ -629,7 +640,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 							s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "http_error", dataBytes, failedMessage)
 							MarkResponseCommitted(c)
 							c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-							c.JSON(status, gin.H{
+							writeOpenAIJSONError(c, status, gin.H{
 								"error": gin.H{
 									"type":    errType,
 									"message": errMsg,
@@ -842,6 +853,26 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				terminalFailurePending = false
 				failureDelivered = true
 			}
+		}
+	}
+	processSSELine := func(line string, queueDrained bool) {
+		ordinary, frame := earlyControlFilter.Push(line)
+		if frame != "" {
+			if firstTokenMs == nil && ttftMode == OpenAITTFTModeSemantic {
+				ms := int(time.Since(startTime).Milliseconds())
+				firstTokenMs = &ms
+			}
+			if !clientDisconnected {
+				if err := writeOpenAIEarlyControlFrame(c, frame); err != nil {
+					clientDisconnected = true
+					streamEarlyErr = err
+				} else {
+					lastDownstreamWriteAt = time.Now()
+				}
+			}
+		}
+		for i, pending := range ordinary {
+			processRawSSELine(pending, queueDrained && i == len(ordinary)-1)
 		}
 	}
 
@@ -2062,7 +2093,7 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	c.JSON(http.StatusBadGateway, gin.H{
+	writeOpenAIJSONError(c, http.StatusBadGateway, gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
 			"message": message,

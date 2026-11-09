@@ -134,7 +134,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reasoningEffort *string,
 	reqStream bool,
 	startTime time.Time,
-) (*OpenAIForwardResult, error) {
+) (_ *OpenAIForwardResult, resultErr error) {
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
@@ -280,7 +280,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	)
 	if imageIntent && !GroupAllowsImageGeneration(apiKeyGroup(apiKey)) {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
-		c.JSON(http.StatusForbidden, gin.H{
+		writeOpenAIJSONError(c, http.StatusForbidden, gin.H{
 			"error": gin.H{
 				"type":    "permission_error",
 				"message": ImageGenerationPermissionMessage(),
@@ -296,7 +296,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageCfg, imageCfgErr := resolveOpenAIResponsesImageBillingConfigDetailedFromBody(body, reqModel)
 		if imageCfgErr != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, imageCfgErr.Error(), "")
-			c.JSON(http.StatusBadRequest, gin.H{
+			writeOpenAIJSONError(c, http.StatusBadRequest, gin.H{
 				"error": gin.H{
 					"type":    "invalid_request_error",
 					"message": imageCfgErr.Error(),
@@ -333,6 +333,17 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 
+	lineageEntryBody := body
+	lineageGroupID := getOpenAIGroupIDFromContext(c)
+	lineageSessionHash := s.GenerateSessionHash(c, body)
+	if invalid := s.sessionInvalidEncryptedContentDigests(lineageGroupID, lineageSessionHash); len(invalid) > 0 {
+		body, _ = s.stripSessionInvalidEncryptedContentLogged(body, invalid, "invalid_encrypted_lineage_strip", account.ID, 0)
+	}
+	defer func() {
+		if isOpenAIInvalidEncryptedContentError(resultErr) {
+			s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, lineageSessionHash, collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody))
+		}
+	}()
 	// Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -350,6 +361,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	agentTaskRecoveryTried := false
 	compactModelFallbackRetried := false
+	httpInvalidEncryptedContentRetryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
 	var resp *http.Response
 	var usage *OpenAIUsage
@@ -395,6 +407,19 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				return nil, err
 			}
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
+			if resp.StatusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(probeBody, extractUpstreamErrorMessage(probeBody)) && !httpInvalidEncryptedContentRetryTried && !smartWSHasDispatched(c) {
+				retryBody, changed, cleanErr := sanitizeOpenAIRejectedEncryptedContent(body)
+				if cleanErr != nil {
+					return nil, cleanErr
+				}
+				if changed {
+					httpInvalidEncryptedContentRetryTried = true
+					s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, lineageSessionHash, collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody))
+					body = retryBody
+					rejectedFieldRetryState.remember(body)
+					continue
+				}
+			}
 			if hit, _, _ := detectOpenAICyberPolicy(probeBody); hit {
 				return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, probeBody)
 			}
@@ -757,6 +782,12 @@ func stripOpenAILegacyResponsesBeta(headers http.Header) {
 }
 
 func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, responseBody []byte) bool {
+	if isOpenAICyberAccessDenied(statusCode, responseBody) {
+		return false
+	}
+	if statusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(responseBody, extractUpstreamErrorMessage(responseBody)) {
+		return false
+	}
 	if hit, _, _ := detectOpenAICyberPolicy(responseBody); hit {
 		return false
 	}
@@ -922,9 +953,15 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	account *Account,
 	requestBody []byte,
 	responseBody []byte,
-) error {
+) (resultErr error) {
 	MarkResponseCommitted(c)
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
+	if isOpenAICyberAccessDenied(resp.StatusCode, body) {
+		return writeOpenAICyberAccessDenied(c, account, resp, body, nil)
+	}
+	defer func() {
+		resultErr = wrapOpenAIInvalidEncryptedContentError(resultErr, resp.StatusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(body, extractUpstreamErrorMessage(body)))
+	}()
 
 	// cyber_policy 仍按原始 body 打内部标记，供 handler 事后写风控/邮件；面向客户端的
 	// 错误体在下方统一重建。cyber 是上游网络安全策略拦截，不冷却账号，
@@ -1080,6 +1117,10 @@ func openAIStreamEventIsMetadata(eventType string) bool {
 	// Queuing and moderation metadata do not commit model output or disarm the
 	// first-output timeout; a following overload must remain safe to retry.
 	case "response.created", "response.queued", "response.in_progress", "response.metadata", "keepalive":
+		return true
+	// SmartWS exposes connection control envelopes before response.created.
+	// They neither contain model output nor start first-token accounting.
+	case "codex.rate_limits", "codex.response.metadata", "responsesapi.websocket_timing":
 		return true
 	default:
 		return false
@@ -1397,6 +1438,9 @@ var openAIStreamErrorStatusPaths = []string{
 }
 
 func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
+	if isOpenAIInvalidEncryptedContentResponse(payload, message) {
+		return http.StatusBadRequest
+	}
 	if isOpenAIContextWindowError(message, payload) {
 		return http.StatusBadRequest
 	}
@@ -1554,6 +1598,9 @@ func applyOpenAIStreamFailedErrorPassthroughRule(
 }
 
 func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool {
+	if isOpenAIInvalidEncryptedContentResponse(payload, message) {
+		return false
+	}
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
 		return false
 	}
@@ -1606,6 +1653,9 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 }
 
 func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
+	if isOpenAIInvalidEncryptedContentResponse(payload, message) {
+		return false
+	}
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
 		return false
 	}
@@ -1862,7 +1912,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	startTime time.Time,
 	originalModel string,
 	mappedModel string,
-) (*openaiStreamingResultPassthrough, error) {
+) (_ *openaiStreamingResultPassthrough, resultErr error) {
+	invalidEncryptedContent := false
+	defer func() { resultErr = wrapOpenAIInvalidEncryptedContentError(resultErr, invalidEncryptedContent) }()
+	earlyControlFilter := s.newOpenAIEarlyControlFilter(c, account)
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -1995,6 +2048,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header, mappedModel)
 			bareErrorAccountSideEffectsPending = false
 		}
+		applyAttemptHeaders()
 		if clientDisconnected || !writePendingLines() {
 			return
 		}
@@ -2032,8 +2086,19 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 
-	for documentScanner.Scan() {
-		line := documentScanner.Text()
+	earlyScanner := &openAIEarlyControlScanner{source: documentScanner, filter: earlyControlFilter, emit: func(frame string) {
+		if firstTokenMs == nil && ttftMode == OpenAITTFTModeSemantic {
+			ms := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &ms
+		}
+		if err := writeOpenAIEarlyControlFrame(c, frame); err != nil {
+			clientDisconnected = true
+			closeOpenAIUpstreamOnDisconnect(resp, account)
+		}
+	}}
+
+	for earlyScanner.Scan() {
+		line := earlyScanner.Text()
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
 			pendingSSEEventType = eventType
 			eventType = strings.TrimSpace(eventType)
@@ -2099,6 +2164,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 				responseFailedPending = !codexFailureTerminal || eventType == "response.failed"
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
+				invalidEncryptedContent = invalidEncryptedContent || isOpenAIInvalidEncryptedContentResponse(dataBytes, failedMessage)
 				if failedMessage == "" {
 					failedMessage = "Upstream response failed"
 				}
@@ -2158,7 +2224,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 							s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, failedMessage)
 							MarkResponseCommitted(c)
 							c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-							c.JSON(status, gin.H{
+							writeOpenAIJSONError(c, status, gin.H{
 								"error": gin.H{
 									"type":    errType,
 									"message": errMsg,

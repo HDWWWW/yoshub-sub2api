@@ -443,6 +443,15 @@
                 }}</span>
               </button>
               <button
+                v-if="!authStore.isSimpleMode && supportsGroupOpenAIFast(row.platform)"
+                data-testid="group-first-token-optimization"
+                @click="firstTokenGroup = row; showFirstTokenModal = true"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-teal-600 dark:hover:bg-dark-700 dark:hover:text-teal-400"
+              >
+                <Icon name="bolt" size="sm" />
+                <span class="text-xs">{{ t('admin.groups.firstTokenOptimization.action') }}</span>
+              </button>
+              <button
                 @click="handleDelete(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
@@ -4376,6 +4385,7 @@
       </template>
     </BaseDialog>
 
+    <GroupFirstTokenModal :show="showFirstTokenModal" :group="firstTokenGroup" @close="showFirstTokenModal = false" @saved="loadGroups" />
     <!-- Group Rate Multipliers Modal -->
     <GroupRateMultipliersModal
       :show="showRateMultipliersModal"
@@ -4432,6 +4442,7 @@ import { platformLabel } from "@/utils/platformColors";
 import Icon from "@/components/icons/Icon.vue";
 import GroupI18nField from "@/components/admin/group/GroupI18nField.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
+import GroupFirstTokenModal from "@/components/admin/group/GroupFirstTokenModal.vue";
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
@@ -4974,6 +4985,8 @@ const deletingGroup = ref<AdminGroup | null>(null);
 const duplicatingGroupIds = reactive(new Set<number>());
 const showRateMultipliersModal = ref(false);
 const rateMultipliersGroup = ref<AdminGroup | null>(null);
+const showFirstTokenModal = ref(false);
+const firstTokenGroup = ref<AdminGroup | null>(null);
 const showRPMOverridesModal = ref(false);
 const rpmOverridesGroup = ref<AdminGroup | null>(null);
 const sortableGroups = ref<AdminGroup[]>([]);

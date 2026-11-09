@@ -847,6 +847,23 @@ export default {
 
     // Groups
     groups: {
+ firstTokenOptimization: {
+  "action": "First token",
+  "title": "First-token latency optimization",
+  "smartWS": "Prefer smart WebSocket transport",
+  "smartHint": "Reuse upstream connections for eligible requests to reduce connection and queue delays. Fall back to HTTP when safe; active responses finish normally.",
+  "earlyLimits": "Forward real rate-limit events early",
+  "earlyHint": "Forward actual upstream rate-limit events immediately. Works alongside the gateway status signal without creating model output or changing billing. First-token timing still follows the selected semantic or visible-output mode.",
+  "poolTitle": "Independent SmartWS pool",
+  "poolConnections": "Connections / capacity",
+  "poolActive": "Active requests",
+  "poolWaiting": "Waiting / limit",
+  "poolBytes": "Queued request memory",
+  "poolColdFallback": "Cold HTTP fallbacks",
+  "poolReclaimed": "Idle connections reclaimed",
+  "poolBackoff": "Handshake backoff fallbacks",
+  "poolReused": "Connection reuses"
+},
       title: 'Group Management',
       description: 'Manage API key groups and rate multipliers',
       searchGroups: 'Search groups...',

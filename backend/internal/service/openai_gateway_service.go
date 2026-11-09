@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/smartws"
 	"github.com/Wei-Shaw/sub2api/internal/platform/liveattestation"
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -484,6 +485,8 @@ type OpenAIGatewayService struct {
 	liveAttestationCipher SecretEncryptor
 
 	openaiWSPoolOnce               sync.Once
+	openaiSmartPoolOnce            sync.Once
+	openaiSmartPool                *smartws.Pool
 	openaiWSStateStoreOnce         sync.Once
 	openaiSchedulerOnce            sync.Once
 	openaiProxyStreamCircuitOnce   sync.Once
@@ -724,6 +727,9 @@ func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
 	s.openaiCompatAnthropicDigestSessions.Close()
 	if s.openaiWSPool != nil {
 		s.openaiWSPool.Close()
+	}
+	if s.openaiSmartPool != nil {
+		s.openaiSmartPool.Close()
 	}
 }
 

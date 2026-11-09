@@ -149,3 +149,31 @@ func TestGetSharedReqClient_ImpersonateUsesFirefoxFingerprint(t *testing.T) {
 	require.Contains(t, client.Headers.Get("User-Agent"), "Firefox/")
 	require.NotContains(t, client.Headers.Get("User-Agent"), "Chrome/")
 }
+func TestSharedReqClientPrunesIdleAndCapacity(t *testing.T) {
+	sharedReqClients = sync.Map{}
+	now := time.Now()
+	client := req.C()
+	stale := &sharedReqClientEntry{client: client}
+	stale.lastUsed.Store(now.Add(-11 * time.Minute).UnixNano())
+	sharedReqClients.Store("stale", stale)
+	fresh := &sharedReqClientEntry{client: client}
+	fresh.lastUsed.Store(now.UnixNano())
+	sharedReqClients.Store("fresh", fresh)
+	pruneSharedReqClients(now, true)
+	_, ok := sharedReqClients.Load("stale")
+	require.False(t, ok)
+	_, ok = sharedReqClients.Load("fresh")
+	require.True(t, ok)
+	for i := 0; i < sharedReqClientCapacity+5; i++ {
+		entry := &sharedReqClientEntry{client: client}
+		entry.lastUsed.Store(now.Add(-time.Duration(i) * time.Millisecond).UnixNano())
+		sharedReqClients.Store(i, entry)
+	}
+	pruneSharedReqClients(now, true)
+	count := 0
+	sharedReqClients.Range(func(_, _ any) bool { count++; return true })
+	require.Equal(t, sharedReqClientCapacity, count)
+	_, ok = sharedReqClients.Load("fresh")
+	require.True(t, ok)
+	sharedReqClients = sync.Map{}
+}

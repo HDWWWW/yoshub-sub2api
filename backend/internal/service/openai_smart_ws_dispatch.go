@@ -420,6 +420,9 @@ func smartWSStopFailure(status int, body []byte, headers http.Header) *UpstreamF
 
 func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Account, resp *http.Response, payload []byte, upstreamModel ...string) error {
 	payload = s.redactAgentIdentitySensitiveBody(c.Request.Context(), account, payload)
+	if isOpenAICyberAccessDenied(resp.StatusCode, payload) {
+		return writeOpenAICyberAccessDenied(c, account, resp, payload, nil)
+	}
 	message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(payload))
 	setOpsUpstreamError(c, resp.StatusCode, message, "")
 	event := OpsUpstreamErrorEvent{AccountID: account.ID, Platform: account.Platform, UpstreamStatusCode: resp.StatusCode, Kind: "ws_upstream_error", Message: message}

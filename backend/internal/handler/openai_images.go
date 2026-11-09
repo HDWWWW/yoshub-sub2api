@@ -171,14 +171,22 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		if h.endExpiredOpenAI429Recovery(c, streamStarted) {
+			return
+		}
+		selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(requestCtx)
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForImages(
-			requestCtx,
+			selectionCtx,
 			apiKey.GroupID,
 			sessionHash,
 			routingModel,
 			failedAccountIDs,
 			parsed.RequiredCapabilityForModel(channelMapping.MappedModel),
 		)
+		cancelSelection()
+		if err != nil && h.endExpiredOpenAI429Recovery(c, streamStarted) {
+			return
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai.images.account_select_aborted_client_disconnected", zap.Error(err))
@@ -249,6 +257,12 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
+			return
+		}
+		if h.endExpiredOpenAI429Recovery(c, streamStarted) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
 			return
 		}
 
@@ -322,6 +336,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 							zap.Int64("account_id", account.ID),
 							zap.Int("upstream_status", failoverErr.StatusCode),
 						)
+						return
+					}
+					if !allowOpenAI429Recovery(c, account, failoverErr, sameAccountRetryCount[account.ID]) {
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
 					if failoverErr.RetryableOnSameAccount {

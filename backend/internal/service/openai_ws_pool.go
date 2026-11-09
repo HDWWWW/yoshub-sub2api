@@ -44,7 +44,6 @@ var (
 )
 
 type openAIWSDialError struct {
-	rejectionKey    [32]byte
 	StatusCode      int
 	ResponseHeaders http.Header
 	ResponseBody    []byte
@@ -869,7 +868,6 @@ type openAIWSConnPool struct {
 
 	metrics              openAIWSPoolMetrics
 	gate                 smartWSPoolGate
-	rejections           smartWSRejectionCache
 	smartMetrics         smartWSMetrics
 	handshakeDiagnostics smartWSHandshakeDiagnostics
 	startedAt            time.Time
@@ -2199,7 +2197,6 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			StatusCode:      status,
 			ResponseHeaders: cloneHeader(handshakeHeaders),
 			ResponseBody:    responseBody,
-			rejectionKey:    smartWSRejectionDigest(req),
 			Err:             err,
 		}
 	}

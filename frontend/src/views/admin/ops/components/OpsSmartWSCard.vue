@@ -11,6 +11,15 @@
           <dd class="mt-1 font-mono text-lg text-gray-900 dark:text-gray-100">{{ item.value }}</dd>
         </div>
       </dl>
+      <div v-if="data.smart_pool" class="mt-5 rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+        <h4 class="text-sm font-medium">{{ t('admin.groups.firstTokenOptimization.poolTitle') }}</h4>
+        <dl class="mt-3 grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div v-for="item in poolItems" :key="item.key">
+            <dt class="text-xs text-gray-500">{{ t(`admin.groups.firstTokenOptimization.${item.key}`) }}</dt>
+            <dd class="mt-1 font-mono">{{ item.value }}</dd>
+          </div>
+        </dl>
+      </div>
       <div class="mt-5 overflow-x-auto">
         <table class="w-full text-left text-sm">
           <caption class="mb-2 text-left text-xs text-gray-500">{{ t('admin.ops.smartWS.latencyHint') }}</caption>
@@ -41,6 +50,21 @@ const data = ref<SmartWSMetrics | null>(null)
 const error = ref(false)
 let controller: AbortController | undefined
 const latency = (ms: number, count: number) => count ? `${ms.toLocaleString()} ms` : '—'
+const poolItems = computed(() => {
+  const p = data.value?.smart_pool
+  if (!p) return []
+  const n = (key: string) => Number(p[key] ?? 0)
+  return [
+    { key: 'poolConnections', value: `${n('connections')} / ${n('capacity')}` },
+    { key: 'poolActive', value: n('active') },
+    { key: 'poolWaiting', value: `${n('waiting')} / ${n('wait_limit')}` },
+    { key: 'poolBytes', value: `${(n('waiting_bytes') / 1048576).toFixed(1)} / ${(n('wait_bytes_limit') / 1048576).toFixed(0)} MiB` },
+    { key: 'poolColdFallback', value: n('cold_identity_fast_fallback') },
+    { key: 'poolReclaimed', value: n('idle_reclaimed') },
+    { key: 'poolBackoff', value: n('dial_backoff') },
+    { key: 'poolReused', value: n('reused') }
+  ]
+})
 const items = computed(() => {
   if (!data.value) return []
   const d = data.value

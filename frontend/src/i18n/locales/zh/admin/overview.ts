@@ -844,6 +844,23 @@ export default {
 
     // Groups Management
     groups: {
+ firstTokenOptimization: {
+  "action": "首字优化",
+  "title": "首字延迟优化",
+  "smartWS": "启用智能 WS 优先",
+  "smartHint": "为符合条件的请求复用上游连接，减少连接建立和等待时间。无可用连接时按请求条件使用 HTTP；已开始的响应正常完成。",
+  "earlyLimits": "提前透传真实限额事件",
+  "earlyHint": "上游返回真实限额信息后立即转发，可与快乐首字同时开启。不会生成模型正文或改变计费；首 token 仍按“语义事件 / 真实可见输出”的选择统计。",
+  "poolTitle": "SmartWS 独立连接池",
+  "poolConnections": "连接 / 当前容量",
+  "poolActive": "活跃请求",
+  "poolWaiting": "等待 / 上限",
+  "poolBytes": "等待请求内存",
+  "poolColdFallback": "无复用机会回 HTTP",
+  "poolReclaimed": "回收闲置连接",
+  "poolBackoff": "握手退避回 HTTP",
+  "poolReused": "连接复用次数"
+},
       title: '分组管理',
       description: '管理 API 密钥分组和费率配置',
       searchGroups: '搜索分组...',

@@ -427,41 +427,95 @@ func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
 }
 
 func sanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep bool) {
+	return sanitizeOpenAIEncryptedInputItem(item, nil)
+}
+
+// A nil digest set means an explicit upstream rejection: remove all supported
+// encryption. Otherwise remove only previously rejected ciphertext. Do not walk
+// arbitrary tool arguments or tool outputs, which are application data.
+func sanitizeOpenAIEncryptedInputItem(item any, invalid map[string]struct{}) (next any, changed bool, keep bool) {
 	inputItem, ok := item.(map[string]any)
 	if !ok {
 		return item, false, true
 	}
-
 	itemType, _ := inputItem["type"].(string)
-	switch strings.TrimSpace(itemType) {
+	role, _ := inputItem["role"].(string)
+	itemType = openAIEncryptedInputItemKind(itemType, role)
+	matches := func(value any) bool {
+		if invalid == nil {
+			return true
+		}
+		encrypted, ok := value.(string)
+		if !ok || encrypted == "" {
+			return false
+		}
+		_, hit := invalid[openAIEncryptedContentDigest(encrypted)]
+		return hit
+	}
+	switch itemType {
 	case "compaction", "compaction_summary":
-		if _, encrypted := inputItem["encrypted_content"]; encrypted {
+		if encrypted, exists := inputItem["encrypted_content"]; exists && matches(encrypted) {
 			return nil, true, false
 		}
 		return item, false, true
-	case "reasoning":
-	default:
-		return item, false, true
+	case "reasoning", "message":
+		if encrypted, exists := inputItem["encrypted_content"]; exists && matches(encrypted) {
+			delete(inputItem, "encrypted_content")
+			changed = true
+		}
+		if v, exists := inputItem["content"]; itemType == "reasoning" && (invalid == nil || changed) && exists && v == nil {
+			delete(inputItem, "content")
+			changed = true
+		}
 	}
-
-	if _, has := inputItem["encrypted_content"]; has {
-		delete(inputItem, "encrypted_content")
-		changed = true
+	// New protocol envelopes can carry content[] without using the message type.
+	// Inspect only this protocol slot; tool arguments and output remain opaque.
+	if parts, ok := asDeepSeekResponsesSlice(inputItem["content"]); ok {
+		filtered := make([]any, 0, len(parts))
+		removed := false
+		for _, part := range parts {
+			object, ok := part.(map[string]any)
+			if ok && object["type"] == "encrypted_content" {
+				remove := invalid == nil
+				if !remove {
+					digest := openAIEncryptedPartDigestMap(object)
+					_, remove = invalid[digest]
+				}
+				if remove {
+					removed = true
+					continue
+				}
+			}
+			filtered = append(filtered, part)
+		}
+		if removed {
+			changed = true
+			inputItem["content"] = filtered
+		}
 	}
-
-	// xAI 422: "content": null 导致 untagged enum 反序列化失败
-	if v, has := inputItem["content"]; has && v == nil {
-		delete(inputItem, "content")
-		changed = true
+	id, _ := inputItem["id"].(string)
+	if changed && (itemType == "message" || strings.HasPrefix(id, "amsg_")) {
+		// Do not rehydrate a rejected account-bound item.
+		delete(inputItem, "id")
+		hasContent := false
+		switch content := inputItem["content"].(type) {
+		case string:
+			hasContent = content != ""
+		case []any:
+			hasContent = len(content) > 0
+		case []map[string]any:
+			hasContent = len(content) > 0
+		}
+		// Legacy message tool calls, if present, are usable history too.
+		calls, _ := asDeepSeekResponsesSlice(inputItem["tool_calls"])
+		if !hasContent && len(calls) == 0 {
+			return nil, true, false
+		}
 	}
-
-	if !changed {
-		return item, false, true
-	}
-	if len(inputItem) == 1 {
+	if changed && len(inputItem) == 1 {
 		return nil, true, false
 	}
-	return inputItem, true, true
+	return inputItem, changed, true
 }
 
 // SanitizeOpenAICrossModeFailoverReasoning derives a failover attempt body from

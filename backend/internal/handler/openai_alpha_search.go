@@ -137,8 +137,12 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	c.Request = c.Request.WithContext(asPricingCtx)
 
 	for {
+		if h.endExpiredOpenAI429Recovery(c, false) {
+			return
+		}
+		selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(c.Request.Context())
 		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
+			selectionCtx,
 			apiKey.GroupID,
 			"",
 			sessionHash,
@@ -151,6 +155,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			false,
 			service.PlatformOpenAI,
 		)
+		cancelSelection()
+		if err != nil && h.endExpiredOpenAI429Recovery(c, false) {
+			return
+		}
 		if err != nil || selection == nil || selection.Account == nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_alpha_search.account_select_aborted_client_disconnected", zap.Error(err))
@@ -184,6 +192,12 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			continue
 		}
 		if slotResult != openAISlotAcquireOK {
+			return
+		}
+		if h.endExpiredOpenAI429Recovery(c, false) {
+			if accountRelease != nil {
+				accountRelease()
+			}
 			return
 		}
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
@@ -230,6 +244,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				zap.Int64("account_id", account.ID),
 				zap.Int("upstream_status", failoverErr.StatusCode),
 			)
+			return
+		}
+		if !allowOpenAI429Recovery(c, account, failoverErr, sameAccountRetryCount[account.ID]) {
+			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}
 		if failoverErr.RetryableOnSameAccount {

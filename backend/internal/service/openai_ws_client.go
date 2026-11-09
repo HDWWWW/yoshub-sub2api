@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,16 +82,22 @@ type openAIWSTransportMetricsDialer interface {
 }
 
 func newDefaultOpenAIWSClientDialer() openAIWSClientDialer {
+	capacity := openAIWSProxyClientCacheMaxEntries
+	if n, err := strconv.Atoi(os.Getenv("OPENAI_WS_PROXY_CLIENT_CACHE_MAX_ENTRIES")); err == nil && n > 0 && n <= 16384 {
+		capacity = n
+	}
 	return &coderOpenAIWSClientDialer{
-		proxyClients: make(map[string]*openAIWSProxyClientEntry),
+		proxyClients:    make(map[string]*openAIWSProxyClientEntry),
+		maxProxyClients: capacity,
 	}
 }
 
 type coderOpenAIWSClientDialer struct {
-	proxyMu      sync.Mutex
-	proxyClients map[string]*openAIWSProxyClientEntry
-	proxyHits    atomic.Int64
-	proxyMisses  atomic.Int64
+	proxyMu         sync.Mutex
+	proxyClients    map[string]*openAIWSProxyClientEntry
+	maxProxyClients int
+	proxyHits       atomic.Int64
+	proxyMisses     atomic.Int64
 }
 
 // openAIWSHandshakeError keeps a bounded, non-logged HTTP error body so the
@@ -239,9 +247,9 @@ func (d *coderOpenAIWSClientDialer) ensureProxyClientCapacityLocked() {
 	if d == nil {
 		return
 	}
-	maxEntries := openAIWSProxyClientCacheMaxEntries
+	maxEntries := d.maxProxyClients
 	if maxEntries <= 0 {
-		return
+		maxEntries = openAIWSProxyClientCacheMaxEntries
 	}
 	for len(d.proxyClients) > maxEntries {
 		var oldestKey string

@@ -310,6 +310,12 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 }
 
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Account, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if isOpenAICyberAccessDenied(statusCode, upstreamBody) {
+		return false
+	}
+	if statusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(upstreamBody, upstreamMsg) {
+		return false
+	}
 	// cyber_policy is request-scoped even when an intermediary wraps the
 	// provider response in a retryable 5xx status. Never punish or rotate the
 	// selected credential for it.
@@ -457,7 +463,7 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 	)
 	if oauth429Retry {
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
-		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
+		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders)
 	}
 	return failoverErr
 }
@@ -590,9 +596,15 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	account *Account,
 	requestBody []byte,
 	requestedModel ...string,
-) (*OpenAIForwardResult, error) {
+) (_ *OpenAIForwardResult, resultErr error) {
 	body := s.readUpstreamErrorBody(resp)
+	defer func() {
+		resultErr = wrapOpenAIInvalidEncryptedContentError(resultErr, resp.StatusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(body, extractUpstreamErrorMessage(body)))
+	}()
 	body = s.redactAgentIdentitySensitiveBody(ctx, account, body)
+	if isOpenAICyberAccessDenied(resp.StatusCode, body) {
+		return nil, writeOpenAICyberAccessDenied(c, account, resp, body, nil)
+	}
 
 	// cyber_policy 硬阻断：透传上游原始错误体给客户端（不重包成通用 502），不冷却账号。
 	// 当前请求恒透传（需求1）；标记供 handler 事后写风控/邮件。400 cyber 不可 failover
@@ -624,7 +636,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		setOpsUpstreamError(c, resp.StatusCode, clientMsg, truncateString(string(body), 2048))
 		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 		MarkResponseCommitted(c)
-		c.JSON(http.StatusForbidden, gin.H{
+		writeOpenAIJSONError(c, http.StatusForbidden, gin.H{
 			"error": gin.H{
 				"type":    "invalid_request_error",
 				"message": clientMsg,
@@ -690,7 +702,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		"Upstream request failed",
 	); matched {
 		MarkResponseCommitted(c)
-		c.JSON(status, gin.H{
+		writeOpenAIJSONError(c, status, gin.H{
 			"error": gin.H{
 				"type":    errType,
 				"message": errMsg,
@@ -720,7 +732,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			Detail:             upstreamDetail,
 		})
 		MarkResponseCommitted(c)
-		c.JSON(http.StatusInternalServerError, gin.H{
+		writeOpenAIJSONError(c, http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"type":    "upstream_error",
 				"message": "Upstream gateway error",
@@ -816,7 +828,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		errMsg = upstreamMsg
 	}
 
-	c.JSON(statusCode, gin.H{
+	writeOpenAIJSONError(c, statusCode, gin.H{
 		"error": gin.H{
 			"type":    errType,
 			"message": errMsg,
@@ -847,6 +859,9 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 ) (*OpenAIForwardResult, error) {
 	body := s.readUpstreamErrorBody(resp)
 	body = s.redactAgentIdentitySensitiveBody(context.Background(), account, body)
+	if isOpenAICyberAccessDenied(resp.StatusCode, body) {
+		return nil, writeOpenAICyberAccessDenied(c, account, resp, body, writeError)
+	}
 
 	// cyber_policy：兼容路径（Chat Completions / Anthropic）以各自格式回写错误，
 	// 不原样透传 responses 格式的 cyber body（否则对下游格式不合法）。cyber 是上游网络

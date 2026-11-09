@@ -67,7 +67,7 @@ func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration) func() {
 // A single writer lock covers both the optional initial event and heartbeats.
 // Their bytes remain excluded from semantic-output/failover accounting.
 func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay *time.Duration, initialFrame ...[]byte) func() {
-	if c == nil || c.Writer == nil || (interval <= 0 && initialDelay == nil) {
+	if c == nil || c.Writer == nil {
 		return func() {}
 	}
 	originalWriter := c.Writer
@@ -241,7 +241,7 @@ func OpenAICompactKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 	if size < 0 {
 		return size
 	}
-	keepaliveBytes := compactKeepaliveBytes + streamKeepaliveBytes
+	keepaliveBytes := compactKeepaliveBytes + streamKeepaliveBytes + openAIEarlyControlBytes(c)
 	if keepaliveBytes <= 0 {
 		return size
 	}
@@ -366,3 +366,5 @@ func (w *openAICompactKeepaliveWriter) Written() bool {
 	defer w.k.mu.Unlock()
 	return w.ResponseWriter.Written()
 }
+
+func startOpenAISSEControlWriter(c *gin.Context) func() { return startOpenAISSESignals(c, 0, nil) }

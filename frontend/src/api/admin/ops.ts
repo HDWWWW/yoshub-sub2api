@@ -1379,6 +1379,7 @@ export interface SmartWSLatency {
   duration_p95_ms: number
 }
 export interface SmartWSMetrics {
+  smart_pool?: Record<string, unknown>
   scope: string
   started_at: string
   connections: number

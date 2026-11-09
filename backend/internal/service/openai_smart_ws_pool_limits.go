@@ -238,16 +238,6 @@ func (p *openAIWSConnPool) configuredIdleTTL() time.Duration {
 	return 5 * time.Minute
 }
 
-func mergeSmartWSBetaHeader(headers http.Header) {
-	value := headers.Get("OpenAI-Beta")
-	if !strings.Contains(value, "responses_websockets=") {
-		if strings.TrimSpace(value) != "" {
-			value += ", "
-		}
-		headers.Set("OpenAI-Beta", value+openAIWSBetaV2Value)
-	}
-}
-
 func smartWSCapacityIdentity(req openAIWSAcquireRequest) [32]byte {
 	h := make(http.Header)
 	for _, name := range []string{"Authorization", "OpenAI-Project", "OpenAI-Organization", "Chatgpt-Account-Id"} {

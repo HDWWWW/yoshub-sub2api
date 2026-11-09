@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -19,6 +18,7 @@ import (
 func TestSmartWSOpaqueHandshake403DoesNotDisableSharedAccount(t *testing.T) {
 	s, account, httpUpstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, "forbidden by edge")
 	})
 	repo := &rateLimitAccountRepoStub{}
 	blocker := &runtimeBlockRecorder{}
@@ -97,90 +97,43 @@ func TestSmartWSHTTPFallbackKeepsHTTPAccountPolicy(t *testing.T) {
 	require.Equal(t, 1, repo.tempCalls, "only WS-specific 403 penalties should change")
 }
 
-func TestSmartWSRejectionOnlyBypassesNewRequests(t *testing.T) {
-	s, account, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	})
-	upstream.responses = []*http.Response{{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"http_result"}`))}}
-	request := func(body, session string) *http.Response {
-		t.Helper()
-		c, _ := forcedWSContext(t, "/v1/responses", 1, session)
+func TestSmartWSBlank403FallsBackAndBacksOff(t *testing.T) {
+	s, account, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) })
+	const body = `{"model":"gpt-5.1","input":"hello"}`
+	for i := 0; i < 2; i++ {
+		upstream.responses = append(upstream.responses, &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"http_result","status":"completed"}`))})
+	}
+	for i := 0; i < 2; i++ {
+		c, _ := forcedWSContext(t, "/v1/responses", 1, "session")
 		req := httptest.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer fixture")
-		req.Header.Set("session_id", session)
 		resp, err := s.doOpenAIHTTPOverWS(c, req, "", account)
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = resp.Body.Close() })
-		return resp
+		require.Equal(t, 200, resp.StatusCode)
+		_ = resp.Body.Close()
 	}
-	require.Equal(t, 403, request(`{"model":"gpt-5.1","input":"hello"}`, "one").StatusCode)
-	require.Zero(t, upstream.callCount)
-	require.Equal(t, 409, request(`{"model":"gpt-5.1","input":[],"previous_response_id":"resp_ws"}`, "two").StatusCode)
-	require.Zero(t, upstream.callCount, "a connection-dependent continuation must not be dispatched via HTTP")
-	const fullBody = `{"model":"gpt-5.1","input":"new request","reasoning":{"effort":"high"},"service_tier":"priority","tools":[],"instructions":"keep"}`
-	require.Equal(t, 200, request(fullBody, "three").StatusCode)
-	require.Equal(t, 1, upstream.callCount)
-	require.Equal(t, fullBody, string(upstream.bodies[0]))
-	snapshot := s.getOpenAIWSConnPool().SmartWSSnapshot()
-	require.EqualValues(t, 1, snapshot.Counters["handshakes"])
-	require.EqualValues(t, 1, snapshot.Counters["handshake_403"])
-	require.EqualValues(t, 1, snapshot.Counters["safe_http_fallback"])
-	require.EqualValues(t, 1, snapshot.Counters["continuation_unavailable"])
+	require.Equal(t, 2, upstream.callCount)
+	require.Equal(t, []byte(body), upstream.bodies[0])
+	stats := s.independentSmartWSStats()
+	require.EqualValues(t, 1, stats["blank_403_fallback"])
+	require.EqualValues(t, 1, stats["dial_backoff"])
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	c, _ := forcedWSContext(t, "/v1/responses", 1, "cancel")
-	req := httptest.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(fullBody)).WithContext(ctx)
-	req.Header.Set("Authorization", "Bearer fixture")
+	req := httptest.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(body)).WithContext(ctx)
 	_, err := s.doOpenAIHTTPOverWS(c, req, "", account)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, 1, upstream.callCount, "cancellation must prevent a cached HTTP fallback")
+	require.Equal(t, 2, upstream.callCount)
 }
 
-func TestSmartWSRejectionCacheExpiryBoundsAndIsolation(t *testing.T) {
-	pool := newOpenAIWSConnPool(nil)
-	defer pool.Close()
-	now := time.Now()
-	req := openAIWSAcquireRequest{Account: &Account{ID: 1, Type: AccountTypeOAuth}, WSURL: "wss://example.test/responses", ProxyURL: "http://proxy.test", Headers: http.Header{"Authorization": {"Bearer first"}, "Openai-Beta": {"responses_websockets=2026-02-06"}}}
-	key := smartWSRejectionDigest(req)
-	pool.rejections.put(key, now, 30*time.Second, 2)
-	require.True(t, pool.rejections.active(key, now.Add(time.Second)))
-	pool.rejections.put(key, now.Add(20*time.Second), 30*time.Second, 2)
-	require.False(t, pool.rejections.active(key, now.Add(31*time.Second)), "repeat failures must not extend an existing pause")
-	for _, mutate := range []func(*openAIWSAcquireRequest){
-		func(r *openAIWSAcquireRequest) { r.Account = &Account{ID: 2, Type: AccountTypeOAuth} },
-		func(r *openAIWSAcquireRequest) { r.Headers.Set("Authorization", "Bearer refreshed") },
-		func(r *openAIWSAcquireRequest) { r.Headers.Set("OpenAI-Beta", "different_protocol") },
-		func(r *openAIWSAcquireRequest) { r.Headers.Set("Chatgpt-Account-Id", "different_tenant") },
-		func(r *openAIWSAcquireRequest) { r.WSURL = "wss://other.test/responses" },
-		func(r *openAIWSAcquireRequest) { r.ProxyURL = "http://other-proxy.test" },
-	} {
-		other := req
-		other.Headers = req.Headers.Clone()
-		mutate(&other)
-		require.NotEqual(t, key, smartWSRejectionDigest(other))
-	}
-	for i := 0; i < 20; i++ {
-		var k [32]byte
-		k[0] = byte(i)
-		pool.rejections.put(k, now.Add(time.Duration(i)*time.Millisecond), time.Minute, 2)
-	}
-	require.Len(t, pool.rejections.entries, 2)
-	// Neither authentication failures nor temporary load/network errors may
-	// turn into silently successful HTTP retries through this cache.
-	for _, status := range []int{401, 429, 503, 0} {
-		pool.rememberSmartWSRejection(req, &openAIWSDialError{StatusCode: status})
-		require.False(t, pool.rejections.active(key, now))
-	}
-}
-
-func TestSmartWSOversizedContinuationAtEndCannotFallback(t *testing.T) {
-	s, account, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) { t.Error("oversized continuation must not dial") })
+func TestSmartWSOversizedHTTPHistoryPreservesEntireBody(t *testing.T) {
+	s, account, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) { t.Error("history must not dial WS") })
 	s.cfg.Gateway.OpenAIWS.MaxRequestBytes = 1024
-	body := `{"model":"gpt-5.1","input":"` + strings.Repeat("x", 2048) + `","previous_response_id":"resp_ws_local"}`
-	c, rec := forcedWSContext(t, "/v1/responses", 1, "large-continuation")
+	body := `{"model":"gpt-5.1","input":"` + strings.Repeat("x", 2048) + `","previous_response_id":"resp_http"}`
+	upstream.responses = []*http.Response{{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_next","status":"completed","usage":{"input_tokens":1}}`))}}
+	c, _ := forcedWSContext(t, "/v1/responses", 1, "history")
 	_, err := s.Forward(c.Request.Context(), c, account, []byte(body))
-	require.Error(t, err)
-	require.Equal(t, 409, rec.Code)
-	require.Contains(t, rec.Body.String(), "smart_ws_continuation_unavailable")
-	require.Zero(t, upstream.callCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, upstream.callCount)
+	require.JSONEq(t, body, string(upstream.bodies[0]))
 }

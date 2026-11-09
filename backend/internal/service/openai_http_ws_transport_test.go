@@ -16,6 +16,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/smartws"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -51,6 +52,10 @@ func forcedWSService(t *testing.T, handler http.HandlerFunc) (*OpenAIGatewayServ
 	t.Cleanup(pool.Close)
 	httpUpstream := &httpUpstreamSequenceRecorder{}
 	s := &OpenAIGatewayService{cfg: cfg, openaiWSPool: pool, httpUpstream: httpUpstream, toolCorrector: NewCodexToolCorrector()}
+	s.openaiSmartPool = smartws.NewPool(func(ctx context.Context, d *websocket.Dialer, _ string, h http.Header) (*websocket.Conn, *http.Response, error) {
+		return d.DialContext(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", h)
+	})
+	t.Cleanup(s.openaiSmartPool.Close)
 	a := &Account{ID: 71, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 4,
 		Credentials: map[string]any{"api_key": "test-token", "base_url": server.URL},
 		Extra:       map[string]any{"openai_apikey_responses_websockets_v2_mode": "ctx_pool", "openai_responses_mode": "force_responses"},
@@ -314,31 +319,32 @@ func TestForcedWSProgressTimeoutEvictsOnlyStalledLease(t *testing.T) {
 
 func TestForcedWSReuseAndTenantThreadIsolation(t *testing.T) {
 	var dials atomic.Int32
-	s, a, _ := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+	s, a, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
 		conn, err := forcedWSUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		dials.Add(1)
 		defer conn.Close()
-		for {
+		for turn := 0; ; turn++ {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}
-			if conn.WriteMessage(websocket.TextMessage, []byte(forcedWSCompleted)) != nil {
+			if conn.WriteMessage(websocket.TextMessage, []byte(strings.ReplaceAll(forcedWSCompleted, "resp_force", fmt.Sprintf("resp_%d", turn)))) != nil {
 				return
 			}
 		}
 	})
+	upstream.responses = []*http.Response{{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_http_fallback","status":"completed","output":[],"usage":{"input_tokens":1}}`))}}
 	for i, tc := range []struct {
 		key    int64
 		thread string
 		want   int32
-	}{{1, "a", 1}, {1, "a", 1}, {2, "a", 2}, {1, "b", 3}, {1, "a", 3}} {
+	}{{1, "a", 1}, {1, "a", 1}, {2, "a", 2}, {1, "b", 2}, {1, "a", 2}} {
 		c, _ := forcedWSContext(t, "/v1/responses", tc.key, tc.thread)
 		result, err := s.Forward(c.Request.Context(), c, a, []byte(`{"model":"gpt-5.1","stream":false,"input":"hello"}`))
 		require.NoError(t, err, "request %d", i)
-		require.True(t, result.OpenAIWSMode)
+		require.Equal(t, i != 3, result.OpenAIWSMode)
 		require.Equal(t, tc.want, dials.Load())
 	}
 }
@@ -493,57 +499,19 @@ func TestForcedWSDecisionAndValidation(t *testing.T) {
 	require.Equal(t, OpenAIUpstreamTransportHTTPSSE, s.smartWSEligibleAccount(a).Transport)
 }
 
-func TestForcedWSOAuthToolContinuationKeepsPreviousResponseAndConnection(t *testing.T) {
-	for _, passthrough := range []bool{false, true} {
-		t.Run(fmt.Sprint(passthrough), func(t *testing.T) {
-			var dials atomic.Int32
-			requests := make(chan []byte, 2)
-			s, a, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
-				conn, err := forcedWSUpgrader.Upgrade(w, r, nil)
-				if err != nil {
-					return
-				}
-				dials.Add(1)
-				defer conn.Close()
-				for {
-					_, payload, err := conn.ReadMessage()
-					if err != nil {
-						return
-					}
-					requests <- payload
-					if gjson.GetBytes(payload, "previous_response_id").String() == "" {
-						_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.completed","response":{"id":"resp_tool","model":"gpt-5.4","status":"completed","output":[{"type":"function_call","id":"fc_a","call_id":"call_a","name":"lookup","arguments":"{}"}],"usage":{"input_tokens":12,"output_tokens":7}}}`))
-					} else {
-						_ = conn.WriteMessage(websocket.TextMessage, []byte(forcedWSCompleted))
-					}
-				}
-			})
-			a.Type = AccountTypeOAuth
-			a.Credentials = map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"}
-			a.Extra["openai_passthrough"] = passthrough
-			bodies := []string{
-				`{"model":"gpt-5.4","stream":false,"input":"hello","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{}}}]}`,
-				`{"model":"gpt-5.4","stream":false,"previous_response_id":"resp_tool","input":[{"type":"function_call_output","call_id":"call_a","output":"ok"}],"tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{}}}]}`,
-			}
-			for i, body := range bodies {
-				c, rec := forcedWSContext(t, "/v1/responses", 1, "tools")
-				result, err := s.Forward(c.Request.Context(), c, a, []byte(body))
-				require.NoError(t, err)
-				require.True(t, result.OpenAIWSMode)
-				payload := <-requests
-				if i == 0 {
-					require.Equal(t, "lookup", gjson.GetBytes(rec.Body.Bytes(), "output.0.name").String())
-					require.Equal(t, "call_a", gjson.GetBytes(rec.Body.Bytes(), "output.0.call_id").String())
-				} else {
-					require.Equal(t, "resp_tool", gjson.GetBytes(payload, "previous_response_id").String())
-					require.Equal(t, "function_call_output", gjson.GetBytes(payload, "input.0.type").String())
-					require.Equal(t, "call_a", gjson.GetBytes(payload, "input.0.call_id").String())
-				}
-			}
-			require.EqualValues(t, 1, dials.Load())
-			require.Zero(t, upstream.callCount)
-		})
-	}
+// SmartWS leaves provider-managed HTTP history on HTTP; native WS still owns
+// its existing previous_response_id continuation implementation.
+func TestSmartWSHTTPHistoryStaysHTTP(t *testing.T) {
+	s, a, upstream := forcedWSService(t, func(http.ResponseWriter, *http.Request) { t.Error("continuation must not dial WS") })
+	body := `{"model":"gpt-5.1","stream":false,"previous_response_id":"resp_http","input":[{"type":"function_call_output","call_id":"call_a","output":"ok"}]}`
+	upstream.responses = []*http.Response{{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_next","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1}}`))}}
+	c, _ := forcedWSContext(t, "/v1/responses", 1, "tools")
+	result, err := s.Forward(c.Request.Context(), c, a, []byte(body))
+	require.NoError(t, err)
+	require.False(t, result.OpenAIWSMode)
+	require.Equal(t, 1, upstream.callCount)
+	require.Equal(t, "resp_http", gjson.GetBytes(upstream.bodies[0], "previous_response_id").String())
+	require.Equal(t, "call_a", gjson.GetBytes(upstream.bodies[0], "input.0.call_id").String())
 }
 
 func TestForcedWSCompactAndDisabledStayHTTP(t *testing.T) {

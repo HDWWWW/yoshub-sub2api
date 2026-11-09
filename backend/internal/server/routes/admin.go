@@ -644,6 +644,8 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpA
 		adminSettings.GET("/stream-timeout", h.Admin.Setting.GetStreamTimeoutSettings)
 		adminSettings.PUT("/stream-timeout", h.Admin.Setting.UpdateStreamTimeoutSettings)
 		// 快乐首字配置
+		adminSettings.GET("/group-first-token-optimization/:id", h.Admin.Setting.GetGroupFirstTokenSettings)
+		adminSettings.PUT("/group-first-token-optimization/:id", h.Admin.Setting.UpdateGroupFirstTokenSettings)
 		adminSettings.GET("/happy-first-token", h.Admin.Setting.GetHappyFirstTokenSettings)
 		adminSettings.PUT("/happy-first-token", h.Admin.Setting.UpdateHappyFirstTokenSettings)
 		// 请求整流器配置
