@@ -62,7 +62,7 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 		return nil, err
 	}
 	id, now := uuid.NewString(), time.Now().UTC()
-	err = s.store.Update(ctx, func(state *AccountRiskState, _ AccountRiskStop) error {
+	err = s.store.Update(ctx, func(state *AccountRiskState, _ AccountRiskScheduling) error {
 		r := state.Rules[groupID]
 		if (r == nil && revision != 0) || (r != nil && r.Revision != revision) {
 			return ErrAccountRiskConflict
@@ -80,7 +80,7 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 		defer stop()
 		for attempt := 0; attempt < 5; attempt++ {
-			err := s.store.Update(cleanup, func(state *AccountRiskState, _ AccountRiskStop) error {
+			err := s.store.Update(cleanup, func(state *AccountRiskState, _ AccountRiskScheduling) error {
 				if state.Pending != nil && state.Pending.ID == id {
 					state.Pending = nil
 				}

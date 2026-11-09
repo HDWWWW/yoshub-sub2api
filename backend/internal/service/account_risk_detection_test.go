@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -19,12 +20,14 @@ import (
 )
 
 type riskTestStore struct {
-	mu      sync.Mutex
-	state   *AccountRiskState
-	stopped []int64
-	fail    bool
-	busy    int
-	cas     bool
+	mu       sync.Mutex
+	state    *AccountRiskState
+	stopped  []int64
+	resumed  []int64
+	accounts *riskTestAccounts
+	fail     bool
+	busy     int
+	cas      bool
 }
 
 func (s *riskTestStore) Read(context.Context) (*AccountRiskState, error) {
@@ -35,7 +38,7 @@ func (s *riskTestStore) Read(context.Context) (*AccountRiskState, error) {
 	_ = json.Unmarshal(raw, &out)
 	return &out, nil
 }
-func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, AccountRiskStop) error) error {
+func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, AccountRiskScheduling) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.busy > 0 {
@@ -45,13 +48,55 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 	if s.fail {
 		return errors.New("database unavailable")
 	}
-	return fn(s.state, func(_ int64, a *Account) (bool, error) {
+	stop := func(_ int64, a *Account) (bool, error) {
 		if !s.cas {
 			return false, nil
 		}
 		s.stopped = append(s.stopped, a.ID)
+		delete(s.state.CapacityPauses, a.ID)
+		for i := range s.accounts.pool {
+			if s.accounts.pool[i].ID == a.ID {
+				s.accounts.pool[i].Schedulable = false
+				delete(s.accounts.pool[i].Extra, AccountRiskCapacityPauseExtraKey)
+			}
+		}
 		return true, nil
-	})
+	}
+	pause := func(_ int64, a *Account, token string) (bool, error) {
+		if !s.cas {
+			return false, nil
+		}
+		for i := range s.accounts.pool {
+			current := &s.accounts.pool[i]
+			if current.ID == a.ID && current.Schedulable {
+				current.Schedulable = false
+				current.Extra = maps.Clone(current.Extra)
+				if current.Extra == nil {
+					current.Extra = map[string]any{}
+				}
+				current.Extra[AccountRiskCapacityPauseExtraKey] = token
+				s.stopped = append(s.stopped, a.ID)
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	resume := func(_ int64, a *Account, token string) (bool, error) {
+		if !s.cas {
+			return false, nil
+		}
+		for i := range s.accounts.pool {
+			current := &s.accounts.pool[i]
+			if current.ID == a.ID && !current.Schedulable && current.Extra[AccountRiskCapacityPauseExtraKey] == token {
+				current.Schedulable = true
+				delete(current.Extra, AccountRiskCapacityPauseExtraKey)
+				s.resumed = append(s.resumed, a.ID)
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return fn(s.state, AccountRiskScheduling{Stop: stop, Pause: pause, Resume: resume})
 }
 
 type riskTestAccounts struct {
@@ -60,7 +105,7 @@ type riskTestAccounts struct {
 }
 
 func (a *riskTestAccounts) ListByGroup(context.Context, int64) ([]Account, error) {
-	return a.pool, a.err
+	return append([]Account(nil), a.pool...), a.err
 }
 
 func (a *riskTestAccounts) GetByID(_ context.Context, id int64) (*Account, error) {
@@ -140,6 +185,7 @@ func riskHarness() (*AccountRiskService, *riskTestStore, *riskTestAccounts, *ris
 	c.Enabled = true
 	store := &riskTestStore{state: &AccountRiskState{Rules: map[int64]*AccountRiskRule{7: {GroupID: 7, Revision: 1, Config: c}}}, cas: true}
 	accounts := &riskTestAccounts{pool: []Account{{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Priority: 1, Concurrency: 100, GroupIDs: []int64{7}}, {ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Priority: 2, Concurrency: 100, GroupIDs: []int64{7}}}}
+	store.accounts = accounts
 	loads := &riskTestLoads{first: 59, second: 90}
 	s := &AccountRiskService{store: store, accounts: accounts, groups: &riskTestGroups{}, loads: loads, probe: &riskTestProbe{}, cfg: &config.Config{}, worker: "one"}
 	return s, store, accounts, loads, now
@@ -156,7 +202,7 @@ func TestAccountRiskContinuousCapacity(t *testing.T) {
 	job, err := s.tick(context.Background(), now.Add(10*time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, job)
-	require.Empty(t, store.stopped, "capacity alone must never stop scheduling")
+	require.Equal(t, []int64{1}, store.stopped, "pause before dispatching the verification")
 	require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(11*time.Second)))
 	require.Equal(t, []int64{1}, store.stopped)
 	require.Contains(t, store.state.Rules[7].Events[0].Reason, "59.0%")
@@ -210,12 +256,7 @@ func TestAccountRiskResetsAndNeverStopsOnUnknown(t *testing.T) {
 			}
 			job, err := s.tick(ctx, tick)
 			require.NoError(t, err)
-			if kind == "CAS change" {
-				require.NotNil(t, job)
-				require.NoError(t, s.finishProbe(ctx, job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, tick.Add(time.Second)))
-			} else {
-				require.Nil(t, job)
-			}
+			require.Nil(t, job)
 			require.Empty(t, store.stopped)
 		})
 	}

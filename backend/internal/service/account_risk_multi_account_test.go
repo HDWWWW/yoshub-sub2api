@@ -19,6 +19,7 @@ func riskThreeAccounts(t *testing.T) (*AccountRiskService, *riskTestStore, *risk
 	third.ID, third.Priority = 3, 3
 	accounts.pool = append(accounts.pool, third)
 	loads.byID = map[int64]int{1: 30, 2: 40, 3: 100}
+	store.state.Rules[7].Config.CapacityNotifyOnly = true
 	store.state.Rules[7].Config.SustainSeconds = 2
 	store.state.Rules[7].Config.SecondAtLeastPercent = 75
 	return s, store, accounts, loads, now
@@ -27,7 +28,7 @@ func riskThreeAccounts(t *testing.T) (*AccountRiskService, *riskTestStore, *risk
 func TestAccountRiskThirdAccountTriggersAllEarlierLowAccounts(t *testing.T) {
 	for _, outcome := range []string{"pass", "mismatch", "notify only", "network", "incomplete"} {
 		t.Run(outcome, func(t *testing.T) {
-			s, store, accounts, _, now := riskThreeAccounts(t)
+			s, store, _, _, now := riskThreeAccounts(t)
 			job := riskCapacityDueJob(t, s, now)
 			require.Equal(t, int64(1), job.account.ID)
 			require.Equal(t, int64(3), job.referenceID)
@@ -39,19 +40,14 @@ func TestAccountRiskThirdAccountTriggersAllEarlierLowAccounts(t *testing.T) {
 			switch outcome {
 			case "mismatch", "notify only":
 				result.Text = "wrong"
-				r.Config.CapacityNotifyOnly = outcome == "notify only"
+				r.Config.CapacityNotifyOnly = true
 			case "network":
 				probeErr = errors.New("network unavailable")
 			case "incomplete":
 				result.Completed = false
 			}
 			require.NoError(t, s.finishProbe(context.Background(), job, result, probeErr, now.Add(3*time.Second)))
-			if outcome == "mismatch" {
-				require.Equal(t, []int64{1}, store.stopped)
-				accounts.pool[0].Schedulable = false
-			} else {
-				require.Empty(t, store.stopped)
-			}
+			require.Empty(t, store.stopped)
 			// Persist/reload between samples, as the real store does. The second
 			// account keeps its own timer even after the first passes or stops.
 			raw, err := json.Marshal(store.state)
@@ -229,6 +225,7 @@ func TestAccountRiskMultiAccountReservationAndFairRetests(t *testing.T) {
 func TestAccountRiskNonFirstMismatchStopsOnlyItsTarget(t *testing.T) {
 	s, store, _, loads, now := riskThreeAccounts(t)
 	loads.byID[1] = 80
+	store.state.Rules[7].Config.CapacityNotifyOnly = false
 	job := riskCapacityDueJob(t, s, now)
 	require.Equal(t, int64(2), job.account.ID)
 	require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(3*time.Second)))

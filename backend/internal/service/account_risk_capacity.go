@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRiskState, r *AccountRiskRule, pool []Account, previousAt, now time.Time) *accountRiskJob {
+func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRiskState, r *AccountRiskRule, pool []Account, previousAt, now time.Time, scheduling AccountRiskScheduling) (*accountRiskJob, error) {
 	o := &r.Observation
 	requests := make([]AccountWithConcurrency, 0, len(pool))
 	checks := make(map[int64]*AccountRiskCapacityCheck, len(pool))
@@ -33,12 +33,12 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 	o.First, o.Second = nil, nil
 	if len(requests) < 2 {
 		riskReset(o, "waiting", "至少需要两个设置有限并发容量的可调度账号")
-		return nil
+		return nil, nil
 	}
 	loads, err := s.loads.GetAccountsLoadBatchFresh(ctx, requests)
 	if err != nil {
 		riskReset(o, "unavailable", "容量读取失败，本次不判定")
-		return nil
+		return nil, nil
 	}
 	for i := range pool {
 		a := &pool[i]
@@ -49,7 +49,7 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 		load := loads[a.ID]
 		if load == nil || load.CurrentConcurrency < 0 {
 			riskReset(o, "unavailable", "容量采样缺失，本次不判定")
-			return nil
+			return nil, nil
 		}
 		check.Target = AccountRiskLoad{AccountID: a.ID, Name: a.Name, Priority: a.SchedulingPriority(), Used: load.CurrentConcurrency, Capacity: a.Concurrency,
 			Percent: 100 * float64(load.CurrentConcurrency) / float64(a.Concurrency)}
@@ -117,6 +117,12 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 			(check.NextProbeAt != nil && check.NextProbeAt.After(now)) {
 			continue
 		}
+		if !r.Config.CapacityNotifyOnly {
+			if err := pauseCapacityAccount(state, r, &pool[i], check, scheduling, now); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		// Never-tested accounts first, then the oldest completed probe. Priority
 		// order breaks ties; a healthy first account cannot monopolize retests.
 		if due == nil || (check.LastProbeAt == nil && due.LastProbeAt != nil) ||
@@ -132,7 +138,7 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 		if second := checks[pool[1].ID]; second != nil {
 			o.Second = &second.Target
 		}
-		return nil
+		return nil, nil
 	}
 	if due != nil {
 		selected = due
@@ -142,11 +148,11 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 	o.Signature, o.ProbeSignature, o.Worker = selected.Signature, selected.Signature, s.worker
 	o.Message = fmt.Sprintf("%d 个账号容量异常，独立计时并依次复测", count)
 	if due == nil {
-		return nil
+		return nil, nil
 	}
 	if state.Pending != nil {
 		o.Message = "容量异常已确认，等待当前消息复测完成"
-		return nil
+		return nil, nil
 	}
 	reason := fmt.Sprintf("容量异常持续 %d 秒：账号 #%d %.1f%% < %d%%，后位账号 #%d %.1f%% ≥ %d%%", r.Config.SustainSeconds,
 		due.Target.AccountID, due.Target.Percent, r.Config.FirstBelowPercent, due.Reference.AccountID, due.Reference.Percent, r.Config.SecondAtLeastPercent)
@@ -154,5 +160,5 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 	job.referenceID = due.Reference.AccountID
 	due.NextProbeAt = o.NextProbeAt
 	o.Message = fmt.Sprintf("正在复测账号 #%d，后位高负载账号 #%d", due.Target.AccountID, due.Reference.AccountID)
-	return job
+	return job, nil
 }

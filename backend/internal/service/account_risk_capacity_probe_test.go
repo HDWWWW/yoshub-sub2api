@@ -36,7 +36,8 @@ func TestAccountRiskCapacityProbeUsesConfiguredMessageAndGuards(t *testing.T) {
 			r.Config.Model, r.Config.ReasoningEffort = "gpt-6-astra", "medium"
 			r.Config.ProbePrompt, r.Config.ExpectedText = "custom operator message", "EXPECTED"
 			job := riskCapacityDueJob(t, s, now)
-			require.Empty(t, store.stopped)
+			require.Equal(t, []int64{1}, store.stopped)
+			require.False(t, accounts.pool[0].Schedulable)
 			probe := s.probe.(*riskTestProbe)
 			probe.result = AccountRiskProbeResult{Completed: true, Text: "private wrong answer"}
 			switch scenario {
@@ -59,7 +60,7 @@ func TestAccountRiskCapacityProbeUsesConfiguredMessageAndGuards(t *testing.T) {
 			}
 			s.runProbe(context.Background(), job)
 			require.Nil(t, store.state.Pending)
-			if scenario == "pass" || scenario == "mismatch" || scenario == "network" || scenario == "incomplete" {
+			if scenario == "pass" || scenario == "mismatch" || scenario == "network" || scenario == "incomplete" || scenario == "pair changed" {
 				require.Equal(t, 1, probe.calls)
 				require.Equal(t, int64(1), probe.lastAccountID)
 				require.Equal(t, job.config, probe.lastConfig, "capacity probes reuse all configured test parameters")
@@ -67,16 +68,20 @@ func TestAccountRiskCapacityProbeUsesConfiguredMessageAndGuards(t *testing.T) {
 			} else {
 				require.Zero(t, probe.calls)
 			}
-			if scenario == "mismatch" {
-				require.Equal(t, []int64{1}, store.stopped)
-				require.Equal(t, accountRiskProbeCapacity, r.Events[0].Kind)
-				require.Contains(t, r.Events[0].Reason, "59.0%")
-				require.NotContains(t, r.Events[0].Reason, probe.result.Text)
-				require.NotContains(t, r.Events[0].Reason, job.config.ProbePrompt)
+
+			require.Equal(t, []int64{1}, store.stopped)
+			if scenario == "pass" {
+				require.Equal(t, []int64{1}, store.resumed)
+				require.True(t, accounts.pool[0].Schedulable)
 			} else {
-				require.Empty(t, store.stopped)
-				require.Empty(t, r.Events)
+				require.Empty(t, store.resumed)
+				require.False(t, accounts.pool[0].Schedulable)
 			}
+			for _, event := range r.Events {
+				require.NotContains(t, event.Reason, probe.result.Text)
+				require.NotContains(t, event.Reason, job.config.ProbePrompt)
+			}
+
 		})
 	}
 }
@@ -108,7 +113,11 @@ func TestAccountRiskProbeNotifyOnlyActionsAreIndependent(t *testing.T) {
 					require.Equal(t, "notify_only", r.Events[0].Action)
 				} else {
 					require.Equal(t, []int64{1}, store.stopped)
-					require.Equal(t, "stop", r.Events[0].Action)
+					if capacity {
+						require.Equal(t, "pause", r.Events[0].Action)
+					} else {
+						require.Equal(t, "stop", r.Events[0].Action)
+					}
 				}
 				require.NoError(t, s.deliverNotification(context.Background(), now.Add(302*time.Second)))
 				if notifyOnly || stopNotice {
@@ -154,9 +163,9 @@ func TestAccountRiskCapacityPassingProbeDiscardsChangedAccount(t *testing.T) {
 	job := riskCapacityDueJob(t, s, now)
 	accounts.pool[0].Credentials = map[string]any{"access_token": "replaced-after-dispatch"}
 	require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: job.config.ExpectedText}, nil, now.Add(12*time.Second)))
-	require.Equal(t, "账号或分组已变化，本次结果作废", store.state.Rules[7].Observation.LastProbeResult)
-	require.Empty(t, store.stopped)
-	require.Empty(t, store.state.Rules[7].Events)
+	require.Equal(t, "账号或分组已变化，本次结果作废，未恢复调度", store.state.Rules[7].Observation.LastProbeResult)
+	require.Equal(t, []int64{1}, store.stopped)
+	require.Empty(t, store.resumed)
 }
 
 func TestAccountRiskCapacityProbeReservationAndStaleResults(t *testing.T) {
@@ -181,8 +190,8 @@ func TestAccountRiskCapacityProbeReservationAndStaleResults(t *testing.T) {
 				store.cas = false
 			}
 			require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(12*time.Second)))
-			require.Empty(t, store.stopped)
-			require.Empty(t, store.state.Rules[7].Events)
+			require.Equal(t, []int64{1}, store.stopped)
+			require.Empty(t, store.resumed)
 			require.Nil(t, store.state.Pending)
 		})
 	}

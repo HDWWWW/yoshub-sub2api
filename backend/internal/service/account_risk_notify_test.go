@@ -55,7 +55,7 @@ func TestAccountRiskNotificationCapacityAndDefaultOff(t *testing.T) {
 			}
 		}
 		require.NotNil(t, job)
-		require.Empty(t, store.stopped)
+		require.Equal(t, []int64{1}, store.stopped)
 		require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(11*time.Second)))
 		require.Equal(t, []int64{1}, store.stopped)
 		require.Empty(t, n.messages, "no network sends inside the stop transaction")

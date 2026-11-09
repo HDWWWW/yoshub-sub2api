@@ -549,6 +549,8 @@ func (r *accountRepository) updateLockedAccount(
 		return nil, err
 	}
 	account.Extra = extra
+	// An explicit account edit revokes automatic capacity-test recovery.
+	delete(extra, service.AccountRiskCapacityPauseExtraKey)
 
 	schedulable := account.Schedulable
 	if account.Status == service.StatusError {
@@ -2778,10 +2780,9 @@ func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedu
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.SetSchedulable(ctx, id, schedulable)
 	}
-	_, err := r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
-		SetSchedulable(schedulable).
-		Save(ctx)
+	_, err := r.client.ExecContext(ctx, `UPDATE accounts SET schedulable=$2,
+		extra=COALESCE(extra,'{}'::jsonb)-'yoshub_risk_capacity_pause', updated_at=NOW()
+		WHERE id=$1 AND deleted_at IS NULL`, id, schedulable)
 	if err != nil {
 		return err
 	}
@@ -3255,7 +3256,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND COALESCE(btrim("+credentialPlaceholder+"::jsonb ->> 'account_mode') <> 'zen', true) IS NOT TRUE")
 	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
+	if updates.Schedulable != nil || len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
@@ -3337,6 +3338,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 		if updates.EnsureCodexFingerprintSeed {
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
+		}
+		if updates.Schedulable != nil {
+			extraExpression = "(" + extraExpression + ") - 'yoshub_risk_capacity_pause'"
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
 	}

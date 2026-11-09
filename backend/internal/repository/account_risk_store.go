@@ -17,6 +17,37 @@ type accountRiskStore struct {
 	accounts *accountRepository
 }
 
+// Keep the queue outside the legacy settings document: an old application slot
+// may still update that document while its live requests drain during rollout.
+const accountRiskCapacityPausesSettingKey = "account_risk_capacity_pauses_v1"
+
+func readAccountRiskPauses(ctx context.Context, query func(context.Context, string, ...any) *sql.Row, state *service.AccountRiskState) error {
+	var raw string
+	err := query(ctx, "SELECT value FROM settings WHERE key=$1", accountRiskCapacityPausesSettingKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		state.CapacityPauses = nil
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal([]byte(raw), &state.CapacityPauses); err != nil {
+		return err
+	}
+	for id, pause := range state.CapacityPauses {
+		if pause == nil || id <= 0 || pause.AccountID != id || pause.GroupID <= 0 || pause.Token == "" {
+			return errors.New("invalid capacity pause")
+		}
+	}
+	return nil
+}
+
+func encodeLegacyAccountRiskState(state *service.AccountRiskState) ([]byte, error) {
+	copy := *state
+	copy.CapacityPauses = nil
+	return json.Marshal(&copy)
+}
+
 func NewAccountRiskStore(db *sql.DB, accounts service.AccountRepository) service.AccountRiskStore {
 	repo, _ := accounts.(*accountRepository)
 	return &accountRiskStore{db: db, accounts: repo}
@@ -52,10 +83,17 @@ func (s *accountRiskStore) Read(ctx context.Context) (*service.AccountRiskState,
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	return decodeAccountRiskState(raw)
+	state, err := decodeAccountRiskState(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err = readAccountRiskPauses(ctx, s.db.QueryRowContext, state); err != nil {
+		return nil, err
+	}
+	return state, nil
 }
 
-func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountRiskState, service.AccountRiskStop) error) error {
+func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountRiskState, service.AccountRiskScheduling) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -77,13 +115,19 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 	if err != nil {
 		return err
 	}
-	before, _ := json.Marshal(state)
+	if err = readAccountRiskPauses(ctx, tx.QueryRowContext, state); err != nil {
+		return err
+	}
+	before, _ := encodeLegacyAccountRiskState(state)
+	pausesBefore, _ := json.Marshal(state.CapacityPauses)
 	changed := []int64{}
 	stop := func(groupID int64, a *service.Account) (bool, error) {
 		// The rule and account mutation commit together. A concurrent admin edit,
 		// credential refresh or membership change prevents a stale stop.
-		result, err := tx.ExecContext(ctx, `UPDATE accounts SET schedulable=false, updated_at=NOW()
-		 WHERE id=$1 AND updated_at=$2 AND deleted_at IS NULL AND status='active' AND schedulable=true
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET schedulable=false,
+		 extra=COALESCE(extra,'{}'::jsonb)-'yoshub_risk_capacity_pause', updated_at=NOW()
+		 WHERE id=$1 AND updated_at=$2 AND deleted_at IS NULL AND status='active'
+		 AND (schedulable=true OR COALESCE(extra->>'yoshub_risk_capacity_pause','')<>'')
 		 AND EXISTS (SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id
 		 WHERE ag.account_id=accounts.id AND ag.group_id=$3 AND g.deleted_at IS NULL AND g.status='active')`, a.ID, a.UpdatedAt, groupID)
 		if err != nil {
@@ -97,18 +141,69 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 			return false, err
 		}
 		changed = append(changed, a.ID)
+		delete(state.CapacityPauses, a.ID)
 		return true, nil
 	}
-	if err = fn(state, stop); err != nil {
+	pause := func(groupID int64, a *service.Account, token string) (bool, error) {
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET schedulable=false,
+		 extra=jsonb_set(COALESCE(extra,'{}'::jsonb),'{yoshub_risk_capacity_pause}',to_jsonb($4::text)), updated_at=NOW()
+		 WHERE id=$1 AND updated_at=$2 AND deleted_at IS NULL AND status='active' AND schedulable=true
+		 AND EXISTS (SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id
+		 WHERE ag.account_id=accounts.id AND ag.group_id=$3 AND g.deleted_at IS NULL AND g.status='active')`, a.ID, a.UpdatedAt, groupID, token)
+		if err != nil {
+			return false, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil || n == 0 {
+			return false, err
+		}
+		if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &a.ID, nil, nil); err != nil {
+			return false, err
+		}
+		changed = append(changed, a.ID)
+		return true, nil
+	}
+	resume := func(groupID int64, a *service.Account, token string) (bool, error) {
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET schedulable=true,
+		 extra=COALESCE(extra,'{}'::jsonb)-'yoshub_risk_capacity_pause', updated_at=NOW()
+		 WHERE id=$1 AND updated_at=$2 AND deleted_at IS NULL AND status='active' AND schedulable=false
+		 AND extra->>'yoshub_risk_capacity_pause'=$4
+		 AND EXISTS (SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id
+		 WHERE ag.account_id=accounts.id AND ag.group_id=$3 AND g.deleted_at IS NULL AND g.status='active')`, a.ID, a.UpdatedAt, groupID, token)
+		if err != nil {
+			return false, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil || n == 0 {
+			return false, err
+		}
+		if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &a.ID, nil, nil); err != nil {
+			return false, err
+		}
+		changed = append(changed, a.ID)
+		return true, nil
+	}
+	if err = fn(state, service.AccountRiskScheduling{Stop: stop, Pause: pause, Resume: resume}); err != nil {
 		return err
 	}
-	after, err := json.Marshal(state)
+	after, err := encodeLegacyAccountRiskState(state)
 	if err != nil {
 		return err
 	}
 	if string(before) != string(after) {
 		_, err = tx.ExecContext(ctx, `INSERT INTO settings (key,value,updated_at) VALUES ($1,$2,NOW())
 		 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, service.AccountRiskSettingKey, string(after))
+		if err != nil {
+			return err
+		}
+	}
+	pausesAfter, err := json.Marshal(state.CapacityPauses)
+	if err != nil {
+		return err
+	}
+	if string(pausesBefore) != string(pausesAfter) {
+		_, err = tx.ExecContext(ctx, `INSERT INTO settings (key,value,updated_at) VALUES ($1,$2,NOW())
+		 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, accountRiskCapacityPausesSettingKey, string(pausesAfter))
 		if err != nil {
 			return err
 		}

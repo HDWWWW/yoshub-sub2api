@@ -353,15 +353,20 @@ func TestExportDataManagedIPv6RequiresNewAllocation(t *testing.T) {
 				require.Equal(t, "account-secret", account.Credentials["token"])
 			}
 			for _, account := range resp.Data.Accounts[1:] {
-				require.NotNil(t, account.ProxyKey)
-				require.Equal(t, managedIPv6DataProxyKey, *account.ProxyKey)
+				if query == "" {
+					require.NotNil(t, account.ProxyKey)
+					require.Equal(t, managedIPv6DataProxyKey, *account.ProxyKey)
+				} else {
+					require.Nil(t, account.ProxyKey)
+					require.NotContains(t, rec.Body.String(), "proxy_key")
+				}
 			}
 			for _, forbidden := range []string{"lease-user", "managed-secret", "ovh6_lease", "reserved-secret", "egress.internal", "2001:db8::2"} {
 				require.NotContains(t, rec.Body.String(), forbidden)
 			}
 
-			// A full backup round-trip must preserve manual accounts while refusing
-			// managed accounts, including when the user omitted proxy credentials.
+			// Full backups retain lease protection; account-only exports import
+			// without any provider-specific proxy binding.
 			body, err := json.Marshal(DataImportRequest{Data: resp.Data})
 			require.NoError(t, err)
 			importRec := httptest.NewRecorder()
@@ -371,9 +376,15 @@ func TestExportDataManagedIPv6RequiresNewAllocation(t *testing.T) {
 			require.Equal(t, http.StatusOK, importRec.Code)
 			var imported proxyImportResponse
 			require.NoError(t, json.Unmarshal(importRec.Body.Bytes(), &imported))
-			require.Equal(t, 1, imported.Data.AccountCreated)
-			require.Equal(t, 2, imported.Data.AccountFailed)
-			require.Len(t, adminSvc.createdAccounts, 1)
+			if query == "" {
+				require.Equal(t, 1, imported.Data.AccountCreated)
+				require.Equal(t, 2, imported.Data.AccountFailed)
+				require.Len(t, adminSvc.createdAccounts, 1)
+			} else {
+				require.Equal(t, 3, imported.Data.AccountCreated)
+				require.Zero(t, imported.Data.AccountFailed)
+				require.Len(t, adminSvc.createdAccounts, 3)
+			}
 			for _, problem := range imported.Data.Errors {
 				require.Equal(t, managedIPv6ImportError, problem.Message)
 			}

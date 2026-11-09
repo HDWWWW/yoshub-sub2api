@@ -53,7 +53,7 @@ func (s *AccountRiskService) HandleModelMismatch(ctx context.Context, groupID in
 		return nil
 	}
 	recorded := false
-	err := s.store.Update(ctx, func(state *AccountRiskState, stop AccountRiskStop) error {
+	err := s.store.Update(ctx, func(state *AccountRiskState, stop AccountRiskScheduling) error {
 		r := state.Rules[groupID]
 		if r == nil || !riskModelMismatchEnabled(r.Config) {
 			return nil
@@ -69,12 +69,12 @@ func (s *AccountRiskService) HandleModelMismatch(ctx context.Context, groupID in
 		if err != nil {
 			return err
 		}
-		if current == nil || current.Status != StatusActive || !current.Schedulable || !slices.Contains(current.GroupIDs, groupID) || riskModelAccountIdentity(current) != riskModelAccountIdentity(account) {
+		if current == nil || current.Status != StatusActive || (!current.Schedulable && !AccountHasRiskCapacityPause(current)) || !slices.Contains(current.GroupIDs, groupID) || riskModelAccountIdentity(current) != riskModelAccountIdentity(account) {
 			return nil
 		}
 		action := r.Config.ModelMismatchAction
 		if action == "stop" {
-			changed, err := stop(groupID, current)
+			changed, err := stop.Stop(groupID, current)
 			if err != nil {
 				return err
 			}

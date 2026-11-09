@@ -108,7 +108,7 @@
             </div>
           </div>
           <p v-if="!capacityAnomalies.length && view.observation.anomaly_since">{{ t('accountRisk.since') }} {{ formatTime(view.observation.anomaly_since) }}</p>
-          <p v-if="!capacityAnomalies.length && view.observation.next_probe_at">{{ t('accountRisk.nextProbe') }} {{ formatTime(view.observation.next_probe_at) }}</p>
+          <p v-if="(view.observation.mode !== 'capacity' || !capacityAnomalies.length) && view.observation.next_probe_at">{{ t('accountRisk.nextProbe') }} {{ formatTime(view.observation.next_probe_at) }}</p>
           <p v-if="view.observation.last_probe_at">{{ formatTime(view.observation.last_probe_at) }} · {{ view.observation.last_probe_result }}</p>
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">

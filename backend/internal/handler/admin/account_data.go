@@ -23,9 +23,8 @@ const (
 	legacyDataType = "sub2api-bundle"
 	dataVersion    = 1
 	dataPageCap    = 1000
-	// Keep this non-resolvable key even when proxy export is disabled. Older
-	// importers also reject it instead of silently restoring a managed account
-	// with direct egress or reusing its one-account lease.
+	// Full backups retain a non-transferable marker for managed leases.
+	// Account-only exports omit every proxy reference for native compatibility.
 	managedIPv6DataProxyKey = "ovh-ipv6:requires-new-allocation"
 	managedIPv6ImportError  = "OVH IPv6 地址不能复制或复用，请为账号分配新代理后再导入"
 )
@@ -168,12 +167,13 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 		return
 	}
 
-	// Resolve bindings even for account-only exports so managed egress remains
-	// explicitly non-transferable in the backup.
-	proxies, err := h.resolveExportProxies(ctx, accounts)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
+	var proxies []service.Proxy
+	if includeProxies {
+		proxies, err = h.resolveExportProxies(ctx, accounts)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 	}
 
 	// 构建 id→name 映射，用于导出备用代理 name
@@ -190,9 +190,6 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 		p := proxies[i]
 		if isManagedProxyForData(p) {
 			proxyKeyByID[p.ID] = managedIPv6DataProxyKey
-			continue
-		}
-		if !includeProxies {
 			continue
 		}
 		key := buildProxyKey(p.Protocol, p.Host, p.Port, p.Username, p.Password)
@@ -232,7 +229,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 				proxyKey = &key
 			}
 		}
-		if acc.Proxy != nil && isManagedProxyForData(*acc.Proxy) {
+		if includeProxies && acc.Proxy != nil && isManagedProxyForData(*acc.Proxy) {
 			key := managedIPv6DataProxyKey
 			proxyKey = &key
 		}

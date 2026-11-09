@@ -57,7 +57,7 @@ func NativeAccountExtra(extra map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(extra))
 	for key, value := range extra {
-		if !isAccountImportExpiryExtra(key) {
+		if !isAccountImportExpiryExtra(key) && key != AccountRiskCapacityPauseExtraKey {
 			out[key] = value
 		}
 	}

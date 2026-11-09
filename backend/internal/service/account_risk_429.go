@@ -85,7 +85,7 @@ func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, to
 			continue
 		}
 		stopped := false
-		err = s.store.Update(ctx, func(currentState *AccountRiskState, stop AccountRiskStop) error {
+		err = s.store.Update(ctx, func(currentState *AccountRiskState, stop AccountRiskScheduling) error {
 			currentRule := currentState.Rules[id]
 			if currentRule == nil || currentRule.Revision != r.Revision || !risk429Enabled(currentRule.Config) {
 				return nil
@@ -101,10 +101,10 @@ func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, to
 			if err != nil {
 				return err
 			}
-			if current == nil || current.Status != StatusActive || !current.Schedulable || !slices.Contains(current.GroupIDs, id) || riskModelAccountIdentity(current) != riskModelAccountIdentity(account) {
+			if current == nil || current.Status != StatusActive || (!current.Schedulable && !AccountHasRiskCapacityPause(current)) || !slices.Contains(current.GroupIDs, id) || riskModelAccountIdentity(current) != riskModelAccountIdentity(account) {
 				return nil
 			}
-			stopped, err = stop(id, current)
+			stopped, err = stop.Stop(id, current)
 			if err != nil {
 				return err
 			}
