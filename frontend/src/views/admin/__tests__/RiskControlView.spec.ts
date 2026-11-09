@@ -233,6 +233,7 @@ describe('admin RiskControlView', () => {
   })
 
   const auditRow = (id = 1) => ({
+    account_id: null as number | null, account_name: '',
     id, created_at: '2026-11-08T04:00:00Z', user_email: 'writer@example.test',
     endpoint: '/v1/responses', provider: 'openai', model: 'test-model', mode: 'pre_block',
     action: 'keyword_block', flagged: true, highest_category: 'keyword', highest_score: 1,
@@ -314,11 +315,32 @@ describe('admin RiskControlView', () => {
     await flushPromises()
     expect(wrapper.get('[data-test="moderation-input-text"]').text()).toBe(request)
     expect(wrapper.get('[data-test="moderation-policy-evidence"]').text()).toContain('bio_policy')
-    expect(wrapper.find('[data-test="moderation-policy-request"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="moderation-policy-legacy"]').text()).toContain('policyLegacyExcerpt')
     expect(wrapper.find('[data-test="moderation-policy-response"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="moderation-input-text"] img').exists()).toBe(false)
     expect(wrapper.find('[data-test="moderation-input-retention"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="moderation-input-source"]').text()).toContain('input[2]')
+    wrapper.unmount()
+  })
+
+  it.each(['cyber_policy', 'bio_policy'])('shows responding pool account and the full %s conversation', async code => {
+    const full = JSON.stringify({ instructions: 'system history', input: Array.from({ length: 100 }, (_, i) => ({ role: 'user', content: `message ${i} ` + 'long content '.repeat(300) })) }) + ' FINAL-MARKER'
+    getLogInput.mockResolvedValue({ ...auditEvidence(''), matched_keyword: '', evidence: {
+      text: full, total_characters: full.length, stored_characters: full.length, truncated: false,
+      content_scope: 'full_conversation', source: 'request',
+      policy: { code, upstream_status: 200, upstream_body: '<img src=x onerror=alert(1)> upstream error tail' },
+    } })
+    const wrapper = await mountAudits([{ ...auditRow(), action: code, matched_keyword: '', account_id: 363, account_name: 'upstream-pool-account' }])
+    expect(wrapper.get('[data-test="moderation-account-1"]').text()).toContain('upstream-pool-account')
+    expect(wrapper.get('[data-test="moderation-account-1"]').text()).toContain('363')
+    await wrapper.get('[data-test="moderation-input-1"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="moderation-detail-account"]').text()).toContain('upstream-pool-account')
+    expect(wrapper.get('[data-test="moderation-input-text"]').text()).toBe(full)
+    expect(wrapper.get('[data-test="moderation-policy-response"]').text()).toContain('upstream error tail')
+    expect(wrapper.find('[data-test="moderation-policy-response"] img').exists()).toBe(false)
+    expect(wrapper.find('[data-test="moderation-policy-download"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="moderation-policy-legacy"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

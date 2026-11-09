@@ -11,8 +11,10 @@ import (
 const maxModerationEvidenceRunes = 12000
 const defaultModerationKeywordContextChars = 640
 const maxModerationKeywordContextChars = 12000
+const moderationConversationScope = "full_conversation"
 
-// Audits retain bounded user text, independently of the text used for detection.
+// Local/API audits retain bounded user text; provider policy events retain the
+// complete request conversation, independently of the text used for detection.
 // Character counts refer to Text, after redaction. Empty ContentScope identifies
 // legacy evidence whose retained content may include non-user text.
 type ContentModerationInputEvidence struct {
@@ -30,16 +32,24 @@ type ContentModerationInputEvidence struct {
 
 type ContentModerationPolicyEvidence struct {
 	Code           string `json:"code"`
-	RequestBody    string `json:"request_body,omitempty"`  // Legacy read compatibility only.
-	UpstreamBody   string `json:"upstream_body,omitempty"` // Legacy read compatibility only.
+	RequestBody    string `json:"request_body,omitempty"` // Legacy read compatibility only.
+	UpstreamBody   string `json:"upstream_body,omitempty"`
 	UpstreamStatus int    `json:"upstream_status"`
 }
 
 func setContentModerationPolicyEvidence(log *ContentModerationLog, in CyberPolicyRecordInput) {
-	setContentModerationUserEvidence(log, "", []byte(in.RequestBody), "", defaultModerationKeywordContextChars)
-	log.InputEvidence.Policy = &ContentModerationPolicyEvidence{
-		Code: log.Action, UpstreamStatus: in.UpstreamStatus,
+	text := redactContentModerationPolicyPayload(in.RequestBody)
+	characters := utf8.RuneCountInString(text)
+	log.InputEvidence = &ContentModerationInputEvidence{
+		ContentScope: moderationConversationScope, Source: "request",
+		Text: text, TotalCharacters: characters, StoredCharacters: characters,
+		Policy: &ContentModerationPolicyEvidence{
+			Code: log.Action, UpstreamStatus: in.UpstreamStatus,
+			UpstreamBody: redactContentModerationPolicyPayload(in.UpstreamBody),
+		},
 	}
+	// Keep the list small. The detail endpoint alone transfers full conversations.
+	log.InputExcerpt = trimRunes(text, maxModerationExcerptRunes)
 }
 
 func isModerationSecretField(key string) bool {
@@ -64,11 +74,11 @@ func (s *ContentModerationService) GetLogInput(ctx context.Context, id int64) (*
 	if err != nil || result == nil || result.Evidence == nil {
 		return result, err
 	}
-	if policy := result.Evidence.Policy; policy != nil && result.Evidence.ContentScope != moderationUserBodyScope {
-		// Project old complete requests on read. Do not rewrite historical rows
-		// or return their raw request/provider payload through the admin API.
+	if policy := result.Evidence.Policy; policy != nil && policy.RequestBody != "" {
+		// Restore legacy complete evidence without rewriting historical rows.
+		// Previously retained user-only excerpts stay explicitly user-only.
 		log := &ContentModerationLog{Action: policy.Code}
-		setContentModerationPolicyEvidence(log, CyberPolicyRecordInput{RequestBody: policy.RequestBody, UpstreamStatus: policy.UpstreamStatus})
+		setContentModerationPolicyEvidence(log, CyberPolicyRecordInput{RequestBody: policy.RequestBody, UpstreamBody: policy.UpstreamBody, UpstreamStatus: policy.UpstreamStatus})
 		return &ContentModerationLogInput{InputExcerpt: log.InputExcerpt, Evidence: log.InputEvidence}, nil
 	}
 	return result, nil

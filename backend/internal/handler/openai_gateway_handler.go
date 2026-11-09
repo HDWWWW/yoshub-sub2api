@@ -4474,8 +4474,10 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := ""
 	var accountID int64
+	var accountName string
 	if account != nil {
 		accountID = account.ID
+		accountName = account.Name
 		upstreamEndpoint = resolveOpenAIUpstreamEndpoint(c, account, nil)
 	}
 	stream := false
@@ -4545,6 +4547,8 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		if cmSvc != nil {
 			cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
 				PolicyCode:      mark.PolicyCode(),
+				AccountID:       accountID,
+				AccountName:     accountName,
 				LogOnly:         cyberLogOnly,
 				RequestID:       requestID,
 				UserID:          userID,

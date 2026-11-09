@@ -171,12 +171,14 @@ func TestContentModerationUserBodyLegacyPolicyProjection(t *testing.T) {
 	svc := NewContentModerationService(nil, repo, nil, nil, nil, nil, nil, nil)
 	result, err := svc.GetLogInput(context.Background(), 7)
 	require.NoError(t, err)
-	require.Equal(t, "正文", result.Evidence.Text)
-	require.Equal(t, "正文", result.InputExcerpt)
-	require.Equal(t, moderationUserBodyScope, result.Evidence.ContentScope)
+	require.Contains(t, result.Evidence.Text, "正文")
+	require.Contains(t, result.Evidence.Text, "function_call_output")
+	require.Contains(t, result.Evidence.Text, "instructions")
+	require.Equal(t, moderationConversationScope, result.Evidence.ContentScope)
+	require.False(t, result.Evidence.Truncated)
 	require.Equal(t, 400, result.Evidence.Policy.UpstreamStatus)
 	require.Empty(t, result.Evidence.Policy.RequestBody)
-	require.Empty(t, result.Evidence.Policy.UpstreamBody)
+	require.Equal(t, "noise", result.Evidence.Policy.UpstreamBody)
 	require.Contains(t, old.Policy.RequestBody, "noise", "read projection must not mutate historical storage")
 }
 

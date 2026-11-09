@@ -175,13 +175,19 @@ func TestContentModerationKeywordContextConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestContentModerationEvidence_OfficialPoliciesRetainOnlyUserBody(t *testing.T) {
+func TestContentModerationEvidence_OfficialPoliciesRetainFullConversation(t *testing.T) {
 	for _, code := range []string{OpenAIPolicyCyber, OpenAIPolicyBio} {
 		t.Run(code, func(t *testing.T) {
 			prompt := strings.Repeat("完整多轮剧本输入。", 2000) + "请求末尾证据"
 			message := strings.Repeat("官方分析。", 1500) + "响应末尾证据"
 			request, err := json.Marshal(map[string]any{
-				"instructions": "完整系统提示", "input": []map[string]string{{"role": "user", "content": prompt}},
+				"instructions": "完整系统提示", "input": []map[string]string{
+					{"role": "developer", "content": "开发者提示"}, {"role": "user", "content": prompt},
+					{"role": "assistant", "content": "助手消息"},
+					{"type": "function_call", "call_id": "call-1", "arguments": "工具参数"},
+					{"type": "function_call_output", "call_id": "call-1", "output": "完整工具结果"},
+					{"role": "user", "content": "<codex_internal_context source=\"goal\">继续</codex_internal_context>"},
+				},
 				"tools":   []map[string]string{{"name": "test-tool", "description": "工具说明"}},
 				"api_key": "short-secret", "metadata": map[string]any{"authorization": "another-secret", "large_id": json.Number("12345678901234567890")},
 			})
@@ -196,24 +202,32 @@ func TestContentModerationEvidence_OfficialPoliciesRetainOnlyUserBody(t *testing
 			require.Equal(t, string(response), mark.Body, "do not truncate the provider event at 4096 bytes")
 			repo := &contentModerationTestRepo{}
 			svc := NewContentModerationService(&contentModerationTestSettingRepo{values: map[string]string{SettingKeyRiskControlEnabled: "true"}}, repo, nil, nil, nil, nil, nil, nil)
-			svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{PolicyCode: code, RequestBody: string(request), UpstreamBody: mark.Body, UpstreamStatus: 200})
+			svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{PolicyCode: code, AccountID: 363, AccountName: "pool-account", RequestBody: string(request), UpstreamBody: mark.Body, UpstreamStatus: 200})
 			logs := repo.snapshotLogs()
 			require.Len(t, logs, 1)
 			evidence := logs[0].InputEvidence
 			require.NotNil(t, evidence.Policy)
-			require.True(t, evidence.Truncated)
-			require.Equal(t, moderationUserBodyScope, evidence.ContentScope)
-			require.Equal(t, "input[0]", evidence.Source)
-			require.Equal(t, maxModerationEvidenceRunes, evidence.StoredCharacters)
-			require.Equal(t, utf8.RuneCountInString(prompt), evidence.TotalCharacters)
-			require.Equal(t, string([]rune(prompt)[:maxModerationEvidenceRunes]), evidence.Text)
+			require.False(t, evidence.Truncated)
+			require.Equal(t, moderationConversationScope, evidence.ContentScope)
+			require.Equal(t, "request", evidence.Source)
+			require.Greater(t, evidence.StoredCharacters, maxModerationEvidenceRunes)
+			require.Equal(t, utf8.RuneCountInString(evidence.Text), evidence.StoredCharacters)
+			require.Equal(t, evidence.StoredCharacters, evidence.TotalCharacters)
+			require.Equal(t, int64(363), *logs[0].AccountID)
+			require.Equal(t, "pool-account", logs[0].AccountName)
 			require.Equal(t, 200, evidence.Policy.UpstreamStatus)
 			require.Equal(t, code, evidence.Policy.Code)
-			retained, err := json.Marshal(evidence)
-			require.NoError(t, err)
-			for _, noise := range []string{"完整系统提示", "工具说明", "short-secret", "another-secret", "官方分析", "保留额外字段", "request_body", "upstream_body"} {
-				require.NotContains(t, string(retained), noise)
+			require.JSONEq(t, string(response), evidence.Policy.UpstreamBody)
+			for _, marker := range []string{"完整系统提示", "开发者提示", "请求末尾证据", "助手消息", "工具参数", "完整工具结果", "codex_internal_context", "12345678901234567890"} {
+				require.Contains(t, evidence.Text, marker)
 			}
+			require.NotContains(t, evidence.Text, "short-secret")
+			require.NotContains(t, evidence.Text, "another-secret")
+			var retained map[string]any
+			require.NoError(t, json.Unmarshal([]byte(evidence.Text), &retained))
+			require.Len(t, retained["input"], 6)
+			require.LessOrEqual(t, utf8.RuneCountInString(logs[0].InputExcerpt), maxModerationExcerptRunes)
+
 			require.NotContains(t, logs[0].Error, "官方分析")
 		})
 	}
@@ -222,7 +236,10 @@ func TestContentModerationEvidence_OfficialPoliciesRetainOnlyUserBody(t *testing
 func TestContentModerationEvidence_RedactsEscapedJSONSecrets(t *testing.T) {
 	log := &ContentModerationLog{Action: OpenAIPolicyBio}
 	setContentModerationPolicyEvidence(log, CyberPolicyRecordInput{RequestBody: `{"input":"hello sk-proj-1234567890abc\u0064ef","Authorization":"tiny","image":"data:image/png;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`})
-	require.Equal(t, "hello [已脱敏]", log.InputEvidence.Text)
+	require.Contains(t, log.InputEvidence.Text, "hello [已脱敏]")
+	require.NotContains(t, log.InputEvidence.Text, "tiny")
+	require.NotContains(t, log.InputEvidence.Text, "1234567890abc")
+	require.True(t, json.Valid([]byte(log.InputEvidence.Text)))
 	require.Empty(t, log.InputEvidence.Policy.RequestBody)
 }
 

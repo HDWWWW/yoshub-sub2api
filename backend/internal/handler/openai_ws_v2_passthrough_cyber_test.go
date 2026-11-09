@@ -199,6 +199,13 @@ func TestOpenAIResponsesWebSocketV2PassthroughCyberMarkIsConsumedAfterTurn(t *te
 					strings.Contains(logs[0].Error, "upstream_usage=in:11,out:3")
 			}, 3*time.Second, 10*time.Millisecond, "handler AfterTurn must call recordCyberPolicyIfMarked and write the risk-control event")
 
+			retained := harness.moderationRepo.logSnapshot()[0]
+			require.Equal(t, int64(9951), *retained.AccountID)
+			require.Equal(t, "openai-ws-passthrough-cyber", retained.AccountName)
+			require.Equal(t, "full_conversation", retained.InputEvidence.ContentScope)
+			require.JSONEq(t, requestPayload, retained.InputEvidence.Text)
+			require.Contains(t, retained.InputEvidence.Policy.UpstreamBody, policyCode)
+
 			keyCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			keyCtx.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(requestPayload))
 			blockKey := service.CyberSessionExplicitBlockKey(harness.apiKey.ID, keyCtx, []byte(requestPayload))

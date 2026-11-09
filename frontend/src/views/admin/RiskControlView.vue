@@ -287,6 +287,7 @@
                   <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.time') }}</th>
                   <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.group') }}</th>
                   <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.user') }}</th>
+                  <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.account') }}</th>
                   <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.apiKey') }}</th>
                   <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.endpoint') }}</th>
                   <th class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.result') }}</th>
@@ -298,10 +299,10 @@
               </thead>
               <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-800 dark:bg-dark-800">
                 <tr v-if="logsLoading">
-                  <td colspan="10" class="px-5 py-12 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</td>
+                  <td colspan="11" class="px-5 py-12 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</td>
                 </tr>
                 <tr v-else-if="logs.length === 0">
-                  <td colspan="10" class="px-5 py-12 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.emptyLogs') }}</td>
+                  <td colspan="11" class="px-5 py-12 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.emptyLogs') }}</td>
                 </tr>
                 <template v-else>
                   <tr v-for="row in logs" :key="row.id" class="hover:bg-gray-50 dark:hover:bg-dark-700/60">
@@ -310,6 +311,13 @@
                     <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
                       <div>{{ row.user_email || '-' }}</div>
                       <div v-if="row.user_id" class="text-xs text-gray-400">UID {{ row.user_id }}</div>
+                    </td>
+                    <td class="px-5 py-4 text-sm text-gray-700 dark:text-gray-300" :data-test="`moderation-account-${row.id}`">
+                      <template v-if="row.account_id">
+                        <div class="max-w-64 truncate" :title="row.account_name || ''">{{ row.account_name || '-' }}</div>
+                        <div class="text-xs text-gray-400">ID {{ row.account_id }}</div>
+                      </template>
+                      <span v-else class="text-xs text-gray-400">{{ t(isProviderPolicy(row) ? 'admin.riskControl.accountUnavailable' : 'admin.riskControl.accountNotUsed') }}</span>
                     </td>
                     <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">{{ row.api_key_name || '-' }}</td>
                     <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
@@ -1153,6 +1161,11 @@
                 {{ ['combination_rule', 'local_rule'].includes(inputDetailRow.highest_category) ? t('admin.riskControl.combination.localMatch') : `${inputDetailRow.highest_category || '-'} / ${percent(inputDetailRow.highest_score)}` }}
               </p>
             </div>
+            <div class="rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/70" data-test="moderation-detail-account">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.table.account') }}</p>
+              <p v-if="inputDetailRow.account_id" class="mt-1 break-words text-sm font-semibold text-gray-900 dark:text-white">{{ inputDetailRow.account_name || '-' }} · ID {{ inputDetailRow.account_id }}</p>
+              <p v-else class="mt-1 text-sm text-gray-500">{{ t(isProviderPolicy(inputDetailRow) ? 'admin.riskControl.accountUnavailable' : 'admin.riskControl.accountNotUsed') }}</p>
+            </div>
             <div v-if="inputDetailRow.matched_keyword" class="rounded-lg border border-red-100 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-900/20">
               <p class="text-xs font-medium text-red-500 dark:text-red-300">{{ t('admin.riskControl.matchedKeyword') }}</p>
               <p class="mt-1 truncate text-sm font-semibold text-red-700 dark:text-red-200" :title="inputDetailRow.matched_keyword">{{ inputDetailRow.matched_keyword }}</p>
@@ -1162,7 +1175,7 @@
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
             <div class="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.riskControl.inputDetailContent') }}</p>
+                <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t(fullConversation ? 'admin.riskControl.policyConversationTitle' : 'admin.riskControl.inputDetailContent') }}</p>
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {{ inputDetailRow.endpoint || '-' }} · {{ inputDetailRow.provider || '-' }} / {{ inputDetailRow.model || '-' }}
                 </p>
@@ -1181,7 +1194,8 @@
               <div v-if="inputDetail.evidence.policy" class="mt-4" data-test="moderation-policy-evidence">
                 <p class="text-sm text-amber-700 dark:text-amber-300">{{ inputDetail.evidence.policy.code }} · {{ t('admin.riskControl.policyUpstreamStatus', { status: inputDetail.evidence.policy.upstream_status }) }}</p>
               </div>
-              <p class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t(inputDetail.evidence.content_scope === 'user_body' ? 'admin.riskControl.inputEvidenceScope' : 'admin.riskControl.inputEvidenceLegacyScope') }}</p>
+              <p class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t(fullConversation ? 'admin.riskControl.policyConversationScope' : inputDetail.evidence.content_scope === 'user_body' ? 'admin.riskControl.inputEvidenceScope' : 'admin.riskControl.inputEvidenceLegacyScope') }}</p>
+              <p v-if="isProviderPolicy(inputDetailRow) && !fullConversation" class="mt-2 text-sm text-amber-700 dark:text-amber-300" data-test="moderation-policy-legacy">{{ t('admin.riskControl.policyLegacyExcerpt') }}</p>
               <p v-if="inputDetail.evidence.source" class="mt-1 text-xs text-gray-500" data-test="moderation-input-source">{{ t('admin.riskControl.inputSource') }}: {{ inputDetail.evidence.source }}</p>
               <p class="mt-2 text-sm" :class="inputDetail.evidence.truncated ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-gray-400'" data-test="moderation-input-retention">
                 {{ inputDetail.evidence.truncated
@@ -1207,11 +1221,16 @@
             </template>
             <p v-if="!inputDetailRow.matched_keyword && ['block', 'allow'].includes(inputDetailRow.action)" class="mt-4 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.inputSemanticNotice') }}</p>
             <pre class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50" data-test="moderation-input-text"><ModerationHighlightedText :text="inputDetailText" :keyword="inputDetailRow.matched_keyword" /></pre>
+            <details v-if="inputDetail?.evidence?.policy?.upstream_body" class="mt-4" data-test="moderation-policy-response">
+              <summary class="cursor-pointer text-sm font-semibold">{{ t('admin.riskControl.policyResponseTitle') }}</summary>
+              <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm text-gray-100">{{ inputDetail.evidence.policy.upstream_body }}</pre>
+            </details>
           </div>
         </div>
 
         <template #footer>
-          <div class="flex justify-end">
+          <div class="flex justify-end gap-3">
+            <button v-if="fullConversation" type="button" class="btn btn-primary" data-test="moderation-policy-download" @click="downloadPolicyEvidence">{{ t('admin.riskControl.policyDownload') }}</button>
             <button type="button" class="btn btn-secondary" @click="closeInputDetail">{{ t('common.close') }}</button>
           </div>
         </template>
@@ -1776,6 +1795,8 @@ const riskThresholdRows = computed<RiskThresholdRow[]>(() => (
   }))
 ))
 
+const fullConversation = computed(() => inputDetail.value?.evidence?.content_scope === 'full_conversation')
+
 const inputDetailText = computed(() => {
   if (!inputDetailRow.value) return '-'
   if (inputDetail.value?.evidence?.content_scope === 'user_body' && !inputDetail.value.evidence.text) return t('admin.riskControl.inputNoUserBody')
@@ -2098,6 +2119,21 @@ async function loadLogs() {
 
 function canUnbanRow(row: ContentModerationLog): boolean {
   return Boolean(row.auto_banned && row.user_id && row.user_status === 'disabled')
+}
+
+function isProviderPolicy(row: ContentModerationLog): boolean {
+  return ['cyber_policy', 'bio_policy'].includes(row.action)
+}
+
+function downloadPolicyEvidence() {
+  if (!fullConversation.value || !inputDetail.value || !inputDetailRow.value) return
+  const record = { ...inputDetailRow.value, ...inputDetail.value }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], { type: 'application/json;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `policy-audit-${inputDetailRow.value.id}.json`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function inputSummaryText(row: ContentModerationLog): string {

@@ -426,6 +426,8 @@ type ContentModerationLog struct {
 	RequestID         string                          `json:"request_id"`
 	UserID            *int64                          `json:"user_id,omitempty"`
 	UserEmail         string                          `json:"user_email"`
+	AccountID         *int64                          `json:"account_id,omitempty"`
+	AccountName       string                          `json:"account_name"`
 	APIKeyID          *int64                          `json:"api_key_id,omitempty"`
 	APIKeyName        string                          `json:"api_key_name"`
 	GroupID           *int64                          `json:"group_id,omitempty"`
@@ -3228,6 +3230,8 @@ type CyberPolicyRecordInput struct {
 	RequestID       string
 	UserID          int64
 	UserEmail       string
+	AccountID       int64
+	AccountName     string
 	APIKeyID        int64
 	APIKeyName      string
 	GroupID         *int64
@@ -3274,6 +3278,10 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 	if in.APIKeyID > 0 {
 		apiKeyID = &in.APIKeyID
 	}
+	var accountID *int64
+	if in.AccountID > 0 {
+		accountID = &in.AccountID
+	}
 	errBody := strings.TrimSpace(policyCode + ": " + in.UpstreamMessage)
 	if in.UpstreamInTok > 0 || in.UpstreamOutTok > 0 {
 		errBody = fmt.Sprintf("%s\nupstream_usage=in:%d,out:%d", errBody, in.UpstreamInTok, in.UpstreamOutTok)
@@ -3282,6 +3290,8 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		RequestID:       in.RequestID,
 		UserID:          userID,
 		UserEmail:       in.UserEmail,
+		AccountID:       accountID,
+		AccountName:     in.AccountName,
 		APIKeyID:        apiKeyID,
 		APIKeyName:      in.APIKeyName,
 		GroupID:         cloneInt64Ptr(in.GroupID),

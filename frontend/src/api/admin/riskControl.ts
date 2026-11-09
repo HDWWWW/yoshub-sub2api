@@ -270,6 +270,8 @@ export interface ContentModerationAPIKeyLoad {
 }
 
 export interface ContentModerationLog {
+  account_id?: number | null
+  account_name?: string
   engine_meta?: ModerationEngineMeta | null
   id: number
   request_id: string
@@ -317,6 +319,7 @@ export interface ContentModerationLogInput {
     policy?: {
       code: string
       upstream_status: number
+      upstream_body?: string
     }
   } | null
 }
