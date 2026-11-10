@@ -8,7 +8,7 @@ vi.mock('@/api/admin/accountRisk', () => ({ accountRiskAPI: { get, save, test } 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const baseline: AccountRiskRule = {
   group_id: 7, revision: 3, test_accounts: [{ id: 1, name: 'Stopped account', schedulable: false }],
-  config: { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
+  config: { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_notify_only: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
@@ -47,7 +47,7 @@ describe('account risk detection', () => {
     await w.get('[data-testid="risk-notify-enabled"]').setValue(true)
     for (const [field, value] of Object.entries({ first: 55, second: 95, duration: 17, interval: 420, model: 'gpt-6-astra', effort: 'xhigh', prompt: 'Compute three times seven', expected: '21' })) await w.get(`[data-testid="risk-${field}"]`).setValue(value)
     await w.get('form').trigger('submit'); await flushPromises()
-    expect(save).toHaveBeenCalledWith(7, 3, { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: true, notify_enabled: true, capacity_notify_only: false, probe_notify_only: false, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
+    expect(save).toHaveBeenCalledWith(7, 3, { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: true, notify_enabled: true, capacity_notify_only: false, probe_notify_only: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
     expect(w.get('[role="status"]').text()).toContain('saved'); w.unmount()
   })
   it.each([['first', 0], ['second', 101], ['duration', 0], ['interval', 9], ['prompt', ''], ['expected', ''], ['model', '']])('blocks invalid %s', async (field, value) => {
@@ -152,6 +152,44 @@ describe('account risk detection', () => {
 
 describe('429 controls and manual testing', () => {
   beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => structuredClone(baseline)); save.mockImplementation(async (group_id, revision, config) => ({ ...structuredClone(baseline), group_id, revision: revision + 1, config })) })
+  it('saves and reloads the single-account 429 switch and five retries independently', async () => {
+    const w = await open()
+    const controls = w.get('[data-testid="risk-probe-429-settings"]')
+    expect(controls.text()).toContain('accountRisk.probe429Hint')
+    await controls.get('[data-testid="risk-probe-429-enabled"]').setValue(true)
+    await controls.get('[data-testid="risk-probe-429-retries"]').setValue(5)
+    await w.get('[data-testid="risk-probe-notify-only"]').setValue(true)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ probe_429_stop_enabled: true, probe_429_max_retries: 5, probe_notify_only: true, rate_limit_429_enabled: false })
+    get.mockResolvedValueOnce({ ...structuredClone(baseline), config: save.mock.calls[0]?.[2] })
+    await w.get('[data-testid="risk-group"]').setValue(8); await flushPromises()
+    expect((w.get('[data-testid="risk-probe-429-enabled"]').element as HTMLInputElement).checked).toBe(true)
+    expect((w.get('[data-testid="risk-probe-429-retries"]').element as HTMLInputElement).value).toBe('5')
+    await w.get('[data-testid="risk-probe-429-enabled"]').setValue(false)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[1]?.[2]).toMatchObject({ probe_429_stop_enabled: false, probe_429_max_retries: 5 })
+    w.unmount()
+  })
+  it.each([0, -1, 21, 1.5, ''])('blocks invalid single-account retry count %s', async retries => {
+    const w = await open()
+    await w.get('[data-testid="risk-probe-429-enabled"]').setValue(true)
+    await w.get('[data-testid="risk-probe-429-retries"]').setValue(retries)
+    await w.get('form').trigger('submit')
+    expect(save).not.toHaveBeenCalled()
+    w.unmount()
+  })
+  it('loads missing single-account 429 fields without enabling the new rule', async () => {
+    const legacy = structuredClone(baseline)
+    Reflect.deleteProperty(legacy.config, 'probe_429_stop_enabled')
+    Reflect.deleteProperty(legacy.config, 'probe_429_max_retries')
+    get.mockResolvedValueOnce(legacy)
+    const w = await open()
+    expect((w.get('[data-testid="risk-probe-429-enabled"]').element as HTMLInputElement).checked).toBe(false)
+    expect((w.get('[data-testid="risk-probe-429-retries"]').element as HTMLInputElement).value).toBe('3')
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ probe_429_stop_enabled: false, probe_429_max_retries: 3 })
+    w.unmount()
+  })
   it('saves a custom rolling window and strict threshold', async () => {
     const w = await open()
     await w.get('[data-testid="risk-429-enabled"]').setValue(true)

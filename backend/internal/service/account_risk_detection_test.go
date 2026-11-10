@@ -397,6 +397,7 @@ func TestAccountRiskProbeUsesCustomPayloadWithoutSideEffects(t *testing.T) {
 			c.ReasoningEffort = "xhigh"
 			c.Model = "gpt-6.1-sol"
 			result, err := s.RunRiskProbe(context.Background(), a, c)
+			require.Equal(t, status, result.UpstreamStatus)
 			if status == 200 {
 				require.NoError(t, err)
 				require.Equal(t, "21", result.Text)

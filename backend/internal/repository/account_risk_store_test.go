@@ -100,6 +100,31 @@ func TestAccountRiskStoreInvalidStateFailsClosed(t *testing.T) {
 	require.Empty(t, state.Rules)
 }
 
+func TestAccountRiskStoreProbe429SettingsRoundTripAndLegacyDefaults(t *testing.T) {
+	c := service.DefaultAccountRiskConfig()
+	raw, err := json.Marshal(&service.AccountRiskState{Rules: map[int64]*service.AccountRiskRule{7: {GroupID: 7, Config: c}}})
+	require.NoError(t, err)
+	var legacy map[string]any
+	require.NoError(t, json.Unmarshal(raw, &legacy))
+	config := legacy["rules"].(map[string]any)["7"].(map[string]any)["config"].(map[string]any)
+	delete(config, "probe_429_stop_enabled")
+	delete(config, "probe_429_max_retries")
+	raw, err = json.Marshal(legacy)
+	require.NoError(t, err)
+	state, err := decodeAccountRiskState(string(raw))
+	require.NoError(t, err)
+	require.False(t, state.Rules[7].Config.Probe429StopEnabled)
+	require.Equal(t, 3, state.Rules[7].Config.Probe429MaxRetries)
+	state.Rules[7].Config.Probe429StopEnabled = true
+	state.Rules[7].Config.Probe429MaxRetries = 10
+	raw, err = encodeLegacyAccountRiskState(state)
+	require.NoError(t, err)
+	state, err = decodeAccountRiskState(string(raw))
+	require.NoError(t, err)
+	require.True(t, state.Rules[7].Config.Probe429StopEnabled)
+	require.Equal(t, 10, state.Rules[7].Config.Probe429MaxRetries)
+}
+
 func TestAccountRiskStorePauseAndResumeAreAtomic(t *testing.T) {
 	for _, action := range []string{"pause", "resume"} {
 		for _, outcome := range []string{"commit", "stale", "rollback"} {

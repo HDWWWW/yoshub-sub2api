@@ -8,6 +8,8 @@ export interface AccountRiskConfig {
   notify_enabled: boolean
   capacity_notify_only: boolean
   probe_notify_only: boolean
+  probe_429_stop_enabled: boolean
+  probe_429_max_retries: number
   model_mismatch_action: 'off' | 'stop' | 'notify_only'
   first_below_percent: number
   second_at_least_percent: number

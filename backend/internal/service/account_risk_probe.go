@@ -46,11 +46,13 @@ func (s *AccountTestService) RunRiskProbe(ctx context.Context, a *Account, c Acc
 }
 
 func finishRiskProbeResponse(call *riskProbeCall, resp *http.Response, chat bool) error {
+	call.result.UpstreamStatus = resp.StatusCode
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("risk probe upstream rejected request")
 	}
 	result, err := parseRiskProbeResponse(resp.Body, chat, strings.Contains(resp.Header.Get("Content-Type"), "application/json"))
 	call.result = result
+	call.result.UpstreamStatus = resp.StatusCode
 	return err
 }
 

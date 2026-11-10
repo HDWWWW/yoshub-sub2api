@@ -35,6 +35,8 @@ type AccountRiskConfig struct {
 	NotifyEnabled             bool   `json:"notify_enabled"`
 	CapacityNotifyOnly        bool   `json:"capacity_notify_only"`
 	ProbeNotifyOnly           bool   `json:"probe_notify_only"`
+	Probe429StopEnabled       bool   `json:"probe_429_stop_enabled"`
+	Probe429MaxRetries        int    `json:"probe_429_max_retries"`
 	ModelMismatchAction       string `json:"model_mismatch_action"`
 	FirstBelowPercent         int    `json:"first_below_percent"`
 	SecondAtLeastPercent      int    `json:"second_at_least_percent"`
@@ -47,7 +49,7 @@ type AccountRiskConfig struct {
 }
 
 func DefaultAccountRiskConfig() AccountRiskConfig {
-	return AccountRiskConfig{RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
+	return AccountRiskConfig{RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, Probe429MaxRetries: 3, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
 		ProbePrompt: "请只回复数字 21，不要输出其他内容。", ExpectedText: "21", Model: "gpt-6.1-sol", ReasoningEffort: "high"}
 }
 
@@ -58,9 +60,15 @@ func (c *AccountRiskConfig) Normalize429() {
 	if c.RateLimit429Threshold == 0 {
 		c.RateLimit429Threshold = 20
 	}
+	if c.Probe429MaxRetries == 0 {
+		c.Probe429MaxRetries = 3
+	}
 }
 
 func (c AccountRiskConfig) Validate() error {
+	if (c.Probe429StopEnabled && c.Probe429MaxRetries < 1) || c.Probe429MaxRetries < 0 || c.Probe429MaxRetries > 20 {
+		return errors.New("单账号测试 429 最大重试次数须为 1–20")
+	}
 	if c.RateLimit429Enabled && (c.RateLimit429WindowSeconds < 1 || c.RateLimit429Threshold < 1) || c.RateLimit429WindowSeconds < 0 || c.RateLimit429WindowSeconds > 3600 || c.RateLimit429Threshold < 0 || c.RateLimit429Threshold > 10000 {
 		return errors.New("429 时间窗口须为 1–3600 秒，次数须为 1–10000")
 	}
@@ -191,6 +199,10 @@ type AccountRiskProbeResult struct {
 	Text         string
 	InputTokens  int
 	OutputTokens int
+	// Only an actual HTTP response can populate UpstreamStatus. Local slot
+	// exhaustion, transport errors and error text must never count as a 429.
+	UpstreamStatus int
+	Consecutive429 int
 }
 type accountRiskProber interface {
 	RunRiskProbe(context.Context, *Account, AccountRiskConfig) (AccountRiskProbeResult, error)
@@ -548,7 +560,7 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 		slot, err = s.loads.AcquireAccountSlot(ctx, job.account.ID, job.account.Concurrency)
 		if err == nil && slot != nil && slot.Acquired {
 			defer slot.ReleaseFunc()
-			result, err = s.probe.RunRiskProbe(ctx, &job.account, job.config)
+			result, err = s.runProbeAttempts(ctx, job)
 		} else if err == nil {
 			err = errors.New("account busy")
 		}
@@ -599,7 +611,9 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		}
 		o.InputTokens = result.InputTokens
 		o.OutputTokens = result.OutputTokens
-		if probeErr != nil || !result.Completed {
+		exhausted429 := job.pending.Kind == accountRiskProbeSingle && r.Config.Probe429StopEnabled &&
+			r.Config.Probe429MaxRetries > 0 && result.Consecutive429 > r.Config.Probe429MaxRetries && result.UpstreamStatus == 429 && probeErr != nil
+		if !exhausted429 && (probeErr != nil || !result.Completed) {
 			o.LastProbeResult = "检测未完成（网络、上游错误或账号繁忙），未据此停调度"
 			return nil
 		}
@@ -608,13 +622,16 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 			o.LastProbeResult = "账号或分组已变化，本次结果作废"
 			return nil
 		}
-		if strings.Contains(result.Text, r.Config.ExpectedText) {
+		if !exhausted429 && strings.Contains(result.Text, r.Config.ExpectedText) {
 			o.LastProbeResult = "回复包含期望内容，检测通过"
 			return nil
 		}
 		kind, notifyOnly := accountRiskProbeSingle, r.Config.ProbeNotifyOnly
 		reason := "完整回复不含期望内容"
-		if job.pending.Kind == accountRiskProbeCapacity {
+		if exhausted429 {
+			kind, notifyOnly = "single_probe_429", false
+			reason = fmt.Sprintf("单账号定时测试消息首次收到上游 429 后立即重试 %d 次，仍连续收到 429，无法完成检测", r.Config.Probe429MaxRetries)
+		} else if job.pending.Kind == accountRiskProbeCapacity {
 			kind, notifyOnly = accountRiskProbeCapacity, r.Config.CapacityNotifyOnly
 			reason = job.reason + "；消息复测完整回复不含期望内容"
 		}
