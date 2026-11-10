@@ -105,6 +105,7 @@ export default {
   "noSchedulingCandidates": "No schedulable accounts in this scope",
   "schedulingError": "Unable to load or save scheduling order",
   "supplierReclaimAt": "Supplier reclaim time",
+  "supplierExpiryPending": "Waiting for the supplier; syncing automatically",
   "effectiveDeadline": "Effective expiry",
   "noDeadline": "Not set",
   "metadataFailed": "Load failed",

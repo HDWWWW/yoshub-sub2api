@@ -86,6 +86,7 @@ export interface RefillJob {
   updated_at: string
   finished_at?: string
   expires_at?: number | null
+  supplier_expires_at?: number | null
   error?: string
   account_id?: number
   attempts: number

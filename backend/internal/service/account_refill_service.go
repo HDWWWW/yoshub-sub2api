@@ -511,19 +511,28 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				return err
 			}
 		}
-		if now.Before(state.ProviderRetryAt) {
-			if timeoutNotice != nil {
-				state.Message = "号商限流或暂不可用，等待退避结束后重试"
-			}
-			return nil
-		}
 		var token string
-		if state.EncryptedToken != "" {
+		if state.EncryptedToken != "" && !now.Before(state.ProviderRetryAt) {
 			token, err = s.encryptor.Decrypt(state.EncryptedToken)
 			if err != nil {
 				state.Message = "密钥解密失败，请重新保存 API Key"
 				return persist()
 			}
+		}
+		// Delivered manual orders still need lease updates when monitoring is off.
+		// Primary backoff must not postpone a Fendudu supplier timestamp.
+		if token != "" || state.Fendudu.EncryptedToken != "" {
+			if s.syncSourceLeases(ctx, token, &state, now, preview) {
+				if err := persist(); err != nil {
+					return err
+				}
+			}
+		}
+		if now.Before(state.ProviderRetryAt) {
+			if timeoutNotice != nil {
+				state.Message = "号商限流或暂不可用，等待退避结束后重试"
+			}
+			return nil
 		}
 		if !preview && token != "" {
 			// Continue accepted work even when automation or its time window is off.
@@ -548,9 +557,6 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			return nil
 		}
 		state.NextCheckAt = now.Add(time.Duration(state.Config.CheckSeconds) * time.Second)
-		if token != "" || state.Fendudu.EncryptedToken != "" {
-			s.syncSourceLeases(ctx, token, &state, now, preview)
-		}
 		if err := s.evaluate(ctx, &state, now); err != nil {
 			state.Message = err.Error()
 			return persist()

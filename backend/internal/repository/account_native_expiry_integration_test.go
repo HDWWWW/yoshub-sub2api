@@ -29,6 +29,10 @@ func TestNativeExpiryAtomicRetentionSupplierEchoAndAutoPause(t *testing.T) {
 	stale, err := repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountImportExpiryGraceExtraKey: 3600}))
+	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{
+		"refill_job_id": "verified-job", "refill_supplier_id": "rvc_fixture",
+		"refill_plan": "pro20x", "import_source": "fendudu_api",
+	}))
 	stale.Name = "unrelated edit"
 	stale.Extra = map[string]any{"public": true, service.AccountDeliveryKeyExtraKey: "forged"}
 	require.NoError(t, repo.Update(ctx, stale))
@@ -38,6 +42,10 @@ func TestNativeExpiryAtomicRetentionSupplierEchoAndAutoPause(t *testing.T) {
 	require.Equal(t, "legacy", loaded.Extra[service.AccountDeliveryKeyExtraKey])
 	require.Equal(t, true, loaded.Extra["public"])
 	require.Equal(t, 3600, loaded.ExpiryGraceSeconds())
+	require.Equal(t, "verified-job", loaded.Extra["refill_job_id"])
+	require.Equal(t, "rvc_fixture", loaded.Extra["refill_supplier_id"])
+	require.Equal(t, "pro20x", loaded.Extra["refill_plan"])
+	require.Equal(t, "fendudu_api", loaded.Extra["import_source"])
 	var sqlDeadline int64
 	query := "SELECT extract(epoch from " + aliasedAccountSchedulingExpirySQL("a") + ")::bigint FROM accounts a WHERE a.id=$1"
 	require.NoError(t, scanSingleRow(ctx, tx, query, []any{a.ID}, &sqlDeadline))

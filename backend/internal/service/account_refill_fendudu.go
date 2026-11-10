@@ -10,12 +10,13 @@ import (
 )
 
 type fenduduRefillState struct {
-	EncryptedToken string           `json:"encrypted_token,omitempty"`
-	TokenHash      string           `json:"token_hash,omitempty"`
-	ConnectionID   string           `json:"connection_id"`
-	Products       []FenduduProduct `json:"products"`
-	CheckedAt      *time.Time       `json:"checked_at"`
-	RetryAt        time.Time        `json:"retry_at"`
+	EncryptedToken  string           `json:"encrypted_token,omitempty"`
+	TokenHash       string           `json:"token_hash,omitempty"`
+	ConnectionID    string           `json:"connection_id"`
+	Products        []FenduduProduct `json:"products"`
+	CheckedAt       *time.Time       `json:"checked_at"`
+	RetryAt         time.Time        `json:"retry_at"`
+	LeaseSyncCursor int              `json:"lease_sync_cursor,omitempty"`
 }
 
 type FenduduRefillView struct {

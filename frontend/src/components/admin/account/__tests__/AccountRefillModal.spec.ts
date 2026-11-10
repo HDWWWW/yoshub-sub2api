@@ -780,6 +780,25 @@ describe('Fendudu manual refill', () => {
  }
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(fenduduResponse()); manual.mockResolvedValue(fenduduResponse()) })
  afterEach(() => vi.useRealTimers())
+ it('shows the supplier deadline after manual submission without adding retention', async () => {
+  const supplierExpiry = Date.parse('2026-11-10T18:37:56Z') / 1000
+  const data = { ...fenduduResponse(), jobs: [{ ...responseWithJobs(1).jobs[0]!, provider: 'fendudu', supplier_expires_at: supplierExpiry, expires_at: supplierExpiry + 600 }] }
+  manual.mockResolvedValue(data)
+  const w = await openFendudu()
+  await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+  const expiry = w.get('[data-testid="fendudu-supplier-expiry"]').text()
+  expect(expiry).toContain('accountRefill.supplierReclaimAt')
+  expect(expiry).toContain('02:37:56')
+  expect(expiry).not.toContain('02:47:56')
+  w.unmount()
+ })
+ it('shows a pending supplier time instead of using an estimated lease', async () => {
+  get.mockResolvedValue({ ...fenduduResponse(), jobs: [{ ...responseWithJobs(1).jobs[0]!, provider: 'fendudu', expires_at: 1794335876 }] })
+  const w = await openFendudu()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.progress')!.trigger('click')
+  expect(w.get('[data-testid="fendudu-supplier-expiry"]').text()).toContain('accountRefill.supplierExpiryPending')
+  w.unmount()
+ })
  it('uses the shared settings and sends the backup provider without the primary key', async () => {
   const w = await openFendudu()
   expect(w.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]').element.value).toBe('pro20x')

@@ -105,6 +105,7 @@ export default {
   "noSchedulingCandidates": "当前范围没有可调度账号",
   "schedulingError": "排序读取或保存失败，请重试",
   "supplierReclaimAt": "号商回收时间",
+  "supplierExpiryPending": "等待号商返回，自动同步中",
   "effectiveDeadline": "实际到期时间",
   "noDeadline": "未设置",
   "metadataFailed": "读取失败",

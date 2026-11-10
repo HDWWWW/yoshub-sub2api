@@ -181,3 +181,78 @@ func TestFenduduExpiredReceiptPreservesEarlierExpiryAndCredentials(t *testing.T)
 	require.EqualValues(t, 8, *repo.account.ProxyID)
 	require.Zero(t, proxy.calls)
 }
+
+func TestFenduduLeaseSyncRepairsLostIdentityWithoutReimport(t *testing.T) {
+	for _, mode := range []string{"repair", "closed", "missing-native-time", "wrong-email", "wrong-account", "claimed", "wrong-supplier", "policy-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			now := time.Now().Truncate(time.Second)
+			started := now.Add(-10 * time.Minute)
+			lease := now.Add(time.Hour).Unix()
+			_, extra := ImportedAccountExpiryWithGrace(&lease, map[string]any{"import_source": "codex_session"}, 10)
+			manual := now.Add(30 * time.Minute)
+			extra[AccountExpiryManualExtraKey] = true
+			proxyID := int64(8)
+			repo := &refillAdoptTestRepository{t: t, failPolicy: mode == "policy-failure", account: Account{
+				ID: 344, Name: "keep-name", Platform: PlatformOpenAI, Type: AccountTypeOAuth, CreatedAt: started.Add(time.Minute),
+				Status: "inactive", Schedulable: false, ProxyID: &proxyID, ExpiresAt: &manual,
+				Credentials: map[string]any{"email": "fixture@example.test", "access_token": "fresh-access"}, Extra: extra,
+			}}
+			j := AccountRefillJob{ID: "local-job", SupplierID: "rvc_fixture", Provider: refillProviderFendudu,
+				Plan: "pro20x", AccountID: 344, Status: "imported", SubmissionStartedAt: &started, FenduduConnectionID: "s2e_fixture"}
+			cycle := &fenduduCycle{ID: j.SupplierID, Product: j.Plan, Pushed: true, PushProvider: "sub2api", PushConfigID: j.FenduduConnectionID,
+				AccountID: "344", Email: "fixture@example.test", CreatedAt: started.Format(time.RFC3339), Status: "paid",
+				RevokeAt: time.Unix(lease+3600, 0).Format(time.RFC3339)}
+			want := lease + 3600
+			switch mode {
+			case "closed":
+				cycle.Status, j.Status = "closed", "delivery_expired"
+			case "missing-native-time":
+				cycle.RevokeAt, want = "", lease
+			case "wrong-email":
+				cycle.Email = "other@example.test"
+			case "wrong-account":
+				cycle.AccountID = "345"
+			case "claimed":
+				repo.account.Extra["refill_job_id"] = "other-job"
+			case "wrong-supplier":
+				repo.account.Extra["refill_supplier_id"] = "rvc_other"
+			}
+			proxy := &scopedSelectionProxyRepo{id: 9}
+			admin := &adminServiceImpl{accountRepo: repo, proxyRepo: proxy, entClient: dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))}
+			if mode != "wrong-account" {
+				mock.ExpectBegin()
+				mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(int64(344)).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(`SELECT id FROM accounts`).WithArgs(int64(344)).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(`SELECT account_id FROM account_groups`).WithArgs(int64(344)).WillReturnResult(sqlmock.NewResult(0, 1))
+				if mode == "repair" || mode == "closed" || mode == "missing-native-time" {
+					mock.ExpectCommit()
+				} else {
+					mock.ExpectRollback()
+				}
+			}
+			expires, err := admin.SyncFenduduAccountLease(context.Background(), j, cycle, now)
+			if mode == "repair" || mode == "closed" || mode == "missing-native-time" {
+				require.NoError(t, err)
+				require.Equal(t, want, *expires)
+				require.Equal(t, j.ID, repo.account.Extra["refill_job_id"])
+				require.Equal(t, j.SupplierID, repo.account.Extra["refill_supplier_id"])
+				require.Equal(t, "fendudu_api", repo.account.Extra["import_source"])
+				require.Equal(t, want, repo.account.Extra[AccountSourceExpiryExtraKey])
+			} else {
+				require.Error(t, err)
+				require.Zero(t, repo.commits)
+			}
+			require.Equal(t, manual, *repo.account.ExpiresAt)
+			require.Equal(t, "inactive", repo.account.Status)
+			require.False(t, repo.account.Schedulable)
+			require.Equal(t, "keep-name", repo.account.Name)
+			require.Equal(t, "fresh-access", repo.account.Credentials["access_token"])
+			require.Equal(t, proxyID, *repo.account.ProxyID)
+			require.Zero(t, proxy.calls)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

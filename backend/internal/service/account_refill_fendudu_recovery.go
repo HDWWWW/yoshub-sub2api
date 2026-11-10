@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+var errFenduduPushPending = errors.New("粉嘟嘟原订单已确认，等待推送")
+
 // Find exactly one order in the submission window, including across pages.
 // Missing delivery metadata still counts as a possible competing order. Never
 // choose the first delivered match while a second candidate is still pending.
@@ -66,11 +68,14 @@ func (s *AccountRefillService) recoverFenduduOrder(ctx context.Context, token st
 	if err := validateFenduduCycle(cycle, j); err != nil {
 		return nil, err
 	}
-	if cycle.ID != candidates[0].ID || !cycle.Pushed {
-		return nil, errors.New("粉嘟嘟候选订单尚未完成推送，继续核对原订单")
+	if cycle.ID != candidates[0].ID {
+		return nil, errors.New("粉嘟嘟候选订单编号不匹配")
 	}
 	if err := s.fenduduRecoveryUnambiguous(ctx, state, j, cycle); err != nil {
 		return nil, err
+	}
+	if !cycle.Pushed {
+		return cycle, errFenduduPushPending
 	}
 	if _, err := s.fenduduPushedAccount(ctx, &j, cycle); err != nil {
 		return nil, err

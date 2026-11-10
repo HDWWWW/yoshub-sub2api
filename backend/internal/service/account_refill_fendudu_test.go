@@ -48,6 +48,25 @@ type fenduduTestAdmin struct {
 	closed int
 }
 
+func (a *fenduduTestAdmin) SyncFenduduAccountLease(ctx context.Context, j AccountRefillJob, cycle *fenduduCycle, now time.Time) (*int64, error) {
+	for i := range a.accounts {
+		account := &a.accounts[i]
+		if account.ID != j.AccountID {
+			continue
+		}
+		if err := validateFenduduPushedAccount(account, &j, cycle, now); err != nil {
+			return nil, err
+		}
+		expires := fenduduSourceExpiry(cycle, account)
+		updates := fenduduLeaseUpdates(&j, account, *expires, now)
+		updates["refill_job_id"], updates["refill_supplier_id"] = j.ID, j.SupplierID
+		updates["refill_plan"], updates["import_source"] = j.Plan, "fendudu_api"
+		ApplyAccountExpiryExtra(account, updates)
+		return expires, nil
+	}
+	return nil, ErrAccountNotFound
+}
+
 func (a *fenduduTestAdmin) AdoptRefillAccount(_ context.Context, id int64, in *CreateAccountInput) (*Account, error) {
 	a.input, a.adopt = in, a.adopt+1
 	v, err := buildAccountForCreate(in, in.Extra)

@@ -244,6 +244,9 @@
                     <span class="font-medium">{{ job.plan }}</span><span v-if="job.provider === 'fendudu'" class="ml-2 text-xs text-gray-500">{{ t('accountRefill.fenduduName') }}</span>
                     <div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || t('accountRefill.supplierIDPending') }}</div>
                     <div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div>
+                    <div v-if="job.provider === 'fendudu'" class="mt-1 text-xs" data-testid="fendudu-supplier-expiry">
+                      {{ t('accountRefill.supplierReclaimAt') }}：{{ job.supplier_expires_at ? date(new Date(job.supplier_expires_at * 1000).toISOString()) : t('accountRefill.supplierExpiryPending') }}
+                    </div>
                   </td>
                   <td class="min-w-56 max-w-80 break-words p-2" data-testid="refill-job-reason">
                     <p class="font-medium">{{ job.reason || t('accountRefill.reasonUnknown') }}</p>

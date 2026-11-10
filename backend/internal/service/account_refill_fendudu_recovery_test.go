@@ -197,3 +197,39 @@ func TestFenduduFixedCutoffKeepsSeparateHundredMinuteLease(t *testing.T) {
 	require.Equal(t, fixed+600, accounts.accounts[0].ExpiresAt.Unix())
 	require.Equal(t, created.Add(100*time.Minute).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
 }
+
+func TestFenduduPendingDeliveryPublishesSupplierExpiryAndPollsPromptly(t *testing.T) {
+	for _, lostReceipt := range []bool{false, true} {
+		t.Run(map[bool]string{false: "known-order", true: "lost-receipt"}[lostReceipt], func(t *testing.T) {
+			s, store, provider, accounts := fenduduHarness(t)
+			if lostReceipt {
+				provider.orderError = errors.New("lost response")
+			}
+			ctx := context.Background()
+			require.NoError(t, s.Manual(ctx, fenduduRequest()))
+			require.NoError(t, s.run(ctx, false))
+			lease := time.Now().Add(time.Hour).Truncate(time.Second)
+			provider.cycle.RevokeAt = lease.Format(time.RFC3339)
+			s.fendudu = &fenduduRecoveryProvider{fenduduTestProvider: provider, pages: map[string]*fenduduCyclePage{
+				"": {Success: true, Items: []fenduduCycle{*provider.cycle}},
+			}}
+			refillDue(t, store)
+			before := time.Now()
+			require.NoError(t, s.run(ctx, false))
+			view, err := s.View(ctx)
+			require.NoError(t, err)
+			require.Equal(t, lease.Unix(), *view.Jobs[0].SupplierExpiresAt)
+			require.WithinDuration(t, before.Add(15*time.Second), view.Jobs[0].NextAttemptAt, time.Second)
+			require.Zero(t, accounts.adopt)
+			require.Equal(t, 1, provider.orders)
+			pushFenduduFixture(provider, accounts)
+			refillDue(t, store)
+			require.NoError(t, s.run(ctx, false))
+			view, err = s.View(ctx)
+			require.NoError(t, err)
+			require.Equal(t, "imported", view.Jobs[0].Status)
+			require.Equal(t, lease.Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
+			require.Equal(t, 1, provider.orders)
+		})
+	}
+}

@@ -4,11 +4,55 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestFenduduManualLeaseSyncSurvivesLostIdentityAndPrimaryHistory(t *testing.T) {
+	s, store, p, accounts := fenduduHarness(t)
+	s.accounts = &fenduduExpiryAccounts{accounts.refillTestAccounts}
+	ctx := context.Background()
+	require.NoError(t, s.Manual(ctx, fenduduRequest()))
+	require.NoError(t, s.run(ctx, false))
+	created := pushFenduduFixture(p, accounts)
+	refillDue(t, store)
+	require.NoError(t, s.run(ctx, false))
+	a := &accounts.accounts[0]
+	delete(a.Extra, "refill_job_id")
+	delete(a.Extra, "refill_supplier_id")
+	a.Extra["import_source"] = "codex_session"
+	manual := created.Add(50 * time.Minute).Unix()
+	ApplyAccountExpiryWrite(ctx, a, manual)
+	want := created.Add(180 * time.Minute).Unix()
+	p.cycle.RevokeAt = time.Unix(want, 0).Format(time.RFC3339)
+	store.mutate(t, func(v *accountRefillState) {
+		job := v.Jobs[0]
+		require.Nil(t, job.SupplierExpiresAt)
+		v.Jobs = nil
+		for i := 0; i < 40; i++ {
+			v.Jobs = append(v.Jobs, AccountRefillJob{ID: fmt.Sprint("old-", i), SupplierID: fmt.Sprint("supplier-", i), Status: "imported", AccountID: int64(i + 1000)})
+		}
+		v.Jobs = append(v.Jobs, job)
+		v.Config.MonitorEnabled = false
+		v.ProviderRetryAt = time.Now().Add(time.Hour)
+		v.LeaseSyncAt = nil
+	})
+	require.NoError(t, s.run(ctx, false))
+	v, err := decodeAccountRefillState(store.raw)
+	require.NoError(t, err)
+	job := v.Jobs[len(v.Jobs)-1]
+	require.Equal(t, want, *job.SupplierExpiresAt)
+	require.Equal(t, want, *job.ExpiresAt)
+	require.Equal(t, want, a.Extra[AccountSourceExpiryExtraKey])
+	require.Equal(t, manual, a.ExpiresAt.Unix())
+	require.Equal(t, job.ID, a.Extra["refill_job_id"])
+	require.Equal(t, job.SupplierID, a.Extra["refill_supplier_id"])
+	require.Equal(t, 1, accounts.adopt, "lease repair must not reapply import settings")
+	require.Equal(t, 1, p.orders, "background lease synchronization must not buy again")
+}
 
 type fenduduExpiryAccounts struct{ *refillTestAccounts }
 
@@ -56,6 +100,11 @@ func TestFenduduNativeExpiryOverridesHundredMinuteFallback(t *testing.T) {
 			v, err := s.View(ctx)
 			require.NoError(t, err)
 			require.Equal(t, want, *v.Jobs[0].ExpiresAt)
+			if mode == "both-missing" || mode == "both-invalid" {
+				require.Nil(t, v.Jobs[0].SupplierExpiresAt, "fallback must not be displayed as a supplier-confirmed timestamp")
+			} else {
+				require.Equal(t, want, *v.Jobs[0].SupplierExpiresAt)
+			}
 			require.Equal(t, want, accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
 			require.Equal(t, want+600, accounts.accounts[0].ExpiresAt.Unix())
 			if mode == "expired-revoke" {

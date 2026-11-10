@@ -60,6 +60,13 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 			if err != nil {
 				j.Status, j.Error = "blocked", "粉嘟嘟尚未确认唯一交付，正在只读核对原订单；不会重复下单"
 				j.NextAttemptAt = now.Add(refillMax(time.Minute, refillRetryDelay(err, j.Attempts)))
+				if errors.Is(err, errFenduduPushPending) {
+					j.Error = errFenduduPushPending.Error()
+					j.NextAttemptAt = now.Add(15 * time.Second)
+					if expires := cycle.expiresAt(); expires != nil {
+						j.SupplierExpiresAt = expires
+					}
+				}
 				var remote *refillProviderError
 				if errors.As(err, &remote) && remote.code == 429 {
 					state.Fendudu.RetryAt = j.NextAttemptAt
@@ -122,6 +129,9 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 		j.Status, j.Error = "blocked", err.Error()
 		return persist()
 	}
+	if expires := cycle.expiresAt(); expires != nil {
+		j.SupplierExpiresAt = expires
+	}
 	j.SupplierStatus = string([]rune(cycle.Status)[:refillMin(len([]rune(cycle.Status)), 128)])
 	if cycle.Status == "order_stopped" {
 		j.Status, j.Error, j.FinishedAt, j.BudgetReleased = "failed", "粉嘟嘟已停止订单，未扣预购次数", &now, true
@@ -174,17 +184,31 @@ func (s *AccountRefillService) fenduduPushedAccount(ctx context.Context, j *Acco
 		return nil, errors.New("当前 SUB2 找不到粉嘟嘟推送的账号，请确认连接指向本实例后重试原任务")
 	}
 	a := accounts[0]
-	email, _ := a.Credentials["email"].(string)
-	if a.ID != id || !a.IsOpenAIOAuth() || a.IsShadow() || !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(cycle.Email)) {
-		return nil, errors.New("粉嘟嘟推送账号的身份不匹配，未修改本地账号")
-	}
-	if marker, _ := a.Extra["refill_job_id"].(string); marker != "" && marker != j.ID {
-		return nil, errors.New("粉嘟嘟推送账号已属于其他补号任务")
-	}
-	if j.SubmissionStartedAt == nil || a.CreatedAt.IsZero() || a.CreatedAt.Before(j.SubmissionStartedAt.Add(-30*time.Second)) || a.CreatedAt.After(time.Now().Add(30*time.Second)) {
-		return nil, errors.New("粉嘟嘟返回的账号创建时间与本次交付不匹配，未覆盖旧账号设置")
+	if err := validateFenduduPushedAccount(a, j, cycle, time.Now()); err != nil {
+		return nil, err
 	}
 	return a, nil
+}
+
+func validateFenduduPushedAccount(a *Account, j *AccountRefillJob, cycle *fenduduCycle, now time.Time) error {
+	id, err := strconv.ParseInt(cycle.AccountID, 10, 64)
+	if err != nil || id <= 0 || a == nil || strings.TrimSpace(cycle.Email) == "" {
+		return errors.New("粉嘟嘟未返回有效的 SUB2 账号 ID 和邮箱")
+	}
+	email, _ := a.Credentials["email"].(string)
+	if a.ID != id || !a.IsOpenAIOAuth() || a.IsShadow() || !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(cycle.Email)) {
+		return errors.New("粉嘟嘟推送账号的身份不匹配，未修改本地账号")
+	}
+	if marker, _ := a.Extra["refill_job_id"].(string); marker != "" && marker != j.ID {
+		return errors.New("粉嘟嘟推送账号已属于其他补号任务")
+	}
+	if supplier, _ := a.Extra["refill_supplier_id"].(string); supplier != "" && supplier != cycle.ID {
+		return errors.New("粉嘟嘟推送账号已属于其他号商订单")
+	}
+	if j.SubmissionStartedAt == nil || a.CreatedAt.IsZero() || a.CreatedAt.Before(j.SubmissionStartedAt.Add(-30*time.Second)) || a.CreatedAt.After(now.Add(30*time.Second)) {
+		return errors.New("粉嘟嘟返回的账号创建时间与本次交付不匹配，未覆盖旧账号设置")
+	}
+	return nil
 }
 
 const fenduduLeaseDuration = 100 * time.Minute

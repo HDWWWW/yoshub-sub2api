@@ -240,6 +240,7 @@ type AccountRefillJob struct {
 	UpdatedAt              time.Time                   `json:"updated_at"`
 	FinishedAt             *time.Time                  `json:"finished_at,omitempty"`
 	ExpiresAt              *int64                      `json:"expires_at,omitempty"`
+	SupplierExpiresAt      *int64                      `json:"supplier_expires_at,omitempty"`
 	ResultReady            bool                        `json:"result_ready"`
 	Error                  string                      `json:"error,omitempty"`
 	Attempts               int                         `json:"attempts"`

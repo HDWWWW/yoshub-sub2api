@@ -770,6 +770,7 @@ func lockAndMergeAccountProbeExtra(
 	}
 	account.Extra = extra
 	service.MergeLockedAccountExpiry(ctx, account, locked)
+	account.Extra = service.PreserveAccountRefillIdentity(locked.Extra, account.Extra)
 	service.MergeLockedOpenAIPrivacy(ctx, account, locked)
 	extra = account.Extra
 	if !service.HasManualSchedulingPriorityWrite(ctx) {
