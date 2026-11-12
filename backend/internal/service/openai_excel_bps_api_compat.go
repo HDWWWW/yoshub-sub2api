@@ -31,6 +31,14 @@ func (s *OpenAIGatewayService) forwardExcelBPSCompat(ctx context.Context, c *gin
 	if anthropic {
 		billingModel = resolveOpenAIForwardModel(account, NormalizeOpenAICompatRequestedModel(model), defaultModel)
 	}
+	if err := validateGPT61RawEffort(body, billingModel); err != nil {
+		if anthropic {
+			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		} else {
+			writeOpenAIJSONError(c, http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
+		}
+		return nil, err
+	}
 	w := &excelBPSCompatWriter{ResponseWriter: c.Writer, anthropic: anthropic, model: model}
 	w.chat = apicompat.NewResponsesEventToChatState()
 	w.chat.Model = model
@@ -56,7 +64,10 @@ func (s *OpenAIGatewayService) forwardExcelBPSCompat(ctx context.Context, c *gin
 		if err = json.Unmarshal(body, &req); err == nil {
 			applyOpenAICompatModelNormalization(&req)
 			req.Model = billingModel
-			request, err = anthropicToResponses(s.cfg, &req)
+			request, err = apicompat.AnthropicToResponsesWithOptions(&req, apicompat.AnthropicToResponsesOptions{
+				MinOutputTokens:                configuredMinOutputTokens(s.cfg),
+				DeferReasoningEffortValidation: true,
+			})
 			if err == nil && request.Reasoning != nil {
 				request.Reasoning.Effort = openAICompatAnthropicReasoningEffort(&req, billingModel, request.Reasoning.Effort)
 			}
@@ -83,6 +94,14 @@ func (s *OpenAIGatewayService) forwardExcelBPSCompat(ctx context.Context, c *gin
 		return nil, err
 	}
 	if body, _, err = ApplyOpenAIReasoningEffortPolicyFromContext(ctx, body); err != nil {
+		if IsReasoningEffortPolicyDenied(err) {
+			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+			writeOpenAIJSONError(c, http.StatusForbidden, gin.H{"error": gin.H{"type": "forbidden_error", "message": err.Error()}})
+		}
+		return nil, err
+	}
+	if err = validateGPT61CompatRequest(body, billingModel); err != nil {
+		writeOpenAIJSONError(c, http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error()}})
 		return nil, err
 	}
 	upstreamCtx, release := openAIAccountUpstreamContext(ctx, account)

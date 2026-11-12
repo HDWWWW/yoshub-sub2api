@@ -390,7 +390,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		if err := openAIAccountContextError(ctx, account); err != nil {
 			return nil, err
 		}
-		if hit, _, _ := detectOpenAICyberPolicy(respBody); hit {
+		if isOpenAIContentPolicyRejection(respBody) {
 			return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 		}
 		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
@@ -703,7 +703,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	if err != nil {
 		return nil, s.newOpenAICompatBufferedReadFailoverError(c, account, resp, requestID, err)
 	}
-	if _, failed := c.Get(smartWSHTTPFailureKey); failed {
+	if failure, _ := c.Get(smartWSHTTPFailureKey); failure != nil {
 		// The adapter retained the exact error and any failed usage tail. Let
 		// the public boundary deliver it before writing a converted JSON body.
 		return nil, errors.New("upstream WebSocket response failed")

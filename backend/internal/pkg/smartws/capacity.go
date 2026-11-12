@@ -220,12 +220,19 @@ func (p *Pool) acquire(ctx context.Context, key, capability, account string, reu
 			return nil, nil, nil
 		}
 		var found *connection
+		var incompatible *connection
 		keyCount := p.openingKeys[key]
 		for item := range p.connections {
 			if item.key != key {
 				continue
 			}
 			keyCount++
+			if l.requireWebSearch && !item.webSearch {
+				if item.active == nil && (incompatible == nil || item.used.Before(incompatible.used)) {
+					incompatible = item
+				}
+				continue
+			}
 			if reusable && item.reusable && item.active == nil &&
 				(found == nil || item.used.After(found.used)) {
 				found = item
@@ -263,7 +270,13 @@ func (p *Pool) acquire(ctx context.Context, key, capability, account string, reu
 		case len(state.waiters) > 0 && state.waiters[0] != waiter:
 			reason = "admission_fairness"
 		case keyCount >= p.config.perKey:
-			reason = "identity_capacity_full"
+			// Replace only an idle incompatible socket, retaining the existing
+			// identity/account/global limits and the shared dial admission budget.
+			victim = incompatible
+			victimReason = "idle_reclaimed_search_capability"
+			if victim == nil {
+				reason = "identity_capacity_full"
+			}
 		case p.config.adaptive && state.sockets+state.opening >= p.config.perAccount:
 			victimReason = "idle_reclaimed_account"
 			victim = p.idleVictimLocked(account, true)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // The historical cyber names are shared by cyber_policy and bio_policy.
@@ -114,19 +115,72 @@ func ClearOpsCyberPolicy(c *gin.Context) {
 // detectOpenAICyberPolicy recognizes explicit provider policy codes only.
 // Message text and access_programs metadata never imply a policy rejection.
 func detectOpenAICyberPolicy(payload []byte) (bool, string, string) {
-	code := gjson.GetBytes(payload, "error.code").String()
-	if code == "" {
-		code = gjson.GetBytes(payload, "response.error.code").String()
+	for _, path := range []string{"error", "response.error"} {
+		err := gjson.GetBytes(payload, path)
+		for _, field := range []string{"code", "type"} {
+			if code := normalizeOpenAISafetyPolicyCode(err.Get(field).String()); code != "" {
+				return true, code, strings.TrimSpace(err.Get("message").String())
+			}
+		}
 	}
-	code = normalizeOpenAISafetyPolicyCode(code)
-	if code == "" {
-		return false, "", ""
+	return false, "", ""
+}
+
+// Policy codes override retryable statuses and rate-limit wrappers. Ordinary
+// moderation is not recorded as cyber/bio and does not change user ban rules.
+func isOpenAIContentPolicyRejection(payload []byte) bool {
+	for _, path := range []string{"error.code", "error.type", "response.error.code", "response.error.type"} {
+		if isOpenAIContentPolicyCode(gjson.GetBytes(payload, path).String()) {
+			return true
+		}
 	}
-	msg := gjson.GetBytes(payload, "error.message").String()
-	if msg == "" {
-		msg = gjson.GetBytes(payload, "response.error.message").String()
+	return false
+}
+
+func isOpenAIContentPolicyCode(code string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case OpenAIPolicyCyber, OpenAIPolicyBio, "content_policy", "content_policy_violation",
+		"content_filter", "content_filter_error", "safety_policy_violation", "safety_violation",
+		"safety_error", "moderation_blocked":
+		return true
 	}
-	return true, code, strings.TrimSpace(msg)
+	return false
+}
+
+// Keep the provider policy code visible to gateways that read only error.code.
+// A contradictory outer quota wrapper must not mask response.error's refusal.
+func openAIPolicyRejectionPayload(payload []byte) []byte {
+	for _, path := range []string{"error", "response.error"} {
+		err := gjson.GetBytes(payload, path)
+		code := err.Get("code").String()
+		if !isOpenAIContentPolicyCode(code) {
+			code = err.Get("type").String()
+		}
+		if !isOpenAIContentPolicyCode(code) {
+			continue
+		}
+		if !isOpenAIContentPolicyCode(err.Get("code").String()) {
+			payload, _ = sjson.SetBytes(payload, path+".code", code)
+			err = gjson.GetBytes(payload, path)
+		}
+		if path == "response.error" && gjson.GetBytes(payload, "error").IsObject() {
+			payload, _ = sjson.SetRawBytes(payload, "error", []byte(err.Raw))
+		}
+		return payload
+	}
+	return payload
+}
+
+// HTTP clients expect error.code even when the upstream used response.failed.
+// Retain the complete response and usage alongside the standard error object.
+func openAIPolicyHTTPErrorPayload(payload []byte) []byte {
+	payload = openAIPolicyRejectionPayload(payload)
+	if isOpenAIContentPolicyRejection(payload) && !gjson.GetBytes(payload, "error").IsObject() {
+		if nested := gjson.GetBytes(payload, "response.error"); nested.IsObject() {
+			payload, _ = sjson.SetRawBytes(payload, "error", []byte(nested.Raw))
+		}
+	}
+	return payload
 }
 
 func markOpenAICyberPolicyEvent(c *gin.Context, payload []byte, upstreamStatus int, usage *OpenAIUsage) bool {

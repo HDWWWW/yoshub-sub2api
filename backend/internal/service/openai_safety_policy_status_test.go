@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -256,6 +257,32 @@ func TestSmartWSSafetyPolicyDoesNotCountAsAccountHealthFailure(t *testing.T) {
 			require.False(t, failure.RetryableOnSameAccount)
 			_, _, eligible := classifyOpenAIAPIKeyHealthFailure(failure)
 			require.False(t, eligible, "policy refusals must not trip the shared account health breaker")
+		}
+	}
+}
+
+func TestResponsesContentPolicy429StopsBeforeCompatibilityRetry(t *testing.T) {
+	for _, code := range []string{"content_policy_violation", "content_filter", "safety_error"} {
+		for _, passthrough := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/passthrough=%t", code, passthrough), func(t *testing.T) {
+				payload := fmt.Sprintf(`{"error":{"code":%q,"type":"rate_limit_error","message":"blocked by upstream policy"}}`, code)
+				upstream := &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: 429, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(payload))}}}
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+				account := compatCyberOAuthAccount()
+				account.Extra = map[string]any{"openai_passthrough": passthrough}
+				c, _ := newNonStreamingFailoverContext(t)
+				_, err := svc.Forward(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.5","stream":false,"input":"hello"}`))
+				require.Error(t, err)
+				require.Len(t, upstream.requests, 1)
+				var retry *UpstreamFailoverError
+				if errors.As(err, &retry) {
+					require.False(t, retry.ShouldRetryNextAccount())
+					require.False(t, retry.RetryableOnSameAccount)
+				}
+				require.Nil(t, GetOpsCyberPolicy(c), "ordinary moderation must not be recorded as cyber or bio")
+				require.False(t, openAIStreamFailedEventShouldFailover([]byte(payload), "blocked"))
+				require.False(t, openAIStreamErrorEventShouldFailover([]byte(payload), "blocked"))
+			})
 		}
 	}
 }

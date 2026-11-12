@@ -64,6 +64,9 @@ func (s *OpenAIGatewayService) handleSmartWSFailureSideEffects(ctx context.Conte
 	if markOpenAICyberPolicyEvent(c, payload, http.StatusOK, &usage) {
 		return true
 	}
+	if GetOpsCyberPolicy(c) != nil || isOpenAIContentPolicyRejection(payload) {
+		return true
+	}
 	code, typ, message := parseOpenAIWSErrorEventFields(payload)
 	if isOpenAIWSRateLimitError(code, typ, message) {
 		s.persistOpenAIWSRateLimitSignal(ctx, account, headers, payload, code, typ, message, model)
@@ -112,7 +115,7 @@ func smartWSResponseID(payload []byte) string {
 
 // A bare error may be followed by the authoritative failed usage. Read only a
 // bounded tail on the already failed lease; never dispatch or wait a full turn.
-func readSmartWSFailedTail(ctx context.Context, lease *openAIWSConnLease, first []byte, responseID string) []byte {
+func readSmartWSFailedTail(ctx context.Context, lease *openAIWSConnLease, first []byte, responseID string, observe func([]byte)) (lastError []byte) {
 	if gjson.GetBytes(first, "type").String() != "error" {
 		return nil
 	}
@@ -124,21 +127,25 @@ func readSmartWSFailedTail(ctx context.Context, lease *openAIWSConnLease, first 
 	for i := 0; i < 8; i++ {
 		payload, err := lease.ReadMessageWithContextTimeout(tailCtx, 200*time.Millisecond)
 		if err != nil || !gjson.ValidBytes(payload) {
-			return nil
+			return lastError
 		}
 		typ := gjson.GetBytes(payload, "type").String()
 		id := smartWSResponseID(payload)
 		if responseID != "" && id != "" && id != responseID {
-			return nil
+			return lastError
 		}
+		observe(payload)
 		if typ == "response.failed" {
 			return payload
 		}
+		if typ == "error" {
+			lastError = payload
+		}
 		if typ == "response.created" || isOpenAIWSTerminalEvent(typ) {
-			return nil
+			return lastError
 		}
 	}
-	return nil
+	return lastError
 }
 
 // Capture at the adapter boundary: buffered and streaming converters can
@@ -182,6 +189,11 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 	if c == nil {
 		return result, err
 	}
+	if value, ok := c.Get(smartWSDispatchKey); ok {
+		if d, ok := value.(*smartWSDispatch); ok && d.state.Load() == smartWSRejected {
+			return result, err
+		}
+	}
 	v, _ := c.Get(smartWSHTTPFailureKey)
 	failure, _ := v.(*smartWSHTTPFailure)
 	if failure == nil {
@@ -198,6 +210,12 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 			}
 		}
 		return finalizeSmartWSUncertainFailure(c, result, err)
+	}
+	if !failure.httpFallback && !openAIStreamClientOutputStarted(c, false) {
+		if retry := s.smartWSRateLimitRejection(c, account, openAIHTTPWSEventErrorStatus(failure.payload), failure.headers, failure.payload, false,
+			gjson.GetBytes(failure.request, "model").String()); retry != nil {
+			return nil, retry
+		}
 	}
 	// A pre-existing formatter can return a successful result for a JSON
 	// body carrying status=failed. The observed upstream error owns the turn.
@@ -307,7 +325,11 @@ func SmartWSFailureDelivered(c *gin.Context) bool {
 
 // State is set BEFORE the first write: a failed Write does not establish that
 // zero bytes reached the server. Downstream visibility is not a replay proof.
-type smartWSDispatch struct{ state atomic.Int32 }
+type smartWSDispatch struct {
+	state    atomic.Int32
+	accepted atomic.Bool
+	policy   atomic.Pointer[[]byte]
+}
 
 const (
 	smartWSNotSent int32 = iota
@@ -321,6 +343,8 @@ func beginSmartWSDispatch(c *gin.Context) *smartWSDispatch {
 	if c != nil {
 		c.Set(smartWSDispatchKey, d)
 		c.Set(smartWSFailureDeliveredKey, false)
+		c.Set(smartWSHTTPFailureKey, nil)
+		c.Set(smartWSHTTPPartialKey, nil)
 	}
 	return d
 }
@@ -419,6 +443,12 @@ func smartWSStopFailure(status int, body []byte, headers http.Header) *UpstreamF
 }
 
 func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Account, resp *http.Response, payload []byte, upstreamModel ...string) error {
+	if mark := GetOpsCyberPolicy(c); mark != nil && mark.Body != "" {
+		// A later authoritative policy refusal owns the failure, even if the
+		// first envelope looked like rate limiting.
+		payload = []byte(mark.Body)
+	}
+	payload = openAIPolicyHTTPErrorPayload(payload)
 	payload = s.redactAgentIdentitySensitiveBody(c.Request.Context(), account, payload)
 	if isOpenAICyberAccessDenied(resp.StatusCode, payload) {
 		return writeOpenAICyberAccessDenied(c, account, resp, payload, nil)
@@ -431,6 +461,15 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	var isHandshake bool
 	if resp.Request != nil {
 		handshake, isHandshake = resp.Request.Context().Value(smartWSHandshakeKey{}).(smartWSHandshakeFailure)
+	}
+	if (isHandshake || isOpenAIHTTPWSResponse(resp)) && !openAIStreamClientOutputStarted(c, false) {
+		model := ""
+		if len(upstreamModel) > 0 {
+			model = upstreamModel[0]
+		}
+		if retry := s.smartWSRateLimitRejection(c, account, resp.StatusCode, resp.Header, payload, isHandshake, model); retry != nil {
+			return retry
+		}
 	}
 	if isHandshake {
 		event.Stage, event.Scope, event.Reason = "ws_handshake", "upstream_transport", handshake.category
@@ -445,7 +484,8 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	appendOpsUpstreamError(c, event)
 	var usage OpenAIUsage
 	parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
-	isPolicy := markOpenAICyberPolicyEvent(c, payload, resp.StatusCode, &usage)
+	markOpenAICyberPolicyEvent(c, payload, resp.StatusCode, &usage)
+	isPolicy := GetOpsCyberPolicy(c) != nil || isOpenAIContentPolicyRejection(payload)
 	if !isPolicy {
 		if !isOpenAIHTTPWSResponse(resp) {
 			// A safe pre-dispatch fallback may have produced an actual HTTP

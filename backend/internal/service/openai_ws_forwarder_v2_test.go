@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // HTTP POST /v1/responses -> forwardOpenAIWSV2 keeps the canonical outbound
@@ -169,7 +170,13 @@ func TestForwardOpenAIWSV2_MarksCyberPolicyForFailureEventShapes(t *testing.T) {
 			var failoverErr *UpstreamFailoverError
 			require.True(t, errors.As(err, &failoverErr))
 			require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
-			require.JSONEq(t, string(tt.upstreamEvent), recorder.Body.String())
+			require.Equal(t, "cyber_policy", gjson.Get(recorder.Body.String(), "error.code").String(), "HTTP gateways must receive the authoritative policy code")
+			if response := gjson.GetBytes(tt.upstreamEvent, "response"); response.Exists() {
+				require.JSONEq(t, response.Raw, gjson.Get(recorder.Body.String(), "response").Raw, "retain the full original response and usage")
+				require.Equal(t, "response.failed", gjson.Get(recorder.Body.String(), "type").String())
+			} else {
+				require.JSONEq(t, string(tt.upstreamEvent), recorder.Body.String())
+			}
 
 			mark := GetOpsCyberPolicy(c)
 			require.NotNil(t, mark)

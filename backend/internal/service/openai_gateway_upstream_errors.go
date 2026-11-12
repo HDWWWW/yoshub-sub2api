@@ -319,7 +319,7 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 	// cyber_policy is request-scoped even when an intermediary wraps the
 	// provider response in a retryable 5xx status. Never punish or rotate the
 	// selected credential for it.
-	if hit, _, _ := detectOpenAICyberPolicy(upstreamBody); hit {
+	if isOpenAIContentPolicyRejection(upstreamBody) {
 		return false
 	}
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
@@ -461,6 +461,10 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 		upstreamMsg,
 		retryableOnSameAccount || oauth429Retry,
 	)
+	if shouldDisable && account != nil && account.Platform == PlatformOpenAI && failoverErr.RequestScopedTransient {
+		// A configured model cooldown takes precedence over capacity-shed replay.
+		failoverErr.RetryableOnSameAccount = false
+	}
 	if oauth429Retry {
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders)
@@ -623,6 +627,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			contentType = "application/json"
 		}
 		status := openAISafetyPolicyHTTPStatus(resp.StatusCode)
+		body = openAIPolicyHTTPErrorPayload(body)
 		if !writeOpenAICompactSSEBridge(c, status, body) {
 			c.Data(status, contentType, body)
 		}
@@ -630,6 +635,17 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			return nil, fmt.Errorf("openai %s: %d", code, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("openai %s: %s", code, cyberMsg)
+	}
+	if (account == nil || account.Platform == PlatformOpenAI) && isOpenAIContentPolicyRejection(body) {
+		message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(body))
+		setOpsUpstreamError(c, resp.StatusCode, message, truncateString(string(body), 2048))
+		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		status := openAISafetyPolicyHTTPStatus(resp.StatusCode)
+		MarkResponseCommitted(c)
+		if !writeOpenAICompactSSEBridge(c, status, body) {
+			c.Data(status, "application/json", body)
+		}
+		return nil, fmt.Errorf("openai content policy rejection: %s", message)
 	}
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)
@@ -884,6 +900,13 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			return nil, fmt.Errorf("openai %s: %d", code, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("openai %s: %s", code, cyberMsg)
+	}
+	if (account == nil || account.Platform == PlatformOpenAI) && isOpenAIContentPolicyRejection(body) {
+		message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(body))
+		setOpsUpstreamError(c, resp.StatusCode, message, truncateString(string(body), 2048))
+		MarkResponseCommitted(c)
+		writeError(c, openAISafetyPolicyHTTPStatus(resp.StatusCode), "invalid_request_error", message)
+		return nil, fmt.Errorf("openai content policy rejection: %s", message)
 	}
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)

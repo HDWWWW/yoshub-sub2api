@@ -16,6 +16,7 @@ import (
 // HTTP handshakes have no WS envelope. Keep the upstream error object intact
 // and add only the envelope and the safe retry hint needed by a WS client.
 func smartWSNativeErrorPayload(status int, body []byte, headers http.Header) []byte {
+	body = openAIPolicyRejectionPayload(body)
 	if typ := gjson.GetBytes(body, "type").String(); typ == "error" || typ == "response.failed" {
 		return body
 	}
@@ -61,14 +62,17 @@ func writeSmartWSNativeUncertain(c *gin.Context, conn *coderws.Conn, err error) 
 	return NewOpenAIWSClientCloseError(coderws.StatusInternalError, smartWSUncertainCode+"; request was not replayed", err)
 }
 
-// Explicit handshake responses are terminal upstream errors, even before
-// dispatch. A transport-level 403 is not evidence of a revoked credential.
+// A transport-level 403 is not evidence of a revoked credential. A 429
+// handshake is a confirmed pre-dispatch rejection and can use retry policy.
 func (s *OpenAIGatewayService) smartWSNativeHandshakeFailure(ctx context.Context, c *gin.Context, account *Account, model string, err error, write func([]byte) error) error {
 	var dialErr *openAIWSDialError
 	if account.Platform != PlatformOpenAI || !errors.As(err, &dialErr) || dialErr.StatusCode < 400 {
 		return nil
 	}
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, dialErr.ResponseBody)
+	if retry := s.smartWSRateLimitRejection(c, account, dialErr.StatusCode, dialErr.ResponseHeaders, body, true, model); retry != nil {
+		return retry
+	}
 	classification := classifySmartWSHandshake(dialErr.StatusCode, body)
 	var usage OpenAIUsage
 	parseOpenAIWSResponseUsageFromCompletedEvent(body, &usage)

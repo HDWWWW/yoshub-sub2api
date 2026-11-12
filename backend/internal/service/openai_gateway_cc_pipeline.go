@@ -80,7 +80,7 @@ func (s *OpenAIGatewayService) readOpenAIUpstreamErrorWithCompleteness(resp *htt
 	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	complete := readErr == nil && int64(len(respBody)) <= limit
 	if int64(len(respBody)) > limit {
-		if hit, _, _ := detectOpenAICyberPolicy(respBody); hit {
+		if isOpenAIContentPolicyRejection(respBody) {
 			tail, tailErr := io.ReadAll(resp.Body)
 			respBody = append(respBody, tail...)
 			complete = readErr == nil && tailErr == nil

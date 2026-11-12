@@ -62,6 +62,40 @@ func TestExcelBPSCompatEndpoints(t *testing.T) {
 	}
 }
 
+func TestExcelBPSCompatMessagesReasoningPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, preference, target, ceiling, overLimit string
+		status                                       int
+	}{
+		{"synthesized none is mapped", `,"thinking":{"type":"disabled"}`, "low", "", "", 200},
+		{"unsupported mapped effort is rejected", `,"thinking":{"type":"disabled"}`, "minimal", "", "", 400},
+		{"raw invalid effort cannot be hidden", `,"output_config":{"effort":"none"}`, "low", "", "", 400},
+		{"mapping respects ceiling denial", `,"thinking":{"type":"disabled"}`, "high", "low", ReasoningEffortOverLimitDeny, 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: openAICompatSSECompletedResponse("resp_bps_effort", "gpt-6.1-sol")}
+			svc := openAIClientToolsTestService(upstream)
+			account := excelAccount()
+			account.Extra["openai_excel_bps_models"] = []string{"gpt-6.1-sol"}
+			body := []byte(`{"model":"gpt-6.1-sol","stream":false,"max_tokens":100,"messages":[{"role":"user","content":"hello"}]` + tc.preference + `}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			ctx := WithOpenAIReasoningEffortPolicyForMessages(c.Request.Context(), body, tc.ceiling, []ReasoningEffortMapping{{From: "none", To: tc.target}}, tc.overLimit)
+			_, err := svc.ForwardAsAnthropic(ctx, c, account, body, "", "")
+			if tc.status == 200 {
+				require.NoError(t, err)
+				require.Len(t, upstream.requests, 1)
+				require.Equal(t, tc.target, gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+			} else {
+				require.Error(t, err)
+				require.Empty(t, upstream.requests)
+			}
+			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+		})
+	}
+}
+
 func TestExcelBPSCompatFailureIsNotSuccess(t *testing.T) {
 	for _, anthropic := range []bool{false, true} {
 		for _, status := range []int{200, 403} {

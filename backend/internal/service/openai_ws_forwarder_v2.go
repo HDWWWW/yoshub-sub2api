@@ -610,6 +610,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 		eventType, eventResponseID, responseField := parseOpenAIWSEventEnvelope(message)
 		dispatch.state.Store(smartWSReceived)
+		dispatch.observe(c, message)
 		observation.event(message)
 		if eventType == "" {
 			continue
@@ -676,7 +677,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			defer lease.MarkBroken()
 			upstreamTerminalEvent = eventType
 			failurePayload := message
-			if tail := readSmartWSFailedTail(ctx, lease, message, responseID); len(tail) > 0 {
+			if tail := readSmartWSFailedTail(ctx, lease, message, responseID, func(frame []byte) { dispatch.observe(c, frame) }); len(tail) > 0 {
 				failurePayload = tail
 				observation.event(tail)
 				parseOpenAIWSResponseUsageFromCompletedEvent(tail, usage)
@@ -686,11 +687,16 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 					responseID = id
 				}
 			}
+			message = dispatch.failurePayload(message)
 			if !wroteDownstream {
 				failureErr := s.writeSmartWSHTTPError(c, account, openAIHTTPWSErrorResponse(c.Request, openAIHTTPWSEventErrorStatus(message), lease.HandshakeHeaders(), message), message, mappedModel)
 				markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 				markOpenAICyberPolicyEvent(c, failurePayload, http.StatusOK, usage)
 				mergeSmartWSCyberPolicyUsage(c, usage)
+				var retry *UpstreamFailoverError
+				if errors.As(failureErr, &retry) && retry.ShouldRetryNextAccount() {
+					return nil, failureErr
+				}
 				return resultWithUsage(), failureErr
 			}
 			s.handleSmartWSFailureSideEffects(ctx, c, account, mappedModel, lease.HandshakeHeaders(), failurePayload)

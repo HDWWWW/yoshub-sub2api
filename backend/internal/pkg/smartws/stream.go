@@ -240,10 +240,17 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 			if event.Type == "error" {
 				tail = b.failedTail(id)
 			}
-			if len(tail) > 0 && b.lease.onEvent != nil {
-				b.lease.onEvent(tail)
+			if preferred := b.lease.onFailure(next.data, tail); len(preferred) > 0 {
+				next.data = preferred
+				// Failure selection preserves an authoritative policy refusal when
+				// a later envelope supersedes the original error.
+				var selected struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(preferred, &selected) == nil && eventTypePattern.MatchString(selected.Type) {
+					event.Type = selected.Type
+				}
 			}
-			b.lease.onFailure(next.data, tail)
 		}
 		var encoded bytes.Buffer
 		_, _ = encoded.WriteString("event: ")
@@ -258,6 +265,9 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 		b.mu.Lock()
 		if b.closed {
 			b.mu.Unlock()
+			if err := b.ctx.Err(); err != nil {
+				return 0, &SentError{Err: err}
+			}
 			return 0, &SentError{Err: errors.New("stream closed during delivery")}
 		}
 		b.buffer = encoded.Bytes()
@@ -288,7 +298,7 @@ func isControlEvent(kind string) bool {
 
 // Failure tails are accounting evidence only; never replay generation or lease
 // the socket again. Only the same turn's bounded failed terminal is accepted.
-func (b *eventBody) failedTail(id string) []byte {
+func (b *eventBody) failedTail(id string) (lastError []byte) {
 	if id == "" {
 		b.mu.Lock()
 		id = b.responseID
@@ -299,7 +309,7 @@ func (b *eventBody) failedTail(id string) []byte {
 	for i := 0; i < 8; i++ {
 		next, timeout := b.nextFrame(timer.C)
 		if timeout || next.err != nil || validateJSON(next.data) != nil {
-			return nil
+			return lastError
 		}
 		var e struct {
 			Type     string `json:"type"`
@@ -309,26 +319,34 @@ func (b *eventBody) failedTail(id string) []byte {
 			} `json:"response"`
 		}
 		if json.Unmarshal(next.data, &e) != nil {
-			return nil
+			return lastError
 		}
 		if e.Response.ID != "" {
 			if e.ID != "" && e.ID != e.Response.ID {
-				return nil
+				return lastError
 			}
 			e.ID = e.Response.ID
 		}
 		if id != "" && e.ID != "" && id != e.ID {
-			return nil
+			return lastError
+		}
+		// Observe every same-turn frame before deciding whether a bare error is
+		// retryable. A policy refusal or acceptance can precede response.failed.
+		if b.lease.onEvent != nil {
+			b.lease.onEvent(next.data)
 		}
 		if e.Type == "response.failed" {
 			return next.data
 		}
+		if e.Type == "error" {
+			lastError = next.data
+		}
 		switch e.Type {
 		case "response.created", "response.completed", "response.done", "response.incomplete", "response.cancelled", "response.canceled":
-			return nil
+			return lastError
 		}
 	}
-	return nil
+	return lastError
 }
 func (b *eventBody) nextFrame(timeout <-chan time.Time) (frame, bool) {
 	select {

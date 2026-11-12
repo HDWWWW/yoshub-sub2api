@@ -2484,29 +2484,87 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 	require.Equal(t, "Upstream rate limit exceeded, please retry later", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
 }
 
-func TestOpenAIResponsesWebSocket_UsageLimitAfterDispatchDoesNotReplay(t *testing.T) {
+func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T) {
+	for _, mode := range []string{service.OpenAIWSIngressModePassthrough, service.OpenAIWSIngressModeCtxPool} {
+		t.Run(mode, func(t *testing.T) {
+			runOpenAIResponsesWebSocketUsageLimitCase(t, mode, nil, false)
+		})
+	}
+}
+
+func TestOpenAIResponsesWebSocket_NativeLaterTurnUsageLimitDoesNotReplayFirstMessage(t *testing.T) {
+	for _, continuation := range []struct {
+		name           string
+		input          string
+		handshakeLimit bool
+	}{
+		{name: "user message", input: `[{"role":"user","content":"continue the task"}]`},
+		{name: "tool result", input: `[{"type":"function_call_output","call_id":"call_inspect","output":"file contents"}]`},
+		{name: "disconnect before next turn", input: `[{"role":"user","content":"continue the task"}]`, handshakeLimit: true},
+	} {
+		t.Run(continuation.name, func(t *testing.T) {
+			runOpenAIResponsesWebSocketUsageLimitCase(t, service.OpenAIWSIngressModeCtxPool, []string{
+				`{"type":"response.create","model":"gpt-5.1","instructions":"Inspect the project before editing it.","tools":[{"type":"function","name":"inspect","parameters":{"type":"object"}}],"input":[{"role":"user","content":"fix the project"}]}`,
+				fmt.Sprintf(`{"type":"response.create","model":"gpt-5.1","store":%t,"previous_response_id":"resp_ws_turn_2","input":%s}`, continuation.handshakeLimit, continuation.input),
+			}, continuation.handshakeLimit)
+		})
+	}
+}
+
+func runOpenAIResponsesWebSocketUsageLimitCase(t *testing.T, mode string, followups []string, handshakeLimit bool, policyFrames ...string) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	firstHitCh := make(chan []byte, 1)
+	firstHitCh := make(chan []byte, len(followups)+1)
 	secondHitCh := make(chan []byte, 1)
+	var firstConnections atomic.Int32
 	var secondConnections atomic.Int32
 
 	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if firstConnections.Add(1) > 1 && handshakeLimit {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
 		if err != nil {
 			return
 		}
 		defer func() { _ = conn.CloseNow() }()
 
-		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
-		_, payload, readErr := conn.Read(readCtx)
-		cancelRead()
-		if readErr == nil {
+		for turn := 0; turn <= len(followups); turn++ {
+			readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+			_, payload, readErr := conn.Read(readCtx)
+			cancelRead()
+			if readErr != nil {
+				return
+			}
 			firstHitCh <- payload
+			if turn < len(followups) {
+				output := `[]`
+				if turn > 0 {
+					output = `[{"type":"function_call","call_id":"call_inspect","name":"inspect","arguments":"{}"}]`
+				}
+				completed := fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_ws_turn_%d","model":"gpt-5.1","output":%s,"usage":{"input_tokens":1,"output_tokens":1}}}`, turn+1, output)
+				writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+				writeErr := conn.Write(writeCtx, coderws.MessageText, []byte(completed))
+				cancelWrite()
+				if writeErr != nil {
+					return
+				}
+				if handshakeLimit && turn == len(followups)-1 {
+					return
+				}
+			}
 		}
 
 		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
-		_ = conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`))
+		failures := policyFrames
+		if len(failures) == 0 {
+			failures = []string{`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`}
+		}
+		for _, frame := range failures {
+			_ = conn.Write(writeCtx, coderws.MessageText, []byte(frame))
+		}
 		cancelWrite()
 	}))
 	defer firstUpstream.Close()
@@ -2550,7 +2608,7 @@ func TestOpenAIResponsesWebSocket_UsageLimitAfterDispatchDoesNotReplay(t *testin
 			},
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
-				"openai_apikey_responses_websockets_v2_mode":    service.OpenAIWSIngressModePassthrough,
+				"openai_apikey_responses_websockets_v2_mode":    mode,
 			},
 		},
 		{
@@ -2568,7 +2626,7 @@ func TestOpenAIResponsesWebSocket_UsageLimitAfterDispatchDoesNotReplay(t *testin
 			},
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
-				"openai_apikey_responses_websockets_v2_mode":    service.OpenAIWSIngressModePassthrough,
+				"openai_apikey_responses_websockets_v2_mode":    mode,
 			},
 		},
 	}
@@ -2590,6 +2648,7 @@ func TestOpenAIResponsesWebSocket_UsageLimitAfterDispatchDoesNotReplay(t *testin
 	accountRepo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
 	rateLimitSvc := service.NewRateLimitService(accountRepo, nil, cfg, nil, nil)
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
 	gatewaySvc := service.NewOpenAIGatewayService(
 		accountRepo,
 		nil,
@@ -2624,6 +2683,7 @@ func TestOpenAIResponsesWebSocket_UsageLimitAfterDispatchDoesNotReplay(t *testin
 		},
 	}
 	h := &OpenAIGatewayHandler{
+		cfg:                 cfg,
 		gatewayService:      gatewaySvc,
 		billingCacheService: billingCacheSvc,
 		apiKeyService:       &service.APIKeyService{},
@@ -2633,17 +2693,25 @@ func TestOpenAIResponsesWebSocket_UsageLimitAfterDispatchDoesNotReplay(t *testin
 
 	apiKey := &service.APIKey{
 		ID:      1802,
+		UserID:  1702,
+		Key:     "sk-local-ws-test",
+		Status:  service.StatusActive,
 		GroupID: &groupID,
 		User:    &service.User{ID: 1702, Status: service.StatusActive},
 		Group:   &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
+	h.apiKeyService = newWSGroupPricingAPIKeyService(&wsGroupPricingAPIKeyRepoStub{apiKey: *apiKey, group: *apiKey.Group})
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
 		c.Next()
 	})
-	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
+	handlerDone := make(chan struct{})
+	router.GET("/openai/v1/responses", func(c *gin.Context) {
+		h.ResponsesWebSocket(c)
+		close(handlerDone)
+	})
 	handlerServer := httptest.NewServer(router)
 	defer handlerServer.Close()
 
@@ -2662,28 +2730,92 @@ func TestOpenAIResponsesWebSocket_UsageLimitAfterDispatchDoesNotReplay(t *testin
 	cancelWrite()
 	require.NoError(t, err)
 
+	for _, followup := range followups {
+		readCtx, cancelRead := context.WithTimeout(context.Background(), 5*time.Second)
+		_, event, readErr := clientConn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, readErr)
+		require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+
+		writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+		writeErr := clientConn.Write(writeCtx, coderws.MessageText, []byte(followup))
+		cancelWrite()
+		require.NoError(t, writeErr)
+	}
+
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 5*time.Second)
 	_, event, err := clientConn.Read(readCtx)
 	cancelRead()
-	require.NoError(t, err)
-	require.JSONEq(t, `{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`, string(event))
-	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
-	_, _, err = clientConn.Read(readCtx)
-	cancelRead()
-	require.Error(t, err, "the failed turn must terminate without replay")
+	if len(followups) > 0 || len(policyFrames) > 0 {
+		require.NoError(t, err)
+		if len(policyFrames) == 0 {
+			require.Equal(t, "error", gjson.GetBytes(event, "type").String())
+		}
+		expectedCode := "rate_limit_exceeded"
+		if handshakeLimit {
+			expectedCode = "smart_ws_dispatch_uncertain"
+		}
+		if len(policyFrames) > 0 {
+			delivered := policyFrames
+			if len(delivered) > 1 && gjson.Get(delivered[0], "error.code").String() == "rate_limit_exceeded" {
+				delivered = delivered[1:]
+			}
+			wantFirst := delivered[0]
+			if gjson.Get(wantFirst, "error.code").String() == "rate_limit_exceeded" && gjson.Get(wantFirst, "response.error.code").String() != "" {
+				nested := gjson.Get(wantFirst, "response.error").Raw
+				wantFirst = `{"type":"error","error":` + nested + `,"response":{"error":` + nested + `}}`
+			}
+			require.JSONEq(t, wantFirst, string(event), "the downstream must receive the authoritative policy before any retryable error")
+			for _, want := range delivered[1:] {
+				readCtx, cancelRead = context.WithTimeout(context.Background(), 5*time.Second)
+				_, next, readErr := clientConn.Read(readCtx)
+				cancelRead()
+				require.NoError(t, readErr)
+				require.JSONEq(t, want, string(next))
+			}
+		} else {
+			require.Equal(t, expectedCode, gjson.GetBytes(event, "error.code").String())
+		}
+		readCtx, cancelRead = context.WithTimeout(context.Background(), 5*time.Second)
+		_, _, err = clientConn.Read(readCtx)
+		cancelRead()
+		require.Error(t, err)
+		require.NotErrorIs(t, err, context.DeadlineExceeded)
+	} else {
+		require.NoError(t, err)
+		require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+		require.Equal(t, "resp_ws_failover_ok", gjson.GetBytes(event, "response.id").String())
+	}
+	_ = clientConn.CloseNow()
+	select {
+	case <-handlerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for websocket handler")
+	}
 
-	select {
-	case <-firstHitCh:
-	case <-time.After(3 * time.Second):
-		t.Fatal("等待第一个上游收到首帧超时")
+	if len(policyFrames) > 0 {
+		require.EqualValues(t, 1, firstConnections.Load(), "policy refusal must not retry the same account")
+		require.Empty(t, accountRepo.rateLimitedIDs, "policy refusal is not an account quota signal")
 	}
-	select {
-	case <-secondHitCh:
-		t.Fatal("a dispatched usage-limit event must not be replayed on another account")
-	default:
+	expectedFrames := len(followups) + 1
+	if handshakeLimit {
+		expectedFrames--
+		require.Equal(t, int32(1), firstConnections.Load(), "uncertain dispatch must stop before a replacement handshake")
 	}
-	require.Zero(t, secondConnections.Load())
-	require.Equal(t, []int64{int64(9902)}, accountRepo.rateLimitedIDs)
+	require.Len(t, firstHitCh, expectedFrames)
+	if len(followups) > 0 || len(policyFrames) > 0 {
+		require.Zero(t, secondConnections.Load(), "the replacement account must not receive the original connection message")
+		require.Empty(t, secondHitCh)
+	} else {
+		select {
+		case <-secondHitCh:
+		case <-time.After(3 * time.Second):
+			t.Fatal("等待第二个上游收到重放首帧超时")
+		}
+	}
+	if !handshakeLimit && len(policyFrames) == 0 {
+		require.Equal(t, []int64{int64(9902)}, accountRepo.rateLimitedIDs)
+	}
 }
 
 func TestOpenAIResponsesWebSocket_FirstOutputTimeoutAfterDispatchDoesNotReplay(t *testing.T) {
@@ -3356,5 +3488,26 @@ func TestOpenAIResponsesWebSocketSimpleModeRechecksKeyWindows(t *testing.T) {
 				ingressMode:   mode, simpleModeRejectAtRead: 3, secondTurnCloseExpected: true, closeReason: "billing check failed",
 			})
 		})
+	}
+}
+
+func TestOpenAIResponsesWebSocket_PolicyRefusalNeverRetriesOrSwitches(t *testing.T) {
+	for _, mode := range []string{service.OpenAIWSIngressModeCtxPool, service.OpenAIWSIngressModePassthrough} {
+		for _, code := range []string{"cyber_policy", "bio_policy"} {
+			policy := fmt.Sprintf(`{"type":"error","error":{"code":%q,"type":"rate_limit_error","status":429,"message":"blocked"}}`, code)
+			failed := fmt.Sprintf(`{"type":"response.failed","response":{"status":"failed","error":{"code":%q,"status":429,"message":"blocked"}}}`, code)
+			wrapped := fmt.Sprintf(`{"type":"error","error":{"code":"rate_limit_exceeded"},"response":{"error":{"code":%q,"message":"blocked"}}}`, code)
+			for _, tc := range []struct {
+				name   string
+				frames []string
+			}{
+				{"direct", []string{policy}},
+				{"wrapped", []string{wrapped}},
+				{"failed_tail", []string{`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached"}}`, failed}},
+				{"error_tail", []string{`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached"}}`, policy}},
+			} {
+				t.Run(mode+"/"+code+"/"+tc.name, func(t *testing.T) { runOpenAIResponsesWebSocketUsageLimitCase(t, mode, nil, false, tc.frames...) })
+			}
+		}
 	}
 }

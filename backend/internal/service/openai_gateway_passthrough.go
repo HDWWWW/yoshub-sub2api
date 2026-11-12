@@ -420,7 +420,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					continue
 				}
 			}
-			if hit, _, _ := detectOpenAICyberPolicy(probeBody); hit {
+			if isOpenAIContentPolicyRejection(probeBody) {
 				return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, probeBody)
 			}
 			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
@@ -788,7 +788,7 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if statusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(responseBody, extractUpstreamErrorMessage(responseBody)) {
 		return false
 	}
-	if hit, _, _ := detectOpenAICyberPolicy(responseBody); hit {
+	if isOpenAIContentPolicyRejection(responseBody) {
 		return false
 	}
 	if isOpenAIContextWindowError("", responseBody) {
@@ -1116,11 +1116,8 @@ func openAIStreamEventIsMetadata(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
 	// Queuing and moderation metadata do not commit model output or disarm the
 	// first-output timeout; a following overload must remain safe to retry.
-	case "response.created", "response.queued", "response.in_progress", "response.metadata", "keepalive":
-		return true
-	// SmartWS exposes connection control envelopes before response.created.
-	// They neither contain model output nor start first-token accounting.
-	case "codex.rate_limits", "codex.response.metadata", "responsesapi.websocket_timing":
+	case "response.created", "response.queued", "response.in_progress", "response.metadata",
+		"codex.rate_limits", "codex.response.metadata", "responsesapi.websocket_timing", "keepalive":
 		return true
 	default:
 		return false
@@ -1525,6 +1522,36 @@ func openAIStream403AccountFailure(payload []byte, message string) bool {
 	return isOpenAIUpstreamAccessStateError(message, payload) || openAIStreamCredentialAuthFailure(payload)
 }
 
+// openAICapacityShedRuleBody excludes response output and metadata from custom
+// cooldown keyword matching and from the persisted rule reason.
+func openAICapacityShedRuleBody(payload []byte) []byte {
+	if !gjson.ValidBytes(payload) {
+		return payload
+	}
+	errorFields := gjson.GetBytes(payload, "response.error")
+	if !errorFields.IsObject() {
+		errorFields = gjson.GetBytes(payload, "error")
+	}
+	var errorValue any
+	if errorFields.IsObject() {
+		errorValue = json.RawMessage(errorFields.Raw)
+	} else {
+		// Some compatible providers send flat errors instead of an error object.
+		flat := make(map[string]json.RawMessage)
+		for _, key := range []string{"code", "type", "message", "param", "headers"} {
+			if value := gjson.GetBytes(payload, key); value.Exists() {
+				flat[key] = json.RawMessage(value.Raw)
+			}
+		}
+		errorValue = flat
+	}
+	body, err := marshalOpenAIUpstreamJSON(gin.H{"error": errorValue})
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
 func openAIStreamFailedEventPassthroughBody(payload []byte, failedMessage string) []byte {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return payload
@@ -1601,7 +1628,7 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if isOpenAIInvalidEncryptedContentResponse(payload, message) {
 		return false
 	}
-	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
+	if isOpenAIContentPolicyRejection(payload) {
 		return false
 	}
 	if isOpenAIContextWindowError(message, payload) {
@@ -1656,7 +1683,7 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if isOpenAIInvalidEncryptedContentResponse(payload, message) {
 		return false
 	}
-	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
+	if isOpenAIContentPolicyRejection(payload) {
 		return false
 	}
 	if isOpenAIContextWindowError(message, payload) {
@@ -1691,13 +1718,16 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 	canonicalModel ...string,
 ) (int, bool) {
 	statusCode := openAIStreamFailureStatus(payload, message)
+	if statusCode == http.StatusServiceUnavailable && (account == nil || account.Platform != PlatformOpenAI) {
+		return statusCode, false
+	}
 	switch statusCode {
 	case http.StatusForbidden:
 		if !openAIStream403AccountFailure(payload, message) {
 			return statusCode, false
 		}
 		fallthrough
-	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+	case http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusServiceUnavailable, 529:
 		ctx := context.Background()
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()

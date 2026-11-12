@@ -1165,7 +1165,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 			// Explicit policy refusals take precedence over all compatibility retries.
-			if hit, _, _ := detectOpenAICyberPolicy(respBody); hit {
+			if isOpenAIContentPolicyRejection(respBody) {
 				return s.handleErrorResponse(ctx, resp, c, account, body, upstreamModel)
 			}
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))

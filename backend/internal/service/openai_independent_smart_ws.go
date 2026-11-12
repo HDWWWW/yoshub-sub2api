@@ -54,15 +54,20 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 			}
 			s.getOpenAIWSConnPool().observeSmartWSHandshake(req.Context(), openAIWSAcquireRequest{Account: account, WSURL: copyReq.URL.String(), Headers: copyReq.Header, ProxyURL: proxyURL, IsolationKey: "http:" + scope}, dialErr == nil, status, h, dialErr, elapsed)
 		},
-		AllowTarget:   true,
-		WireMessage:   encoded,
-		ReadTimeout:   s.openAIWSReadTimeout(),
-		MaxFrameBytes: frameLimit,
-		OnFailure: func(first, tail []byte) {
+		AllowTarget:      true,
+		WireMessage:      encoded,
+		ReadTimeout:      s.openAIWSReadTimeout(),
+		MaxFrameBytes:    frameLimit,
+		RequireWebSearch: account.IsOpenAIOAuthLike() && openAIWSWebSearchDeclared(encoded),
+		OnFailure: func(first, tail []byte) []byte {
+			dispatch.observe(c, tail)
+			first = dispatch.failurePayload(first)
 			rememberSmartWSHTTPFailure(c, response.Header, raw, first, tail, observation.start)
+			return first
 		},
 		OnDispatch: func() { observation.dispatched = true; dispatch.state.Store(smartWSMayBeSent) },
 		OnEvent: func(payload []byte) {
+			dispatch.observe(c, payload)
 			observation.event(payload)
 			typ := gjson.GetBytes(payload, "type").String()
 			if response != nil {

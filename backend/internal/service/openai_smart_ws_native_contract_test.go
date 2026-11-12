@@ -91,7 +91,7 @@ func TestSmartWSNativeContractNativeHandshakePreservesTerminalError(t *testing.T
 	} {
 		t.Run(test.credential+"/"+test.mode, func(t *testing.T) {
 			mode := test.mode
-			const body = `{"error":{"code":"audit_explicit_rejection","message":"audit rejection; no generation accepted"}}`
+			const body = `{"error":{"code":"rate_limit_exceeded","message":"audit rejection; no generation accepted"}}`
 			svc, account, _ := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Retry-After", "2")
@@ -105,13 +105,18 @@ func TestSmartWSNativeContractNativeHandshakePreservesTerminalError(t *testing.T
 			account.Extra["openai_apikey_responses_websockets_v2_mode"] = mode
 			account.Extra["openai_oauth_responses_websockets_v2_mode"] = mode
 			svc.openaiWSPassthroughDialer = forcedWSTestDialer{url: localURL, delegate: newDefaultOpenAIWSClientDialer()}
-			err := reauditNativeRun(t, svc, account, `{"type":"response.create","model":"gpt-5.1","input":"audit"}`)
+			frames, err := nativeContractFrames(t, svc, account, `{"type":"response.create","model":"gpt-5.1","input":"audit"}`)
+			if test.status == 429 {
+				require.Empty(t, frames, "safe handshake rejection stays eligible for handler recovery")
+			} else {
+				require.NotEmpty(t, frames)
+			}
 			var failover *UpstreamFailoverError
 			require.ErrorAs(t, err, &failover)
 			t.Logf("credential=%s mode=%s status=%d same_account_retry=%t next_account_retry=%t body_bytes=%d", test.credential, mode, failover.StatusCode, failover.RetryableOnSameAccount, failover.ShouldRetryNextAccount(), len(failover.ResponseBody))
-			assert.False(t, failover.ShouldRetryNextAccount(), "an explicit upstream rejection must be delivered without hidden account retry")
+			assert.Equal(t, test.status == 429, failover.ShouldRetryNextAccount())
 			assert.Equal(t, test.status == 429, failover.ShouldReportAccountScheduleFailure())
-			assert.False(t, failover.RetryableOnSameAccount)
+			assert.Equal(t, test.status == 429 && test.credential == AccountTypeOAuth, failover.RetryableOnSameAccount)
 			assert.JSONEq(t, body, string(failover.ResponseBody), "the explicit upstream error must be retained")
 		})
 	}

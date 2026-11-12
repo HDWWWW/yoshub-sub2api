@@ -42,10 +42,12 @@ type Options struct {
 	AllowTarget   bool
 	OnDispatch    func()
 	OnEvent       func([]byte)
-	OnFailure     func([]byte, []byte)
+	OnFailure     func([]byte, []byte) []byte
 	WireMessage   []byte
 	ReadTimeout   time.Duration
 	MaxFrameBytes int64
+	// Hosted search must be declared by the first create on subscription sockets.
+	RequireWebSearch bool
 }
 
 type poolConfig struct {
@@ -88,19 +90,21 @@ type connection struct {
 	capabilityKey  string
 	accountKey     string
 	reusable       bool
+	webSearch      bool // immutable capability established by the first create
 	created, used  time.Time
 	active         *lease
 	lastResponseID string
 	closeOnce      sync.Once
 }
 type lease struct {
-	requestBytes int
-	onEvent      func([]byte)
-	onFailure    func([]byte, []byte)
-	readTimeout  time.Duration
-	events       chan frame
-	done         chan struct{}
-	once         sync.Once
+	requestBytes     int
+	requireWebSearch bool
+	onEvent          func([]byte)
+	onFailure        func([]byte, []byte) []byte
+	readTimeout      time.Duration
+	events           chan frame
+	done             chan struct{}
+	once             sync.Once
 }
 type frame struct {
 	data []byte
@@ -477,6 +481,7 @@ func (p *Pool) TryWithOptions(req *http.Request, proxyURL, scope string, opts Op
 	responseHeaders := make(http.Header)
 	l := newLease()
 	l.requestBytes = len(message)
+	l.requireWebSearch = opts.RequireWebSearch
 	l.onEvent = opts.OnEvent
 	l.onFailure = opts.OnFailure
 	l.readTimeout = opts.ReadTimeout
@@ -571,7 +576,7 @@ func (p *Pool) TryWithOptions(req *http.Request, proxyURL, scope string, opts Op
 		}
 		responseHeaders = handshakeResponseHeaders(resp)
 		ws.SetReadLimit(frameLimit)
-		c = &connection{pool: p, ws: ws, key: key, capabilityKey: capabilityKey, accountKey: accountKey, reusable: reusable, created: time.Now(), used: time.Now(), active: l}
+		c = &connection{pool: p, ws: ws, key: key, capabilityKey: capabilityKey, accountKey: accountKey, reusable: reusable, webSearch: opts.RequireWebSearch, created: time.Now(), used: time.Now(), active: l}
 		p.mu.Lock()
 		p.finishDialLocked(permit, "success", time.Now())
 		p.finishOpeningLocked(key, accountKey)

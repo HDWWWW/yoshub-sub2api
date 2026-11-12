@@ -1231,6 +1231,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		Options: openaiwsv2.RelayOptions{
 			WriteTimeout:       s.openAIWSWriteTimeout(),
 			FirstTurnStartedAt: firstTurnStartedAt,
+			IsFirstTokenEvent:  openAIWSFirstTokenEventFunc(s.openAITTFTMode(ctx)),
 			TakeNextTurnStartedAt: func() time.Time {
 				startedAt := acceptedTurnStartedAt.Swap(nil)
 				if startedAt == nil {
@@ -1354,9 +1355,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
 				}
-				// An error frame is the outcome of an already dispatched turn.
-				// Preserve it for the client; do not convert it to a hidden retry.
+				// Only a confirmed rejection before initial-turn acceptance can
+				// retry. Later turns and partially executed requests retain errors.
 				if account.Platform == PlatformOpenAI && (eventType == "error" || eventType == "response.failed") {
+					if completedTurns.Load() == 0 && !wroteDownstream {
+						if retry := s.smartWSRateLimitRejection(c, account, openAIHTTPWSEventErrorStatus(payload), handshakeHeaders, payload, false, capturedSessionModel); retry != nil {
+							return retry
+						}
+					}
 					if !failureAccountSideEffectsApplied {
 						failureAccountSideEffectsApplied = s.handleSmartWSFailureSideEffects(ctx, c, account, capturedSessionModel, handshakeHeaders, payload)
 					}
@@ -1677,6 +1683,18 @@ func relayErrorText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// openAIWSFirstTokenEventFunc applies the configured TTFT mode to WebSocket
+// events so they report first-token time on the same basis as SSE streams.
+// codex.* frames are WebSocket-only out-of-band events, not model output.
+func openAIWSFirstTokenEventFunc(mode string) func(eventType string, message []byte) bool {
+	return func(eventType string, message []byte) bool {
+		if strings.HasPrefix(strings.TrimSpace(eventType), "codex.") {
+			return false
+		}
+		return openAIStreamDataStartsTTFT(string(message), eventType, false, mode)
+	}
 }
 
 func openAIWSFirstTokenMsForLog(firstTokenMs *int) int {
