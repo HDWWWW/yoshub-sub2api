@@ -78,7 +78,7 @@ func (w *excelBPSTestWriter) Write(p []byte) (int, error) {
 	}
 	w.pending = append(w.pending, p...)
 	if len(w.pending) > 16<<20 {
-		return 0, fmt.Errorf("Excel BPS test event exceeds limit")
+		return 0, fmt.Errorf("excel BPS test event exceeds limit")
 	}
 	for {
 		end := bytes.IndexByte(w.pending, '\n')

@@ -48,7 +48,7 @@ func (u *happyHandlerUpstream) Do(_ *http.Request, _ string, accountID int64, _ 
 	}
 	reader, writer := io.Pipe()
 	go func() {
-		defer writer.Close()
+		defer func() { _ = writer.Close() }()
 		select {
 		case <-u.ready:
 		case <-time.After(2 * time.Second):

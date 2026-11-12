@@ -134,7 +134,7 @@ func (a *Agent) ProxyHandler() http.Handler {
 			http.Error(w, "IPv6 upstream unavailable", http.StatusBadGateway)
 			return
 		}
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		removeHopHeaders(res.Header)
 		for key, values := range res.Header {
 			for _, value := range values {
@@ -170,7 +170,7 @@ func (a *Agent) connect(w http.ResponseWriter, r *http.Request, source string) {
 		http.Error(w, "IPv6 upstream unavailable", http.StatusBadGateway)
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "CONNECT unsupported", http.StatusInternalServerError)
@@ -180,7 +180,7 @@ func (a *Agent) connect(w http.ResponseWriter, r *http.Request, source string) {
 	if err != nil {
 		return
 	}
-	defer downstream.Close()
+	defer func() { _ = downstream.Close() }()
 	_ = downstream.SetDeadline(time.Time{})
 	if _, err = buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return

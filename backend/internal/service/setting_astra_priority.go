@@ -59,7 +59,7 @@ func (s *SettingService) GetAstraPrioritySettings(ctx context.Context) (AstraPri
 
 func (s *SettingService) SetAstraPrioritySettings(ctx context.Context, enabled bool) error {
 	if s == nil || s.settingRepo == nil {
-		return fmt.Errorf("Astra priority settings are unavailable")
+		return fmt.Errorf("astra priority settings are unavailable")
 	}
 	s.astraPriorityMu.Lock()
 	defer s.astraPriorityMu.Unlock()

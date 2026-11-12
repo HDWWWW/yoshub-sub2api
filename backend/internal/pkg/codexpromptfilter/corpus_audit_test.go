@@ -86,7 +86,7 @@ func readCorpusText(path string, maxCorpusBytes int64) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer stream.Close()
+		defer func() { _ = stream.Close() }()
 		data, err := io.ReadAll(io.LimitReader(stream, maxCorpusBytes+1))
 		if err == nil && int64(len(data)) > maxCorpusBytes {
 			return nil, io.ErrShortBuffer
@@ -97,7 +97,7 @@ func readCorpusText(path string, maxCorpusBytes int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	for _, file := range reader.File {
 		if file.Name != "word/document.xml" {
 			continue

@@ -1604,14 +1604,6 @@ type decodedBlockBatch struct {
 	reviewIncomplete   bool
 }
 
-func decodeEmbeddedBlocks(text string, cfg NormalizationConfig, remainingBytes, remainingBlocks, maxFragmentBytes int) []decodedBlock {
-	return decodeEmbeddedBlockBatch(text, cfg, remainingBytes, remainingBlocks, maxFragmentBytes).blocks
-}
-
-func decodeEmbeddedBlockBatch(text string, cfg NormalizationConfig, remainingBytes, remainingBlocks, maxFragmentBytes int, currentEngines ...*Engine) decodedBlockBatch {
-	return decodeEmbeddedBlockBatchWithWindow(text, cfg, remainingBytes, remainingBlocks, maxFragmentBytes, DefaultGuardScanChunkBytes, DefaultGuardScanOverlapBytes, currentEngines...)
-}
-
 func decodeEmbeddedBlockBatchWithWindow(text string, cfg NormalizationConfig, remainingBytes, remainingBlocks, maxFragmentBytes, scanChunkBytes, scanOverlapBytes int, currentEngines ...*Engine) decodedBlockBatch {
 	if remainingBytes <= 0 || remainingBlocks <= 0 {
 		return decodedBlockBatch{}
@@ -1643,9 +1635,9 @@ func decodeEmbeddedBlockBatchWithWindow(text string, cfg NormalizationConfig, re
 			return false
 		}
 		if builder.Len() > 0 {
-			builder.WriteByte(' ')
+			_ = builder.WriteByte(' ')
 		}
-		builder.WriteString(value)
+		_, _ = builder.WriteString(value)
 		return true
 	}
 	ordinaryCandidates := boundedEncodedCandidates(allCandidates, 64)
@@ -2318,11 +2310,6 @@ func decodedSafetyPriorityNormalizedWithHints(normalized string, scanner decoded
 	return priority, evidence
 }
 
-func decodedSafetyPriorityMayMatch(normalized string, scanner decodedSafetyPriorityScanner) bool {
-	matched, unhinted := decodedSafetyPriorityMatchedHints(normalized, scanner)
-	return unhinted || len(matched) > 0
-}
-
 func decodedSafetyPriorityMatchedHints(normalized string, scanner decodedSafetyPriorityScanner) (map[string]struct{}, bool) {
 	index := scanner.hintIndex
 	if index == nil {
@@ -2371,22 +2358,6 @@ func decodedSafetyPriorityMatchedHintSetCanMatch(scanner decodedSafetyPrioritySc
 		}
 	}
 	return false
-}
-
-func decodedSafetyWordEvidence(text string, loc []int) string {
-	if len(loc) != 2 || loc[0] < 0 || loc[1] <= loc[0] || loc[1] > len(text) {
-		return ""
-	}
-	const padding = 192
-	start := max(0, loc[0]-padding)
-	end := min(len(text), loc[1]+padding)
-	for start < loc[0] && !utf8.RuneStart(text[start]) {
-		start++
-	}
-	for end > loc[1] && end < len(text) && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return strings.TrimSpace(text[start:end])
 }
 
 func decodedSafetyPatternEvidence(text string, pattern compiledPattern, fallbackLoc []int) string {
@@ -2461,12 +2432,12 @@ func decodedSafetyPatternEvidence(text string, pattern compiledPattern, fallback
 	var output strings.Builder
 	for _, span := range spans {
 		if output.Len() > 0 {
-			output.WriteByte(' ')
+			_ = output.WriteByte(' ')
 		}
 		if output.Len()+span[1]-span[0] > maxEvidenceBytes {
 			return ""
 		}
-		output.WriteString(text[span[0]:span[1]])
+		_, _ = output.WriteString(text[span[0]:span[1]])
 	}
 	evidence := strings.TrimSpace(output.String())
 	if evidence == "" || !patternShouldRun(evidence, pattern, nil) ||
@@ -2910,10 +2881,6 @@ func flattenDecodedSafetyHintClauses(clauses [][]string) []string {
 	return hints
 }
 
-func containsDecodedSafetyHintClause(text string, clauses [][]string) bool {
-	return containsDecodedSafetyHintClauseWithMatches(text, clauses, nil)
-}
-
 func containsDecodedSafetyHintClauseWithMatches(text string, clauses [][]string, matchedHints map[string]struct{}) bool {
 	for _, clause := range clauses {
 		matched := true
@@ -3066,15 +3033,6 @@ func decodedSafetySyntaxMandatoryHints(expression *syntax.Regexp) (map[string]st
 	}
 }
 
-func containsDecodedSafetyHint(text string, hints []string) bool {
-	for _, hint := range hints {
-		if strings.Contains(text, hint) {
-			return true
-		}
-	}
-	return false
-}
-
 func encodedCandidates(text string, cfg NormalizationConfig, maxFragmentBytes int) []encodedCandidate {
 	var hexCandidates []encodedCandidate
 	var base64Candidates []encodedCandidate
@@ -3178,15 +3136,6 @@ func isEncodedIdentifierByte(value byte) bool {
 	return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || value == '_'
 }
 
-func overlapsEncodedCandidate(candidates []encodedCandidate, start, end int) bool {
-	for _, candidate := range candidates {
-		if start < candidate.end && end > candidate.start {
-			return true
-		}
-	}
-	return false
-}
-
 type recognizedEncodedSpan struct {
 	start       int
 	end         int
@@ -3224,7 +3173,7 @@ func collapseRecognizedEncodedPayloads(source string, cfg NormalizationConfig, m
 			continue
 		}
 		if !selected {
-			if _, printable := decodedPayloadText(raw, false, maxFragmentBytes); !printable && !(cfg.DecodeCompression && compressedPayload(raw)) {
+			if _, printable := decodedPayloadText(raw, false, maxFragmentBytes); !printable && (!cfg.DecodeCompression || !compressedPayload(raw)) {
 				continue
 			}
 		}
@@ -3254,39 +3203,15 @@ func collapseRecognizedEncodedPayloads(source string, cfg NormalizationConfig, m
 			}
 			index++
 		}
-		output.WriteString(source[cursor:span.start])
+		_, _ = output.WriteString(source[cursor:span.start])
 		if replacement != "" {
-			output.WriteString(replacement)
+			_, _ = output.WriteString(replacement)
 		}
-		output.WriteByte(' ')
+		_ = output.WriteByte(' ')
 		cursor = groupEnd
 	}
-	output.WriteString(source[cursor:])
+	_, _ = output.WriteString(source[cursor:])
 	return output.String()
-}
-
-func trimEncodedField(field string) string {
-	field = strings.Trim(field, "\"'`()[]{}<>,.;")
-	lower := strings.ToLower(field)
-	for _, prefix := range []string{"base64:", "base64=", "b64:", "b64=", "hex:", "hex=", "gzip:", "gzip=", "zlib:", "zlib="} {
-		if strings.HasPrefix(lower, prefix) {
-			return strings.Trim(field[len(prefix):], "\"'`()[]{}<>,.;")
-		}
-	}
-	return field
-}
-
-func isHexCandidate(value string) bool {
-	value = strings.TrimPrefix(strings.TrimPrefix(value, "0x"), "0X")
-	if len(value) < 16 || len(value)%2 != 0 {
-		return false
-	}
-	for _, r := range value {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-			return false
-		}
-	}
-	return true
 }
 
 func isBase64Candidate(value string) bool {
@@ -3347,7 +3272,7 @@ func decompressSmallPayloadAccounted(raw []byte, limit int) (value string, expan
 	if !opened {
 		return "", 0, false, false
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	decoded, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 	expanded = len(decoded)
 	if err != nil {
@@ -3403,7 +3328,7 @@ func scanCompressedPayloadWithWindow(raw []byte, limit, chunkBytes, overlapBytes
 	if !opened {
 		return 0, "", 0, false, false
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	decoded = true
 	if chunkBytes <= 0 {
 		chunkBytes = DefaultGuardScanChunkBytes
@@ -3494,7 +3419,7 @@ func decodeEscapedText(text string) (string, bool) {
 	changed := false
 	for i := 0; i < len(text); {
 		if text[i] != '\\' || i+1 >= len(text) {
-			out.WriteByte(text[i])
+			_ = out.WriteByte(text[i])
 			i++
 			continue
 		}
@@ -3502,17 +3427,18 @@ func decodeEscapedText(text string) (string, bool) {
 		switch next {
 		case 'u', 'U', 'x':
 			digits := 4
-			if next == 'U' {
+			switch next {
+			case 'U':
 				digits = 8
-			} else if next == 'x' {
+			case 'x':
 				digits = 2
 			}
 			end := i + 2 + digits
 			if end <= len(text) {
 				value, err := strconv.ParseUint(text[i+2:end], 16, 32)
 				r := rune(value)
-				if err == nil && utf8.ValidRune(r) && !(r >= 0xd800 && r <= 0xdfff) {
-					out.WriteRune(r)
+				if err == nil && utf8.ValidRune(r) && (r < 0xd800 || r > 0xdfff) {
+					_, _ = out.WriteRune(r)
 					i = end
 					changed = true
 					continue
@@ -3520,12 +3446,12 @@ func decodeEscapedText(text string) (string, bool) {
 			}
 		case 'n', 'r', 't', 'b', 'f', '\\', '/', '"':
 			replacements := map[byte]byte{'n': '\n', 'r': '\r', 't': '\t', 'b': '\b', 'f': '\f', '\\': '\\', '/': '/', '"': '"'}
-			out.WriteByte(replacements[next])
+			_ = out.WriteByte(replacements[next])
 			i += 2
 			changed = true
 			continue
 		}
-		out.WriteByte(text[i])
+		_ = out.WriteByte(text[i])
 		i++
 	}
 	return out.String(), changed

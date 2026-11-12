@@ -47,11 +47,6 @@ const (
 	googleRPCReasonModelCapacityExhausted = "MODEL_CAPACITY_EXHAUSTED"
 	googleRPCReasonRateLimitExceeded      = "RATE_LIMIT_EXCEEDED"
 
-	// 单账号 503 退避重试：Service 层原地重试的最大次数
-	// 在 handleSmartRetry 中，对于 shouldRateLimitModel（长延迟 ≥ 7s）的情况，
-	// 多账号模式下会设限流+切换账号；但单账号模式下改为原地等待+重试。
-	antigravitySingleAccountSmartRetryMaxAttempts = defaultPoolModeRetryCount
-
 	// 单账号 503 退避重试：原地重试时单次最大等待时间
 	// 防止上游返回过长的 retryDelay 导致请求卡住太久
 	antigravitySingleAccountSmartRetryMaxWait = 15 * time.Second

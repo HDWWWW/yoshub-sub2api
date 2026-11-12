@@ -101,8 +101,8 @@ func parseRiskProbeResponse(body io.Reader, chat, jsonBody bool) (AccountRiskPro
 		}
 		if chat {
 			for _, c := range event.Choices {
-				text.WriteString(c.Delta.Content)
-				text.WriteString(c.Message.Content)
+				_, _ = text.WriteString(c.Delta.Content)
+				_, _ = text.WriteString(c.Message.Content)
 				if c.Finish != nil {
 					if *c.Finish != "stop" {
 						return false, errors.New("risk probe unfinished chat")
@@ -119,7 +119,7 @@ func parseRiskProbeResponse(body io.Reader, chat, jsonBody bool) (AccountRiskPro
 			return false, nil
 		}
 		if event.Type == "response.output_text.delta" {
-			text.WriteString(event.Delta)
+			_, _ = text.WriteString(event.Delta)
 		}
 		if event.Type == "response.completed" {
 			if event.Response.Status != "completed" {
@@ -130,7 +130,7 @@ func parseRiskProbeResponse(body io.Reader, chat, jsonBody bool) (AccountRiskPro
 				if item.Type == "message" {
 					for _, p := range item.Content {
 						if p.Type == "output_text" {
-							terminal.WriteString(p.Text)
+							_, _ = terminal.WriteString(p.Text)
 						}
 					}
 				}

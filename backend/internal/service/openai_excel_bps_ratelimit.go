@@ -16,10 +16,6 @@ const ExcelBPSRateLimitedReason = GatewayFailureReason("basispoints_rate_limited
 
 const excelBPSRateLimitedClientMessage = "Excel BPS rate limit exceeded, please retry later"
 
-// excelBPSRateLimitedFilterReason names BPS cooldowns in "no available
-// accounts" diagnostics; the handler reports such pools as rate limited.
-const excelBPSRateLimitedFilterReason = "excel_bps_rate_limited"
-
 // BPS throttles its own endpoint independently of the account's Codex quota.
 // A BPS 429 is therefore handed back to the handler's account-switch loop
 // before any response byte is written, and cools only this account's BPS

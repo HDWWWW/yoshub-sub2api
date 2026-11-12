@@ -307,7 +307,10 @@ func TestReviewCircuitBreakerFailsFastAndRecovers(t *testing.T) {
 	if !ok {
 		t.Fatal("circuit breaker state was not stored")
 	}
-	state := value.(*reviewCircuitBreaker)
+	state, ok := value.(*reviewCircuitBreaker)
+	if !ok {
+		t.Fatal("unexpected private cache entry type")
+	}
 	state.mu.Lock()
 	state.openUntil = time.Now().Add(-time.Second)
 	state.mu.Unlock()
@@ -315,7 +318,10 @@ func TestReviewCircuitBreakerFailsFastAndRecovers(t *testing.T) {
 	if !ok {
 		t.Fatal("review key cooldown state was not stored")
 	}
-	keyState := keyValue.(*reviewKeyCooldown)
+	keyState, ok := keyValue.(*reviewKeyCooldown)
+	if !ok {
+		t.Fatal("unexpected private cache entry type")
+	}
 	keyState.mu.Lock()
 	keyState.until = time.Now().Add(-time.Second)
 	keyState.mu.Unlock()
@@ -505,7 +511,10 @@ func TestReviewKeyCooldownAllowsOnlyOneRecoveryProbe(t *testing.T) {
 	if !ok {
 		t.Fatal("quarantined key state was not stored")
 	}
-	state := value.(*reviewKeyCooldown)
+	state, ok := value.(*reviewKeyCooldown)
+	if !ok {
+		t.Fatal("unexpected private cache entry type")
+	}
 	state.mu.Lock()
 	state.until = time.Now().Add(-time.Second)
 	state.mu.Unlock()
@@ -581,7 +590,10 @@ func TestReviewModelResponseErrorClearsKeyCooldown(t *testing.T) {
 	if !ok {
 		t.Fatal("quarantined key state was not stored")
 	}
-	state := value.(*reviewKeyCooldown)
+	state, ok := value.(*reviewKeyCooldown)
+	if !ok {
+		t.Fatal("unexpected private cache entry type")
+	}
 	state.mu.Lock()
 	state.until = time.Now().Add(-time.Second)
 	state.mu.Unlock()

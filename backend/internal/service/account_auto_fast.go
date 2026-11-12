@@ -479,9 +479,8 @@ func (s *AccountAutoFastService) tick(ctx context.Context, now time.Time) error 
 				}
 				managed, existing := state.Managed[a.ID]
 				if desired != nil {
-					if existing && managed.GroupID != id { // Restore old ownership first; next tick takes over.
-						desired = nil
-					} else {
+					// A different owner is restored below before the next tick takes over.
+					if !existing || managed.GroupID == id {
 						if !existing {
 							managed = AccountAutoFastManaged{GroupID: id, Original: o.Fast, Applied: o.Fast}
 						}

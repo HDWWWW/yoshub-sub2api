@@ -159,9 +159,9 @@ func (b *smartWSFallbackBody) readFrame() ([]byte, error) {
 func (b *smartWSFallbackBody) collectFailedTail() {
 	// Closing this request body interrupts a pending read without canceling
 	// another request sharing its HTTP connection. No generation is sent.
-	timer := time.AfterFunc(200*time.Millisecond, func() { _ = b.ReadCloser.Close() })
+	timer := time.AfterFunc(200*time.Millisecond, func() { _ = b.Close() })
 	defer timer.Stop()
-	defer b.ReadCloser.Close()
+	defer func() { _ = b.Close() }()
 	buffer := make([]byte, 32*1024)
 	for !b.terminal && b.readErr == nil {
 		n, err := b.reader.Read(buffer)

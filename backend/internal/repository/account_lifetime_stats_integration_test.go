@@ -86,6 +86,7 @@ func TestAccountLifetimeStatsConcurrentDeleteAndUsage(t *testing.T) {
 	client := testEntClient(t)
 	u := mustCreateUser(t, client, &service.User{Email: "lifetime-race@test.com"})
 	k := mustCreateApiKey(t, client, &service.APIKey{UserID: u.ID, Key: "sk-lifetime-race", Name: "race"})
+	cleanupUsageLogBatchRows(t, k.ID)
 	a := mustCreateAccount(t, client, &service.Account{Name: "lifetime-race"})
 	start := make(chan struct{})
 	errs := make(chan error, 17)

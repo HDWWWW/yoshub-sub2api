@@ -7,7 +7,7 @@ import (
 )
 
 const excelBPSModelPermissionCooldown = 30 * time.Minute
-const excelBPSModelPermissionFilterReason = "excel_bps_model_not_allowed"
+
 const excelBPSModelPermissionMaxEntries = 4096
 
 type excelBPSModelKey struct {

@@ -119,7 +119,7 @@ func TestGroupSpeedModeRequiresTrustedOpenAIContext(t *testing.T) {
 				if scope == "nil-account" {
 					account = nil
 				}
-				var ctx context.Context = context.WithValue(context.Background(), ctxkey.Group, group)
+				var ctx = context.WithValue(context.Background(), ctxkey.Group, group)
 				if scope == "nil-context" {
 					ctx = nil
 				}

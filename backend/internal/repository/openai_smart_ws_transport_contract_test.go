@@ -103,7 +103,7 @@ func TestSmartWSHTTPTransportRedirectDoesNotReplay(t *testing.T) {
 							finished <- err
 							return
 						}
-						defer conn.CloseNow()
+						defer func() { _ = conn.CloseNow() }()
 						_, first, err := conn.Read(ctx)
 						if err != nil {
 							finished <- err
@@ -116,7 +116,7 @@ func TestSmartWSHTTPTransportRedirectDoesNotReplay(t *testing.T) {
 					defer server.Close()
 					client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 					require.NoError(t, err)
-					defer client.CloseNow()
+					defer func() { _ = client.CloseNow() }()
 					require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"synthetic audit"}`)))
 					_, frame, readErr := client.Read(ctx)
 					var event map[string]any

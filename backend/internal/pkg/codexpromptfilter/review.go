@@ -647,7 +647,7 @@ func acquireReviewKeyCandidates(endpoint, model string, keys []string, start uin
 			candidates = append(candidates, reviewKeyCandidate{apiKey: apiKey})
 			continue
 		}
-		state := value.(*reviewKeyCooldown)
+		state := value.(*reviewKeyCooldown) //nolint:errcheck // Private cooldown map only stores *reviewKeyCooldown.
 		state.mu.Lock()
 		remaining := state.until.Sub(now)
 		if remaining > 0 {
@@ -701,7 +701,7 @@ func quarantineReviewKeyTransient(endpoint, model, apiKey string, cfg ReviewAdap
 func setReviewKeyCooldown(endpoint, model, apiKey string, cooldown time.Duration) {
 	key := reviewKeyCooldownKey(endpoint, model, apiKey)
 	value, _ := reviewKeyCooldowns.LoadOrStore(key, &reviewKeyCooldown{})
-	state := value.(*reviewKeyCooldown)
+	state := value.(*reviewKeyCooldown) //nolint:errcheck // Private cooldown map only stores *reviewKeyCooldown.
 	state.mu.Lock()
 	state.probing = false
 	until := time.Now().Add(cooldown)
@@ -717,7 +717,7 @@ func releaseReviewKeyProbe(endpoint, model, apiKey string, cfg ReviewAdapterConf
 	if !ok {
 		return
 	}
-	state := value.(*reviewKeyCooldown)
+	state := value.(*reviewKeyCooldown) //nolint:errcheck // Private cooldown map only stores *reviewKeyCooldown.
 	state.mu.Lock()
 	state.probing = false
 	state.until = time.Now().Add(time.Duration(NormalizeReviewAdapterConfig(cfg).CircuitBreakerSeconds) * time.Second)
@@ -738,7 +738,7 @@ func abandonReviewKeyProbe(endpoint, model, apiKey string) {
 	if !ok {
 		return
 	}
-	state := value.(*reviewKeyCooldown)
+	state := value.(*reviewKeyCooldown) //nolint:errcheck // Private cooldown map only stores *reviewKeyCooldown.
 	state.mu.Lock()
 	state.probing = false
 	state.mu.Unlock()
@@ -762,7 +762,7 @@ func ReviewKeyPoolStatus(cfg ReviewConfig) ReviewKeyPoolHealth {
 			result.Available++
 			continue
 		}
-		state := value.(*reviewKeyCooldown)
+		state := value.(*reviewKeyCooldown) //nolint:errcheck // Private cooldown map only stores *reviewKeyCooldown.
 		state.mu.Lock()
 		until, probing := state.until, state.probing
 		state.mu.Unlock()
@@ -786,7 +786,7 @@ func ReviewKeyPoolStatus(cfg ReviewConfig) ReviewKeyPoolHealth {
 func acquireReviewCircuit(endpoint, model string, cfg ReviewAdapterConfig) (*reviewCircuitLease, error) {
 	cfg = NormalizeReviewAdapterConfig(cfg)
 	value, _ := reviewCircuitBreakers.LoadOrStore(reviewCircuitKey(endpoint, model), &reviewCircuitBreaker{})
-	state := value.(*reviewCircuitBreaker)
+	state := value.(*reviewCircuitBreaker) //nolint:errcheck // Private breaker map only stores *reviewCircuitBreaker.
 	now := time.Now()
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -857,7 +857,7 @@ func (c ReviewClient) reviewOnce(ctx context.Context, endpoint, apiKey string, p
 	if err != nil {
 		return ReviewOutcome{Model: cfg.Model, Endpoint: endpoint}, true, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReviewResponseBytes+1))
 	if err != nil {
 		return ReviewOutcome{Model: cfg.Model, Endpoint: endpoint}, false, err
@@ -968,10 +968,6 @@ func ApplyReviewMode(verdict Verdict, mode string) Verdict {
 		}
 	}
 	return verdict
-}
-
-func reviewEndpoint(baseURL string) (string, error) {
-	return reviewEndpointForMode(baseURL, ReviewRequestModeModerations)
 }
 
 func reviewEndpointForMode(baseURL, requestMode string) (string, error) {
@@ -1091,7 +1087,7 @@ func fetchReviewModelsOnce(ctx context.Context, client *http.Client, endpoint, a
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReviewModelsResponseBytes+1))
 	if err != nil {
 		return nil, err
@@ -1133,7 +1129,7 @@ func acquireReviewSlot(ctx context.Context, endpoint string, maxConcurrent int) 
 	}
 	key := endpoint + "\x00" + strconv.Itoa(maxConcurrent)
 	value, _ := reviewLimiters.LoadOrStore(key, &reviewLimiter{slots: make(chan struct{}, maxConcurrent)})
-	limiter := value.(*reviewLimiter)
+	limiter := value.(*reviewLimiter) //nolint:errcheck // Private limiter map only stores *reviewLimiter.
 	select {
 	case limiter.slots <- struct{}{}:
 		return func() { <-limiter.slots }, nil
@@ -1356,7 +1352,7 @@ func chatReviewContent(raw json.RawMessage) (string, error) {
 	}
 	var builder strings.Builder
 	for _, part := range parts {
-		builder.WriteString(part.Text)
+		_, _ = builder.WriteString(part.Text)
 	}
 	if strings.TrimSpace(builder.String()) == "" {
 		return "", fmt.Errorf("review response message content is empty")

@@ -291,14 +291,14 @@ var engineCache sync.Map // map[string]*Engine
 func engineForConfig(cfg Config) (*Engine, error) {
 	key := engineCacheKey(cfg)
 	if cached, ok := engineCache.Load(key); ok {
-		return cached.(*Engine), nil
+		return cached.(*Engine), nil //nolint:errcheck // Private cache only stores *Engine.
 	}
 	engine, err := NewEngine(cfg)
 	if err != nil {
 		return nil, err
 	}
 	actual, _ := engineCache.LoadOrStore(key, engine)
-	return actual.(*Engine), nil
+	return actual.(*Engine), nil //nolint:errcheck // LoadOrStore receives only *Engine values.
 }
 
 func engineCacheKey(cfg Config) string {
@@ -1389,7 +1389,7 @@ func decompressCurrentUserPayloadPrefix(raw []byte, limit int) (value string, ex
 	if !opened {
 		return "", 0, false, false
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	decoded, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 	expanded = len(decoded)
 	if err != nil || len(decoded) == 0 {
@@ -1849,7 +1849,7 @@ var (
 var (
 	benignPersistenceDocumentationPattern = regexp.MustCompile(`(?i)(?:\b(?:incident|audit|forensic|malware|attack|attacker|sample|detector|report)\b.{0,96}\b(?:persistence|c2|command\s+and\s+control|botnet|backdoor)\b|\b(?:persistence|c2|command\s+and\s+control|botnet|backdoor)\b.{0,96}\b(?:detected|blocked|prevented|reported|observed|attempted|indicator|evidence)\b)|(?:事件|审计|取证|恶意软件|攻击者|样本|检测器|报告).{0,64}(?:持久化|长期驻留|c2|命令与控制|僵尸网络|后门)|(?:持久化|长期驻留|c2|命令与控制|僵尸网络|后门).{0,64}(?:检测到|拦截|阻止|报告|观察到|尝试|指标|证据)`)
 	minorSafetyAgeHintPattern             = regexp.MustCompile(`(?i)(?:^|[^0-9])(?:[0-9]|1[0-7])\s*(?:[- ]?\s*year\s*[- ]?\s*old|岁)`)
-	minorSafetyDecodedPriorityPattern     = regexp.MustCompile(minorExploitationPattern)
+
 	minorSafetySentenceBoundary           = regexp.MustCompile(`[!?。！？]|\.(?:\s|$)|\n`)
 	minorSafetySafeArtifactTail           = regexp.MustCompile(`(?i)^\s*(?:(?:(?:detection|classification|moderation|policy|incident|audit)\s+reports?|detectors?|classifiers?|hash(?:es)?(?:\s+lists?)?|signatures?|scanners?|filters?|moderation\s+rules?|policy\s+rules?|benchmarks?|fixtures?|research\s+(?:papers?|resources?)|policy\s+resources?|legal\s+resources?|statistics)\b|(?:检测报告|识别报告|分类报告|审核报告|治理报告|事件报告|检测器|识别器|分类器|检测模型|识别模型|分类模型|审核模型|治理模型|哈希列表|摘要列表|签名|扫描器|过滤器|审核规则|治理规则|策略规则|检测基准|测试夹具|研究论文|研究资料|政策资料|法律资料|统计数据))`)
 	minorSafetyUnsafeArtifactTail         = regexp.MustCompile(`(?i)(?:\b(?:contain(?:s|ing)?|include(?:s|d|ing)?|attach(?:es|ed|ing)?|embed(?:s|ded|ding)?|bundle(?:s|d|ing)?|with|from|using|built\s+from|trained\s+on)\b.{0,48}\b(?:(?:actual|real|raw|original|explicit|illegal)\s+)?(?:csam|child\s+sexual\s+abuse\s+material|files?|images?|photos?|videos?|content|material|samples?|training\s+corpus)\b|\blinks?\s+to\b.{0,32}\b(?:the\s+)?(?:files?|images?|photos?|videos?|content|material)\b|\b(?:send|share|upload|publish|distribute|retrieve|fetch|download)\b.{0,32}\b(?:the\s+)?(?:csam|material|files?|images?|photos?|videos?|content|samples?)\b|(?:包含|附带|嵌入|打包|带有|来自|使用|基于).{0,32}(?:真实|原始|露骨|非法)?(?:儿童性虐待材料|儿童色情|文件|图像|影像|视频|内容|材料|样本|训练语料)|(?:发送|分享|上传|发布|传播|检索|获取|下载).{0,24}(?:儿童性虐待材料|儿童色情|材料|文件|图像|影像|视频|内容|样本))`)
@@ -3063,11 +3063,6 @@ func (context *minorSafetyCompactScanContext) relatedEnd(end int) int {
 	return reset.open
 }
 
-func minorSafetyCompactRelatedTail(tail string) string {
-	context := newMinorSafetyCompactScanContext(tail)
-	return tail[:context.relatedEnd(0)]
-}
-
 func minorSafetyCandidateSuppressionEnd(scanContext *minorSafetyScanContext, start, end int) int {
 	if scanContext == nil {
 		return 0
@@ -3117,26 +3112,6 @@ func minorSafetyCandidateSuppressionEnd(scanContext *minorSafetyScanContext, sta
 	return 0
 }
 
-func minorSafetySentenceScopeEnd(text string, end int) int {
-	if end < 0 || end > len(text) {
-		return end
-	}
-	if boundary := minorSafetySentenceBoundary.FindStringIndex(text[end:]); len(boundary) == 2 {
-		return end + boundary[1]
-	}
-	return len(text)
-}
-
-func minorSafetyLineScopeEnd(text string, end int) int {
-	if end < 0 || end > len(text) {
-		return end
-	}
-	if newline := strings.IndexByte(text[end:], '\n'); newline >= 0 {
-		return end + newline + 1
-	}
-	return len(text)
-}
-
 func minorSafetyUnsafeArtifactReference(text string) bool {
 	if !minorSafetyUnsafeArtifactAnaphora.MatchString(text) {
 		return false
@@ -3167,10 +3142,6 @@ func minorSafetySameSentenceTail(text string, end int) string {
 		return tail[:boundary[0]]
 	}
 	return tail
-}
-
-func minorSafetyRelatedTail(text string, end int) string {
-	return newMinorSafetyScanContext(text).relatedTail(end)
 }
 
 func minorSafetyDefensiveDiscussion(scanContext *minorSafetyScanContext, start, end int) bool {
@@ -3491,15 +3462,6 @@ func (context *minorSafetyScanContext) hasReactivation(end int) bool {
 		minorSafetyHasActivePattern(anchored, minorSafetyReferentialReactivation)
 }
 
-func (context *minorSafetyScanContext) hasIndexedReactivationBetween(start, limit int) bool {
-	if context == nil || start < 0 || limit <= start {
-		return false
-	}
-	context.ensureReactivations()
-	index := sort.SearchInts(context.reactivationStarts, start)
-	return index < len(context.reactivationStarts) && context.reactivationStarts[index] < limit
-}
-
 func (context *minorSafetyScanContext) hasIndexedCrossResetReferenceBetween(start, limit int) bool {
 	if context == nil || start < 0 || limit <= start {
 		return false
@@ -3546,21 +3508,6 @@ func encodedBlockReviewOnly(text string, start, end int) bool {
 
 func encodedBlockReviewOnlyWithContext(scanContext *minorSafetyScanContext, start, end int) bool {
 	return scanContext != nil && scanContext.quotedReviewEligible(start, end)
-}
-
-func minorSafetyQuotedReviewContext(scanContext *minorSafetyScanContext, start, end int) (string, string, bool) {
-	if scanContext == nil {
-		return "", "", false
-	}
-	open, close, ok := scanContext.quoteSpan(start, end)
-	if !ok {
-		return "", "", false
-	}
-	return scanContext.quoteReviewWindow(open, close)
-}
-
-func minorSafetyQuoteSpan(text string, start, end int) (int, int, bool) {
-	return newMinorSafetyScanContext(text).quoteSpan(start, end)
 }
 
 func minorSafetyHasReactivation(text string, end int) bool {
@@ -3742,7 +3689,7 @@ func ExtractText(body []byte, endpoint string, maxLen int) string {
 	envelope := BuildEnvelope(body, endpoint, "", TransportHTTP, maxLen)
 	parts := make([]string, 0, 2)
 	for _, segment := range envelope.Segments {
-		if segment.Origin != OriginCurrentUser && !(segment.Origin == OriginHistory && segment.Linked) {
+		if segment.Origin != OriginCurrentUser && (segment.Origin != OriginHistory || !segment.Linked) {
 			continue
 		}
 		if text := strings.TrimSpace(segment.Text); text != "" {

@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 type bpsTestUpstream struct {
@@ -33,18 +34,6 @@ type excelBPSQuotaRepo struct {
 	limitErr  error
 }
 
-type excelBPSQuotaSettingsRepo struct {
-	SettingRepository
-	cooldown string
-}
-
-func (r *excelBPSQuotaSettingsRepo) GetValue(_ context.Context, key string) (string, error) {
-	if key == SettingKeyRateLimit429CooldownSettings {
-		return r.cooldown, nil
-	}
-	return "", ErrSettingNotFound
-}
-
 func (r *excelBPSQuotaRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	copied := make(map[string]any, len(updates))
 	for key, value := range updates {
@@ -59,17 +48,6 @@ func (r *excelBPSQuotaRepo) SetRateLimited(ctx context.Context, id int64, resetA
 	deadline, _ := ctx.Deadline()
 	r.writes <- excelBPSQuotaWrite{accountID: id, resetAt: resetAt, ctxErr: ctx.Err(), deadline: deadline}
 	return r.limitErr
-}
-
-func nextExcelBPSQuotaWrite(t *testing.T, repo *excelBPSQuotaRepo) excelBPSQuotaWrite {
-	t.Helper()
-	select {
-	case write := <-repo.writes:
-		return write
-	case <-time.After(3 * time.Second):
-		t.Fatal("expected an account quota update")
-		return excelBPSQuotaWrite{}
-	}
 }
 
 func requireNoExcelBPSQuotaWrite(t *testing.T, repo *excelBPSQuotaRepo) {

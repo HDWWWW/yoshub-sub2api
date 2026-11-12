@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -158,8 +157,4 @@ func excelBPSProgressTimeout(seconds int) time.Duration {
 		seconds = 120
 	}
 	return time.Duration(seconds) * time.Second
-}
-
-func excelBPSConfiguredModels(raw string) []string {
-	return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' })
 }

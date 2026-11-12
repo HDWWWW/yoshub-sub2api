@@ -68,7 +68,7 @@ func (c *Client) Call(ctx context.Context, method, path string, input, output an
 	if err != nil {
 		return fmt.Errorf("OVH IPv6 出口服务连接失败")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("OVH IPv6 出口服务返回 HTTP %d", res.StatusCode)
 	}

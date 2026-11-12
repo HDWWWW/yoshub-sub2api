@@ -51,7 +51,7 @@ func TestIsSingleAccountRetry_False_WrongType(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSingleAccountRetryConstants(t *testing.T) {
-	require.Equal(t, 3, antigravitySingleAccountSmartRetryMaxAttempts,
+	require.Equal(t, 3, defaultPoolModeRetryCount,
 		"单账号原地重试默认 3 次")
 	require.Equal(t, 15*time.Second, antigravitySingleAccountSmartRetryMaxWait,
 		"单次最大等待 15s")
@@ -475,7 +475,7 @@ func TestHandleSingleAccountRetryInPlace_AllRetriesFail(t *testing.T) {
 	// 构造 3 个 503 响应（对应 3 次原地重试）
 	var responses []*http.Response
 	var errors []error
-	for i := 0; i < antigravitySingleAccountSmartRetryMaxAttempts; i++ {
+	for i := 0; i < defaultPoolModeRetryCount; i++ {
 		responses = append(responses, &http.Response{
 			StatusCode: http.StatusServiceUnavailable,
 			Header:     http.Header{},
@@ -533,7 +533,7 @@ func TestHandleSingleAccountRetryInPlace_AllRetriesFail(t *testing.T) {
 	require.Nil(t, result.err)
 
 	// 验证确实重试了指定次数
-	require.Len(t, upstream.calls, antigravitySingleAccountSmartRetryMaxAttempts,
+	require.Len(t, upstream.calls, defaultPoolModeRetryCount,
 		"should have made exactly maxAttempts retry calls")
 }
 

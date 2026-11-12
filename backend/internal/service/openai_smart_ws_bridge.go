@@ -42,7 +42,7 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 	if err != nil {
 		return nil, smartWSUncertainError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	upstreamBody := resp.Body
 	stopCancel := context.AfterFunc(ctx, func() { _ = upstreamBody.Close() })
 	defer stopCancel()

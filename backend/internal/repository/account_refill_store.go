@@ -35,7 +35,7 @@ func (s *accountRefillStore) ListRules(ctx context.Context) (map[int64]string, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int64]string{}
 	for rows.Next() {
 		var key, value string
@@ -68,7 +68,7 @@ func (s *accountRefillStore) WithLock(ctx context.Context, fn func(string, func(
 	// old worker would discard. A slot-specific deployment marker gates only
 	// refill mutations until the old slot drains; no database lock is held.
 	if pauseFile := strings.TrimSpace(os.Getenv("SUB2API_REFILL_PAUSE_FILE")); pauseFile != "" {
-		if _, err := os.Stat(pauseFile); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(pauseFile); !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path comes only from the operator's process environment, never request data.
 			return service.ErrAccountRefillBusy
 		}
 	}

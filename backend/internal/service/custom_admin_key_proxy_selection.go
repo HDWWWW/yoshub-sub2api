@@ -109,7 +109,7 @@ func (s *adminServiceImpl) createDuplicateWithFreshIPv6(ctx context.Context, acc
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	txctx := dbent.NewTxContext(ctx, tx)
 	id, err := s.scopedAccountProxySelection(txctx, "ovh_ipv6", nil)
 	if err != nil {

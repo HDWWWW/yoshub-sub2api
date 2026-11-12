@@ -52,7 +52,7 @@ func TestProductionInterceptReplay(t *testing.T) {
 				"⟦/PF_HIT⟧", "",
 				"<uuid>", "00000000-0000-0000-0000-000000000001",
 			).Replace(sample.Prompt)
-			got := ActionAllow
+			var got string
 			if strings.EqualFold(strings.TrimSpace(sample.Model), "codex-auto-review") {
 				// Some legacy log rows reached the database preview limit before the
 				// closing approval markers. They are useful for rule attribution but

@@ -57,34 +57,34 @@ type currentUserPrecheck struct {
 }
 
 type Decision struct {
-	Enabled               bool          `json:"enabled"`
-	Mode                  string        `json:"mode"`
-	Profile               string        `json:"profile"`
-	ApplicationPromptKind string        `json:"application_prompt_kind,omitempty"`
+	Enabled               bool   `json:"enabled"`
+	Mode                  string `json:"mode"`
+	Profile               string `json:"profile"`
+	ApplicationPromptKind string `json:"application_prompt_kind,omitempty"`
 	// ApprovalReviewModelUntrusted names the requested model of a well-formed
 	// Codex auto-review request that was scanned as ordinary input because the
 	// model is not listed in Enforcement.ApprovalReviewModels.
-	ApprovalReviewModelUntrusted string `json:"approval_review_model_untrusted,omitempty"`
-	Action                string        `json:"action"`
-	WouldAction           string        `json:"would_action"`
-	Score                 int           `json:"score"`
-	RawScore              int           `json:"raw_score"`
-	AuditScore            int           `json:"audit_score,omitempty"`
-	AuditRawScore         int           `json:"audit_raw_score,omitempty"`
-	ReasonCode            string        `json:"reason_code,omitempty"`
-	Reason                string        `json:"reason,omitempty"`
-	Terminal              bool          `json:"terminal,omitempty"`
-	StrikeEligible        bool          `json:"strike_eligible,omitempty"`
-	Truncated             bool          `json:"truncated,omitempty"`
-	CurrentUserTruncated  bool          `json:"current_user_truncated,omitempty"`
-	AuxiliaryTruncated    bool          `json:"auxiliary_truncated,omitempty"`
-	PrimaryOrigin         SegmentOrigin `json:"primary_origin,omitempty"`
-	PrimaryDetector       string        `json:"primary_detector,omitempty"`
-	Signals               []Signal      `json:"signals,omitempty"`
-	Errors                []string      `json:"errors,omitempty"`
-	ReviewText            string        `json:"-"`
-	legacyVerdict         Verdict
-	deferredAudit         *DeferredAudit
+	ApprovalReviewModelUntrusted string        `json:"approval_review_model_untrusted,omitempty"`
+	Action                       string        `json:"action"`
+	WouldAction                  string        `json:"would_action"`
+	Score                        int           `json:"score"`
+	RawScore                     int           `json:"raw_score"`
+	AuditScore                   int           `json:"audit_score,omitempty"`
+	AuditRawScore                int           `json:"audit_raw_score,omitempty"`
+	ReasonCode                   string        `json:"reason_code,omitempty"`
+	Reason                       string        `json:"reason,omitempty"`
+	Terminal                     bool          `json:"terminal,omitempty"`
+	StrikeEligible               bool          `json:"strike_eligible,omitempty"`
+	Truncated                    bool          `json:"truncated,omitempty"`
+	CurrentUserTruncated         bool          `json:"current_user_truncated,omitempty"`
+	AuxiliaryTruncated           bool          `json:"auxiliary_truncated,omitempty"`
+	PrimaryOrigin                SegmentOrigin `json:"primary_origin,omitempty"`
+	PrimaryDetector              string        `json:"primary_detector,omitempty"`
+	Signals                      []Signal      `json:"signals,omitempty"`
+	Errors                       []string      `json:"errors,omitempty"`
+	ReviewText                   string        `json:"-"`
+	legacyVerdict                Verdict
+	deferredAudit                *DeferredAudit
 }
 
 // DeferredAudit is an immutable snapshot of auxiliary shadow-only content
@@ -990,11 +990,6 @@ func markUntrustedApprovalModel(envelope RequestEnvelope) RequestEnvelope {
 	return envelope
 }
 
-func splitAmbientSafetyPrompt(text string, signatures []applicationTemplateSignature) (string, bool) {
-	candidate, exact, ok := parseAmbientSafetyPrompt(text, signatures)
-	return candidate, ok && exact
-}
-
 // parseAmbientSafetyPrompt recognizes both an exact known release and a
 // narrowly structured template drift. The Codex Desktop task is transported as
 // an ordinary user input_text item, while its fixed policy boilerplate itself
@@ -1527,7 +1522,7 @@ func (c *exactGuardSegmentCache) inspectComputed(
 		c.removeElement(c.lru.Back())
 	}
 	if element, ok := c.entries[key]; ok {
-		entry := element.Value.(*exactGuardSegmentCacheEntry)
+		entry := element.Value.(*exactGuardSegmentCacheEntry) //nolint:errcheck // Private LRU only stores this entry type.
 		if now.Sub(entry.cachedAt) < time.Duration(performance.ExactSegmentCacheTTLSeconds)*time.Second {
 			c.lru.MoveToFront(element)
 			cachedVerdict := entry.verdict
@@ -1641,22 +1636,6 @@ func restoreCurrentUserPrecheckVerdictWithPerformanceBudget(engine *Engine, verd
 	return verdict
 }
 
-func restoreExactGuardVerdict(engine *Engine, verdict Verdict, text string) Verdict {
-	maxScanBytes := 0
-	if engine != nil {
-		maxScanBytes = engine.cfg.MaxTextLength
-	}
-	return restoreExactGuardVerdictWithBudget(engine, verdict, text, maxScanBytes)
-}
-
-func restoreExactGuardVerdictWithBudget(engine *Engine, verdict Verdict, text string, maxScanBytes int) Verdict {
-	performance := GuardPerformanceConfig{}
-	if engine != nil {
-		performance = engine.cfg.Advanced.Guard.Performance
-	}
-	return restoreExactGuardVerdictWithPerformanceBudget(engine, verdict, text, maxScanBytes, performance)
-}
-
 func restoreExactGuardVerdictWithPerformanceBudget(engine *Engine, verdict Verdict, text string, maxScanBytes int, performance GuardPerformanceConfig) Verdict {
 	// LegacyRegexDetector immediately discards clean verdicts. Rebuilding a
 	// preview for them would allocate and redact several kilobytes per repeated
@@ -1718,25 +1697,6 @@ func cachedVerdictRedactedPreview(text string, maxRunes int) string {
 
 func cachedPreviewTokenByte(value byte) bool {
 	return isASCIIAlphaNumeric(value) || strings.ContainsRune("_-.:/@+=%~", rune(value))
-}
-
-// cachedVerdictMatchContext rebuilds bounded, redacted evidence from the exact
-// current request text. Cache entries retain only semantic match metadata, so
-// neither raw prompts nor derived previews/contexts remain reachable from the
-// process-wide LRU after a request completes.
-func (e *Engine) cachedVerdictMatchContext(text string, matches []Match) string {
-	maxScanBytes := 0
-	if e != nil {
-		maxScanBytes = e.cfg.MaxTextLength
-	}
-	return e.cachedVerdictMatchContextWithBudget(text, matches, maxScanBytes)
-}
-
-func (e *Engine) cachedVerdictMatchContextWithBudget(text string, matches []Match, maxScanBytes int) string {
-	if e == nil {
-		return ""
-	}
-	return e.cachedVerdictMatchContextWithPerformanceBudget(text, matches, maxScanBytes, e.cfg.Advanced.Guard.Performance)
 }
 
 func (e *Engine) cachedVerdictMatchContextWithPerformanceBudget(text string, matches []Match, maxScanBytes int, performance GuardPerformanceConfig) string {
@@ -2082,15 +2042,6 @@ func actionForGuardProfile(action string, signal Signal, profile GuardProfile) s
 		return ActionWarn
 	}
 	return action
-}
-
-func signalHasMatch(signal Signal, name string) bool {
-	for _, match := range signal.Matches {
-		if match.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func DeduplicateSignals(signals []Signal) []Signal {

@@ -34,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	if *initialize {
 		log.Print("new IPv6 allocation store initialized")
 		return
@@ -45,12 +45,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer proxyListener.Close()
+	defer func() { _ = proxyListener.Close() }()
 	controlListener, err := net.Listen("tcp4", cfg.ControlListen)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer controlListener.Close()
+	defer func() { _ = controlListener.Close() }()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	a.Reconcile(ctx)

@@ -73,7 +73,7 @@ func (r *proxyRepository) AllocateOVHIPv6(ctx context.Context, name string) (*se
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	txctx := dbent.NewTxContext(ctx, tx)
 	id, err := r.allocateOVHIPv6Lease(txctx, name, true)
 	if err != nil {
@@ -163,7 +163,7 @@ func (r *proxyRepository) ManagedIPv6Details(ctx context.Context, ids []int64) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
 		var detail service.ManagedIPv6Binding
@@ -201,7 +201,7 @@ func (r *proxyRepository) SyncOVHIPv6(ctx context.Context) error {
 		jobs = append(jobs, j)
 	}
 	readErr := rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}

@@ -153,9 +153,10 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 		groupName = riskNotificationName(g.Name)
 	}
 	action := "已关闭此账号调度，现有请求继续完成。"
-	if event.Action == "notify_only" {
+	switch event.Action {
+	case "notify_only":
 		action = "仅通知，未因本次异常停止账号调度。"
-	} else if event.Action == "pause" {
+	case "pause":
 		action = "已暂停此账号调度，消息复测通过后自动恢复，现有请求继续完成。"
 	}
 	content := fmt.Sprintf("SUB2API 风控检测告警\n分组：#%d %s\n账号：#%d %s\n时间：%s\n原因：%s\n处理：%s", groupID, groupName, event.AccountID, event.AccountName, event.At.Format(time.RFC3339), event.Reason, action)

@@ -26,7 +26,7 @@ func isOpenAIHTTPWSResponse(resp *http.Response) bool {
 // real TTFT, failure handling and billing. No HTTP retry is hidden in this adapter.
 func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Request, proxyURL string, account *Account) (*http.Response, error) {
 	originalBody := req.Body
-	defer originalBody.Close()
+	defer func() { _ = originalBody.Close() }()
 	observation := s.beginSmartWSObservation(c)
 	dispatch := beginSmartWSDispatch(c)
 	requestLimit := s.openAIWSRequestLimit()

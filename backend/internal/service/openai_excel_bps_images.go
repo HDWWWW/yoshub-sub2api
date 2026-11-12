@@ -32,68 +32,6 @@ func excelBPSImagesSupportedModel(model string) bool {
 	return strings.TrimSpace(model) == "gpt-image-2"
 }
 
-// excelBPSImagesUnsupportedReason reports why a request must stay on Codex.
-// BPS answers 422 for any field outside model, prompt, size, quality, n,
-// background and output_format; only png output and opaque/auto backgrounds
-// were accepted in testing.
-func excelBPSImagesUnsupportedReason(parsed *OpenAIImagesRequest) string {
-	switch {
-	case parsed == nil:
-		return "missing request"
-	case parsed.Stream:
-		return "stream"
-	case parsed.PartialImages != nil:
-		return "partial_images"
-	case parsed.OutputCompression != nil:
-		return "output_compression"
-	case strings.TrimSpace(parsed.Style) != "":
-		return "style"
-	case strings.TrimSpace(parsed.InputFidelity) != "":
-		return "input_fidelity"
-	}
-	switch strings.ToLower(strings.TrimSpace(parsed.OutputFormat)) {
-	case "", "png":
-	default:
-		return "output_format"
-	}
-	switch strings.ToLower(strings.TrimSpace(parsed.Moderation)) {
-	case "", "auto":
-	default:
-		return "moderation"
-	}
-	switch strings.ToLower(strings.TrimSpace(parsed.Background)) {
-	case "", "opaque", "auto":
-	default:
-		return "background"
-	}
-	if parsed.IsEdits() {
-		return excelBPSImagesEditsUnsupportedReason(parsed)
-	}
-	return ""
-}
-
-// The BPS edit endpoint requires exactly one image file; masks and remote
-// image URLs (which the gateway would have to download) stay on Codex.
-func excelBPSImagesEditsUnsupportedReason(parsed *OpenAIImagesRequest) string {
-	if parsed.HasMask || parsed.MaskUpload != nil || strings.TrimSpace(parsed.MaskImageURL) != "" {
-		return "mask"
-	}
-	images := len(parsed.Uploads)
-	for _, imageURL := range parsed.InputImageURLs {
-		if imageURL = strings.TrimSpace(imageURL); imageURL == "" {
-			continue
-		}
-		images++
-		if _, _, err := decodeAccountTestDataURL(imageURL); err != nil {
-			return "remote image_url"
-		}
-	}
-	if images != 1 {
-		return "image count"
-	}
-	return ""
-}
-
 // buildExcelBPSImagesPayload reuses the Codex generations body. moderation=auto
 // is the upstream default, and BPS rejects the field itself.
 func buildExcelBPSImagesPayload(parsed *OpenAIImagesRequest, model string) ([]byte, error) {

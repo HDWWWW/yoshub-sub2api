@@ -19,7 +19,7 @@ func (r *usageLogRepository) GetAccountLifetimeStatsBatch(ctx context.Context, i
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
 		stats := &usagestats.AccountStats{}

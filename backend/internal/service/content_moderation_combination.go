@@ -79,7 +79,7 @@ func normalizeCombinationRules(in []ContentModerationCombinationRule) ([]Content
 			return invalid("组合规则 ID 必须唯一且为 1–64 位字母、数字、下划线或连字符")
 		}
 		for _, c := range rule.ID {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' {
 				return invalid("组合规则 ID 只能包含字母、数字、下划线或连字符")
 			}
 		}

@@ -111,7 +111,7 @@ func decodeRefillWorkdayYear(raw []byte, year int) (refillWorkdayYear, error) {
 	}
 	for _, paper := range document.Papers {
 		u, err := url.Parse(paper)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || !(u.Hostname() == "gov.cn" || strings.HasSuffix(u.Hostname(), ".gov.cn")) {
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || (u.Hostname() != "gov.cn" && !strings.HasSuffix(u.Hostname(), ".gov.cn")) {
 			return refillWorkdayYear{}, errors.New("日历缺少有效的政府公告来源")
 		}
 	}
@@ -162,7 +162,7 @@ func fetchRefillWorkdayURL(ctx context.Context, client *http.Client, source stri
 	if err != nil {
 		return refillWorkdayYear{}, errors.New("日历源暂不可用")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode == http.StatusNotFound {
 		return refillWorkdayYear{}, errRefillCalendarUnpublished
 	}

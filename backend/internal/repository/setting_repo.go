@@ -49,7 +49,7 @@ func (r *settingRepository) UpdateContentModerationConfigAtomic(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	if err := lockLiveGroups(ctx, client, groupIDs); err != nil {
 		return err

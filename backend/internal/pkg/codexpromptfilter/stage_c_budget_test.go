@@ -1027,7 +1027,7 @@ func TestDecodedSafetyHintAutomatonNormalizedSourceMatchesCanonicalNormalization
 		var input strings.Builder
 		input.Grow(length * 2)
 		for index := 0; index < length; index++ {
-			input.WriteRune(alphabet[random.Intn(len(alphabet))])
+			_, _ = input.WriteRune(alphabet[random.Intn(len(alphabet))])
 		}
 		assertEquivalent(input.String())
 	}
@@ -1067,7 +1067,7 @@ func TestDecodedSafetyHintAutomatonROT13SourceMatchesCanonicalNormalization(t *t
 		var input strings.Builder
 		input.Grow(length * 2)
 		for index := 0; index < length; index++ {
-			input.WriteRune(alphabet[random.Intn(len(alphabet))])
+			_, _ = input.WriteRune(alphabet[random.Intn(len(alphabet))])
 		}
 		assertEquivalent(input.String())
 	}

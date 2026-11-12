@@ -352,7 +352,7 @@ func TestAccountRepository_ListOAuthRefreshCandidatePage_UngroupedOnly(t *testin
 		t.Run(fmt.Sprintf("ungrouped_%t", ungrouped), func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			var capturedSQL string
 			mock.ExpectQuery("SELECT id").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 			repo := newAccountRepositoryWithSQL(nil, captureQuerySQL{db: db, captured: &capturedSQL}, nil)

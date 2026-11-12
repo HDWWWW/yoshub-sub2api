@@ -1,11 +1,10 @@
 package service
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
-)
 
-const excelBPSToolPolicyResponse = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_policy\",\"status\":\"completed\",\"model\":\"gpt-6-astra\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n"
+	"github.com/stretchr/testify/require"
+)
 
 func TestExcelBPSOmitUnsupportedToolsRequiresExplicitOptIn(t *testing.T) {
 	var missing *Account

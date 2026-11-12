@@ -192,7 +192,7 @@ func ExtractOutputText(data []byte) string {
 		parsed := gjson.Parse(line)
 		for _, path := range []string{"delta", "choices.0.delta.content", "delta.text", "content_block.text", "content.0.text"} {
 			if value := parsed.Get(path); value.Exists() && value.Type == gjson.String {
-				out.WriteString(value.String())
+				_, _ = out.WriteString(value.String())
 				break
 			}
 		}

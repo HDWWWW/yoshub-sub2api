@@ -141,13 +141,13 @@ func TestProductionCorpusReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rows, err := db.Query(`select id, endpoint, full_text, text_preview from prompt_filter_logs order by id`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	normalCfg := testConfig(ModeBlock)
 	normalCfg.StrictTerminalEnabled = false

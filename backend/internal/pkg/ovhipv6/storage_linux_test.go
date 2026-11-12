@@ -25,7 +25,9 @@ func TestOVHIPv6StorageFilesRealLinuxAllocatedBlocks(t *testing.T) {
 	for i, item := range out.Items {
 		info, err := os.Lstat(filepath.Join(dir, item.Name))
 		require.NoError(t, err)
-		actual := info.Sys().(*syscall.Stat_t).Blocks * 512
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		require.True(t, ok)
+		actual := stat.Blocks * 512
 		require.NotNil(t, item.DiskBytes)
 		require.Equal(t, actual, *item.DiskBytes)
 		total += actual

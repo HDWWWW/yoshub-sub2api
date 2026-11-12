@@ -81,7 +81,8 @@ func TestAccountRefillGroupStoreSharesLockAndUsesSeparateKey(t *testing.T) {
 	mock.ExpectQuery("SELECT value FROM settings").WithArgs(key).WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("old-group"))
 	mock.ExpectExec("INSERT INTO settings").WithArgs(key, "new-group").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("SELECT pg_advisory_unlock").WithArgs(int64(8362461180561)).WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(true))
-	store := NewAccountRefillStore(db).(service.AccountRefillGroupStore)
+	store, ok := NewAccountRefillStore(db).(service.AccountRefillGroupStore)
+	require.True(t, ok)
 	err = store.ForGroup(42).WithLock(context.Background(), func(raw string, save func(string) error) error {
 		require.Equal(t, "old-group", raw)
 		return save("new-group")

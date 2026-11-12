@@ -56,7 +56,7 @@ func extractModerationUserBodies(protocol string, body []byte) []moderationUserB
 	var out []moderationUserBody
 	add := func(value gjson.Result, source string) {
 		role := strings.ToLower(strings.TrimSpace(value.Get("role").String()))
-		if role != "user" && !(role == "" && implicitUser) {
+		if role != "user" && (role != "" || !implicitUser) {
 			return
 		}
 		var parts []string

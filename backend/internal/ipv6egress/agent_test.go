@@ -111,7 +111,7 @@ func TestAllocationSurvivesRetirementAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	second, err := a.Create(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +323,7 @@ func TestRestoredActiveLeaseRetainsSourceAndCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	if _, _, _, ok := a.acquire(l.Username, l.Password); ok {
 		t.Fatal("lease served before address restored")
 	}
@@ -409,7 +409,7 @@ func TestControlAuthenticationAndProxyHeaderIsolation(t *testing.T) {
 		gotSource = source
 		c, s := net.Pipe()
 		go func() {
-			defer s.Close()
+			defer func() { _ = s.Close() }()
 			b := make([]byte, 8192)
 			n, _ := s.Read(b)
 			gotRequest = string(b[:n])
@@ -459,7 +459,7 @@ func TestConnectTunnelKeepsInFlightBytesWhileRetiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	auth := base64.StdEncoding.EncodeToString([]byte(l.Username + ":" + l.Password))
 	_, err = fmt.Fprintf(c, "CONNECT upstream.example:443 HTTP/1.1\r\nHost: upstream.example:443\r\nProxy-Authorization: Basic %s\r\n\r\n", auth)
@@ -472,7 +472,7 @@ func TestConnectTunnelKeepsInFlightBytesWhileRetiring(t *testing.T) {
 		t.Fatalf("CONNECT failed: %v", err)
 	}
 	upstream := <-upstreamReady
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	r, err := a.Retire(context.Background(), l.ID)
 	if err != nil || r.State != "retiring" {
 		t.Fatal("active tunnel did not retain address")

@@ -214,7 +214,7 @@ func installProxyBindingLimitSchema(t *testing.T, db *sql.DB) {
 func TestNativeStaleAccountWritePreservesCurrentManualPriority(t *testing.T) {
 	db := scopedAdminKeyTestDB(t)
 	_, err := db.Exec(`CREATE TABLE accounts(id BIGINT PRIMARY KEY,platform TEXT,type TEXT,proxy_id BIGINT,
-	 credentials JSONB DEFAULT '{}'::jsonb, extra JSONB DEFAULT '{}'::jsonb,deleted_at TIMESTAMPTZ);
+	 credentials JSONB DEFAULT '{}'::jsonb, extra JSONB DEFAULT '{}'::jsonb,expires_at TIMESTAMPTZ,deleted_at TIMESTAMPTZ);
 	 INSERT INTO accounts(id,platform,type,extra) VALUES(1,'openai','oauth','{"yoshub_manual_scheduling_priority":0}');`)
 	require.NoError(t, err)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))

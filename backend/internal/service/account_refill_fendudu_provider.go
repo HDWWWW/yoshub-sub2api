@@ -108,7 +108,7 @@ func (p *httpFenduduProvider) request(ctx context.Context, token, method, path s
 	if err != nil {
 		return &refillProviderTemporaryError{"粉嘟嘟连接中断，需核对原任务"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		delay := 15 * time.Second
 		if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {

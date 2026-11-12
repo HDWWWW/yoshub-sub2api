@@ -32,7 +32,7 @@ func (r *proxyRepository) GetProxyBindingLimits(ctx context.Context, ids []int64
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]service.ProxyBindingLimit, 0, len(ids))
 	for rows.Next() {
 		var item service.ProxyBindingLimit
@@ -64,7 +64,7 @@ func (r *proxyRepository) SetProxyBindingLimits(ctx context.Context, ids []int64
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	if _, err = client.ExecContext(ctx, accountProxyAllocationLock); err != nil {
 		return err

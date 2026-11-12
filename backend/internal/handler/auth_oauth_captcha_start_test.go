@@ -88,6 +88,18 @@ func oauthStartHandlers() map[string]func(*AuthHandler, *gin.Context) {
 	}
 }
 
+func TestDingTalkOAuthStart_Disabled(t *testing.T) {
+	handler, verifier := newOAuthCaptchaTestHandler(false)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/dingtalk/start", nil)
+	handler.DingTalkOAuthStart(c)
+	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Contains(t, recorder.Header().Get("Location"), "dingtalk_not_enabled")
+	require.Empty(t, recorder.Header().Values("Set-Cookie"), "disabled OAuth must not create a login session")
+	require.Zero(t, verifier.calls)
+}
+
 func TestOAuthStartGetRejectsAnonymousLoginWhenTencentEnabledWithoutSideEffects(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for provider, start := range oauthStartHandlers() {

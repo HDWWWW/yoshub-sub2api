@@ -134,6 +134,10 @@ func testSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T, co
 							require.Equal(t, wantStatus, rec.Code)
 							if paired {
 								require.JSONEq(t, bare, rec.Body.String())
+							} else if isPolicy {
+								require.Equal(t, code, gjson.Get(rec.Body.String(), "error.code").String())
+								require.JSONEq(t, gjson.Get(failure, "response").Raw, gjson.Get(rec.Body.String(), "response").Raw)
+								require.Equal(t, "response.failed", gjson.Get(rec.Body.String(), "type").String())
 							} else {
 								require.JSONEq(t, failure, rec.Body.String())
 							}

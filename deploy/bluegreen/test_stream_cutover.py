@@ -1,6 +1,7 @@
 """Real Docker/Nginx SSE and WebSocket cutover test; uses only isolated fixtures."""
 import importlib.util
 import json
+import os
 import pathlib
 import socket
 import subprocess
@@ -42,7 +43,10 @@ ThreadingHTTPServer(('0.0.0.0',8080),Handler).serve_forever()
 
 
 def run(*args):
-    return subprocess.check_output(args, stderr=subprocess.STDOUT).decode().strip()
+    try:
+        return subprocess.check_output(args, stderr=subprocess.STDOUT).decode().strip()
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f'Fixture command failed: {args!r}\n{exc.output.decode(errors="replace")}') from exc
 
 
 def main():
@@ -111,7 +115,8 @@ def main():
             old_port = old['NetworkSettings']['Ports']['8080/tcp'][0]['HostPort']
             legacy_stream = urllib.request.urlopen('http://127.0.0.1:' + old_port + '/stream', timeout=10)
             assert legacy_stream.readline() == b'data: blue:0\n'
-            firewall = ['docker', 'run', '--rm', '--privileged', '--pid', 'host', 'alpine:3.21',
+            helper_image = os.environ.get('SUB2API_CUTOVER_HELPER_IMAGE', 'alpine:3.21')
+            firewall = ['docker', 'run', '--rm', '--privileged', '--pid', 'host', helper_image,
                         'nsenter', '-t', '1', '-m', '-n', 'nsenter', '-t', str(old['State']['Pid']), '-n',
                         'iptables', '-w', '10', '-t', 'nat']
             router_ip = json.loads(run('docker', 'inspect', name))[0]['NetworkSettings']['Networks'][task]['IPAddress']

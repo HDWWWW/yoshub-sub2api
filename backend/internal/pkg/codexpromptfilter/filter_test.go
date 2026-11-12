@@ -561,30 +561,30 @@ func TestRequiresRequestText(t *testing.T) {
 // 但仍参与 gjson 树遍历）。这样开启态的成本与生产接近，而非只有 JSON 解析。
 func buildLargeMultimodalBody(sizeBytes int) []byte {
 	var b strings.Builder
-	b.WriteString(`{"model":"gpt-5.5","input":[`)
+	_, _ = b.WriteString(`{"model":"gpt-5.5","input":[`)
 	// 一半预算用于真实文本轮次（提取+扫描的主要成本来源）。
 	textBudget := sizeBytes / 2
 	turnText := strings.Repeat("Please review this module and summarize the key changes and risks. ", 30)
 	written := 0
 	for written < textBudget {
 		if written > 0 {
-			b.WriteString(",")
+			_, _ = b.WriteString(",")
 		}
-		b.WriteString(`{"role":"user","content":[{"type":"input_text","text":"`)
-		b.WriteString(turnText)
-		b.WriteString(`"}]}`)
+		_, _ = b.WriteString(`{"role":"user","content":[{"type":"input_text","text":"`)
+		_, _ = b.WriteString(turnText)
+		_, _ = b.WriteString(`"}]}`)
 		written += len(turnText) + 60
 	}
 	// 另一半预算是一个大 base64 图片：ExtractText 跳过 image_url 值，但 gjson 仍需
 	// 解析该节点。
-	b.WriteString(`,{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,`)
+	_, _ = b.WriteString(`,{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,`)
 	imgBytes := sizeBytes - written
 	if imgBytes < 0 {
 		imgBytes = 0
 	}
 	chunk := strings.Repeat("QUFBQUFBQUFBQUFBQUFBQQ", imgBytes/22+1)
-	b.WriteString(chunk[:imgBytes])
-	b.WriteString(`"}]}]}`)
+	_, _ = b.WriteString(chunk[:imgBytes])
+	_, _ = b.WriteString(`"}]}]}`)
 	return []byte(b.String())
 }
 

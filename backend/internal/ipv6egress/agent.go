@@ -408,7 +408,7 @@ func (a *Agent) probeAddress(ctx context.Context, address string) error {
 	if err != nil {
 		return errors.New("IPv6 TLS probe failed")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 	if res.StatusCode >= 500 {
 		return fmt.Errorf("IPv6 probe HTTP %d", res.StatusCode)

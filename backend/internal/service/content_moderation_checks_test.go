@@ -149,6 +149,8 @@ func TestContentModerationDisableAPIStopsQueuedCalls(t *testing.T) {
 	// negative assertion. Existing evidence must still be persisted.
 	svc.enqueueRecord(ContentModerationCheckInput{}, cfg, &ContentModerationLog{Action: ContentModerationActionAllow}, "", false, false)
 	go svc.worker(0)
-	require.Eventually(t, func() bool { return len(svc.repo.(*contentModerationTestRepo).snapshotLogs()) == 1 }, time.Second, time.Millisecond)
+	repo, ok := svc.repo.(*contentModerationTestRepo)
+	require.True(t, ok)
+	require.Eventually(t, func() bool { return len(repo.snapshotLogs()) == 1 }, time.Second, time.Millisecond)
 	require.Zero(t, calls.Load())
 }

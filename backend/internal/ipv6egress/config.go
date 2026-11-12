@@ -37,7 +37,7 @@ func ReadConfig(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return Config{}, err

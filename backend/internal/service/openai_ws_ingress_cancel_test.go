@@ -92,7 +92,7 @@ func TestOpenAIWSIngressDisconnectCancelsActiveTurnAndKeepsObservedUsage(t *test
 						serverDone <- err
 						return
 					}
-					defer conn.CloseNow()
+					defer func() { _ = conn.CloseNow() }()
 					_, first, err := conn.Read(r.Context())
 					if err != nil {
 						serverDone <- err
@@ -108,7 +108,7 @@ func TestOpenAIWSIngressDisconnectCancelsActiveTurnAndKeepsObservedUsage(t *test
 				defer cancel()
 				client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 				require.NoError(t, err)
-				defer client.CloseNow()
+				defer func() { _ = client.CloseNow() }()
 				require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":true}`)))
 				select {
 				case <-upstream.written:
@@ -184,7 +184,7 @@ func TestOpenAIWSIngressReaderKeepsQueuedFramesAcrossAttemptsAndStopsAtBound(t *
 				if err != nil {
 					return
 				}
-				defer conn.CloseNow()
+				defer func() { _ = conn.CloseNow() }()
 				c, _ := gin.CreateTestContext(httptest.NewRecorder())
 				r := openAIWSIngressReader(c, conn)
 				if openAIWSIngressReader(c, conn) != r {
@@ -199,7 +199,7 @@ func TestOpenAIWSIngressReaderKeepsQueuedFramesAcrossAttemptsAndStopsAtBound(t *
 			defer cancel()
 			client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 			require.NoError(t, err)
-			defer client.CloseNow()
+			defer func() { _ = client.CloseNow() }()
 			r := <-readers
 			count := 2
 			if overflow {

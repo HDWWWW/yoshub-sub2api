@@ -80,7 +80,7 @@ func TestTerminalCategoryEvidenceCannotRideUnrelatedScore(t *testing.T) {
 				{Name: "ordinary_threshold", Pattern: `(?i)\bordinary_threshold\b`, Weight: 50, Category: "ordinary"},
 			}
 
-			text := categoryPattern.Name + " ordinary_threshold"
+			var text string
 			if name == "low_decision_weight" {
 				text = "low_terminal_category ordinary_threshold"
 			} else {

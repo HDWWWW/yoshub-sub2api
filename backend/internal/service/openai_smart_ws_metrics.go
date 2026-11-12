@@ -202,7 +202,7 @@ func (p *openAIWSConnPool) SmartWSSnapshot() SmartWSSnapshot {
 	p.gate.mu.Unlock()
 	s.Active = int(m.nativeConnections.Load())
 	p.accounts.Range(func(_, value any) bool {
-		ap := value.(*openAIWSAccountPool)
+		ap := value.(*openAIWSAccountPool) //nolint:errcheck // Pool map is populated only with *openAIWSAccountPool.
 		ap.mu.Lock()
 		for _, conn := range ap.conns {
 			if conn != nil && conn.isLeased() {

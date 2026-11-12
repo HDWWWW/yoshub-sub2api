@@ -980,7 +980,10 @@ func TestExactGuardSegmentCachePreservesVerdictsWithoutRetainingPromptEvidence(t
 				cache.mu.Unlock()
 				t.Fatalf("cache entries = %d, want 1", cache.lru.Len())
 			}
-			entry := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+			entry, ok := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+			if !ok {
+				t.Fatal("unexpected private cache entry type")
+			}
 			cachedVerdict := entry.verdict
 			cache.mu.Unlock()
 			if cachedVerdict.FullText != "" || cachedVerdict.TextPreview != "" || cachedVerdict.MatchContext != "" {
@@ -1105,7 +1108,10 @@ func TestExactGuardSegmentCacheReusesCurrentUserPrecheckKindsWithoutPromptRetent
 				cache.mu.Unlock()
 				t.Fatalf("cache entries = %d, want 1", cache.lru.Len())
 			}
-			entry := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+			entry, ok := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+			if !ok {
+				t.Fatal("unexpected private cache entry type")
+			}
 			cachedVerdict := entry.verdict
 			cache.mu.Unlock()
 			if entry.key.kind != tc.kind || entry.key.textBytes != len(tc.text) || entry.key.revision != currentUserPrecheckRevision {
@@ -1150,7 +1156,10 @@ func TestExactGuardSegmentCacheSingleflightsWindowedCurrentUserPrecheck(t *testi
 	if cache.lru.Len() != 1 || len(cache.entries) != 1 || len(cache.inflight) != 0 {
 		t.Fatalf("windowed cache state after concurrent scan: lru=%d entries=%d inflight=%d", cache.lru.Len(), len(cache.entries), len(cache.inflight))
 	}
-	entry := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+	entry, ok := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+	if !ok {
+		t.Fatal("unexpected private cache entry type")
+	}
 	if entry.key.kind != exactGuardInspectionCurrentUserWindowed {
 		t.Fatalf("cached kind = %v, want windowed", entry.key.kind)
 	}
@@ -1235,7 +1244,10 @@ func TestExactGuardSegmentCacheAppliesRuntimeTTLAndCapacityChanges(t *testing.T)
 		cache.mu.Unlock()
 		t.Fatalf("capacity decrease left %d entries, want 1", cache.lru.Len())
 	}
-	oldEntry := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+	oldEntry, ok := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+	if !ok {
+		t.Fatal("unexpected private cache entry type")
+	}
 	oldEntry.cachedAt = time.Now().Add(-2 * time.Second)
 	cache.mu.Unlock()
 
@@ -1243,7 +1255,10 @@ func TestExactGuardSegmentCacheAppliesRuntimeTTLAndCapacityChanges(t *testing.T)
 	cache.inspect(engine, "ordinary cache entry two", performance)
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	newEntry := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+	newEntry, ok := cache.lru.Front().Value.(*exactGuardSegmentCacheEntry)
+	if !ok {
+		t.Fatal("unexpected private cache entry type")
+	}
 	if newEntry == oldEntry || time.Since(newEntry.cachedAt) >= time.Second {
 		t.Fatalf("TTL decrease did not refresh expired entry: old=%p new=%p cached_at=%s", oldEntry, newEntry, newEntry.cachedAt)
 	}

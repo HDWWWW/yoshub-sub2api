@@ -157,7 +157,7 @@ func (n weComRefillNotifier) Send(ctx context.Context, webhook, content string) 
 	if err != nil {
 		return errors.New("企业微信连接失败或超时")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("企业微信通知请求未成功")
 	}
@@ -234,7 +234,7 @@ func (s *AccountRefillService) notifyRefillBalance(ctx context.Context, state *a
 // WeCom, whose API has no idempotency key.
 func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
 	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
-		j.FailedNotificationAt != nil || j.Status != "failed" || (j.SupplierStatus != "failed" && !(j.Provider == refillProviderFendudu && j.SupplierStatus == "order_stopped")) || j.SupplierID == "" {
+		j.FailedNotificationAt != nil || j.Status != "failed" || (j.SupplierStatus != "failed" && (j.Provider != refillProviderFendudu || j.SupplierStatus != "order_stopped")) || j.SupplierID == "" {
 		return nil
 	}
 	now := time.Now()

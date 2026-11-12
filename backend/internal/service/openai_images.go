@@ -2034,13 +2034,3 @@ func dedupeStrings(values []string) []string {
 	}
 	return out
 }
-
-// Image generation may continue long enough to incur upstream costs after the
-// client disconnects. Keep its bounded billing drain aligned with image idle
-// configuration, while preserving a safety limit if idle checks are disabled.
-func (s *OpenAIGatewayService) openAIImageDrainTimeout() time.Duration {
-	if timeout := s.openAIImageStreamDataInterval(); timeout > 0 {
-		return timeout
-	}
-	return 900 * time.Second
-}

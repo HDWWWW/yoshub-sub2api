@@ -98,7 +98,7 @@ func (s *OpenAIGatewayService) FetchExcelBPSModelsList(ctx context.Context, acco
 	}
 	accountID := excelBPSAccountID(account, token)
 	if accountID == "" {
-		return nil, fmt.Errorf("Excel BPS discovery requires an account ID")
+		return nil, fmt.Errorf("excel BPS discovery requires an account ID")
 	}
 	request, err := newExcelBPSRequest(ctx, nil, token, accountID)
 	if err != nil {
@@ -122,12 +122,12 @@ func (s *OpenAIGatewayService) FetchExcelBPSModelsList(ctx context.Context, acco
 		if response != nil && response.Body != nil {
 			_ = response.Body.Close()
 		}
-		return nil, infraerrors.New(502, "EXCEL_BPS_MODELS_UPSTREAM_FAILED", "Excel BPS model discovery failed")
+		return nil, infraerrors.New(502, "EXCEL_BPS_MODELS_UPSTREAM_FAILED", "excel BPS model discovery failed")
 	}
 	if response == nil || response.Body == nil {
-		return nil, fmt.Errorf("Excel BPS model discovery returned no response")
+		return nil, fmt.Errorf("excel BPS model discovery returned no response")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = response.Body.Close() })
 	defer stop()
 	if response.StatusCode != http.StatusOK {
@@ -135,7 +135,7 @@ func (s *OpenAIGatewayService) FetchExcelBPSModelsList(ctx context.Context, acco
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, openAIModelsCacheBodyLimit+1))
 	if err != nil || len(raw) > openAIModelsCacheBodyLimit {
-		return nil, fmt.Errorf("Excel BPS catalog could not be read")
+		return nil, fmt.Errorf("excel BPS catalog could not be read")
 	}
 	body, err := excelBPSAccessModelsBody(raw)
 	if err != nil {
