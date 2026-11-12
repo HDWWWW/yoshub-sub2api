@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,10 +27,60 @@ type FenduduProduct struct {
 }
 
 type fenduduOrder struct {
-	Success  bool     `json:"success"`
-	Created  int      `json:"created"`
-	CycleIDs []string `json:"cycle_ids"`
+	Success        bool     `json:"success"`
+	Created        int      `json:"created"`
+	CycleIDs       []string `json:"cycle_ids"`
+	Pending        bool     `json:"pending"`
+	Error          string   `json:"error"`
+	Warning        string   `json:"warning"`
+	successPresent bool
 }
+
+func (o *fenduduOrder) UnmarshalJSON(data []byte) error {
+	type fields fenduduOrder
+	var decoded fields
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var envelope struct {
+		Success *bool `json:"success"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	*o = fenduduOrder(decoded)
+	o.successPresent = envelope.Success != nil
+	return nil
+}
+
+func (o *fenduduOrder) rejected() bool {
+	return o != nil && o.successPresent && !o.Success && !o.Pending &&
+		o.Created == 0 && len(o.CycleIDs) == 0 && o.Error != ""
+}
+
+var fenduduAPIKeyPattern = regexp.MustCompile(`(?i)rvak_[a-z0-9_-]+`)
+
+func fenduduPublicMessage(message, token string) string {
+	// Redact before truncation so a long response cannot expose a key prefix.
+	if token != "" {
+		message = strings.ReplaceAll(message, token, "[REDACTED]")
+	}
+	message = fenduduAPIKeyPattern.ReplaceAllString(message, "[REDACTED]")
+	message = strings.Join(strings.Fields(message), " ")
+	runes := []rune(message)
+	return string(runes[:refillMin(len(runes), 1024)])
+}
+
+type fenduduHTTPError struct {
+	remote  *refillProviderError
+	message string
+}
+
+func (e *fenduduHTTPError) Error() string {
+	return fmt.Sprintf("粉嘟嘟 HTTP %d：%s", e.remote.code, e.message)
+}
+
+func (e *fenduduHTTPError) Unwrap() error { return e.remote }
 
 type fenduduCycle struct {
 	ID           string `json:"id"`
@@ -86,8 +138,8 @@ func newHTTPFenduduProvider() *httpFenduduProvider {
 	}}
 }
 
-// The documented API has no idempotency guarantee. Order is called at most
-// once after a durable submission marker; HTTP/transport errors never replay it.
+// New orders carry their durable task ID as the supplier idempotency key.
+// Transport errors still never replay purchasing requests automatically.
 func (p *httpFenduduProvider) request(ctx context.Context, token, method, path string, body, out any) error {
 	var raw []byte
 	var err error
@@ -109,6 +161,8 @@ func (p *httpFenduduProvider) request(ctx context.Context, token, method, path s
 		return &refillProviderTemporaryError{"粉嘟嘟连接中断，需核对原任务"}
 	}
 	defer func() { _ = resp.Body.Close() }()
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024+1))
+	complete := readErr == nil && len(data) <= 2*1024*1024
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		delay := 15 * time.Second
 		if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {
@@ -116,10 +170,26 @@ func (p *httpFenduduProvider) request(ctx context.Context, token, method, path s
 		} else if at, err := http.ParseTime(resp.Header.Get("Retry-After")); err == nil {
 			delay = refillMax(delay, time.Until(at))
 		}
-		return &refillProviderError{code: resp.StatusCode, retryAfter: delay}
+		remote := &refillProviderError{code: resp.StatusCode, retryAfter: delay}
+		var failure struct {
+			Error string `json:"error"`
+		}
+		if complete && json.Unmarshal(data, &failure) == nil {
+			// Preserve a complete rejection envelope for the worker. A failed
+			// or partial decode must never release an uncertain order's budget.
+			if order, ok := out.(*fenduduOrder); ok {
+				var decoded fenduduOrder
+				if json.Unmarshal(data, &decoded) == nil {
+					*order = decoded
+				}
+			}
+			if message := fenduduPublicMessage(failure.Error, token); message != "" {
+				return &fenduduHTTPError{remote: remote, message: message}
+			}
+		}
+		return remote
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024+1))
-	if err != nil || len(data) > 2*1024*1024 || json.Unmarshal(data, out) != nil {
+	if !complete || json.Unmarshal(data, out) != nil {
 		return &refillProviderTemporaryError{"粉嘟嘟响应不完整，需核对原任务"}
 	}
 	return nil
@@ -153,16 +223,21 @@ func (p *httpFenduduProvider) Products(ctx context.Context, token string) ([]Fen
 }
 
 func (p *httpFenduduProvider) Order(ctx context.Context, token string, j AccountRefillJob) (*fenduduOrder, error) {
+	if len(j.ID) < 16 || !validFenduduIdentifier(j.ID, false) {
+		return nil, errors.New("粉嘟嘟下单请求编号无效，未发送下单请求")
+	}
 	groups := make([]string, len(j.DeliveryGroupIDs))
 	for i, id := range j.DeliveryGroupIDs {
 		groups[i] = strconv.FormatInt(id, 10)
 	}
 	// Local delivery policy is applied to the exact pushed account. Disable
 	// supplier subscription automation, which could otherwise toggle scheduling.
-	body := map[string]any{"product": j.Plan, "count": 1, "sub2api_config_id": j.FenduduConnectionID,
+	body := map[string]any{"product": j.Plan, "count": 1, "request_id": j.ID, "sub2api_config_id": j.FenduduConnectionID,
 		"sub2api_group_ids": strings.Join(groups, ","), "subscription_schedule": 0, "push_fallback_config_id": ""}
 	var out fenduduOrder
 	err := p.request(ctx, token, http.MethodPost, "/order", body, &out)
+	out.Error = fenduduPublicMessage(out.Error, token)
+	out.Warning = fenduduPublicMessage(out.Warning, token)
 	return &out, err
 }
 

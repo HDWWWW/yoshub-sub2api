@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -60,6 +61,9 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 			if err != nil {
 				j.Status, j.Error = "blocked", "粉嘟嘟尚未确认唯一交付，正在只读核对原订单；不会重复下单"
 				j.NextAttemptAt = now.Add(refillMax(time.Minute, refillRetryDelay(err, j.Attempts)))
+				if j.SupplierStatus == "pending" {
+					j.Status, j.Error = "processing", "粉嘟嘟已受理，等待原订单生成；正在只读核对，不会重复下单"
+				}
 				if errors.Is(err, errFenduduPushPending) {
 					j.Error = errFenduduPushPending.Error()
 					j.NextAttemptAt = now.Add(15 * time.Second)
@@ -73,7 +77,7 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 				}
 				return persist()
 			}
-			j.SupplierID, j.Status, j.Error = cycle.ID, "processing", ""
+			j.SupplierID, j.Status, j.Error, j.SupplierError = cycle.ID, "processing", "", ""
 			state.Fendudu.CheckedAt = nil
 			if err := persist(); err != nil {
 				return err
@@ -85,11 +89,36 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 				return err
 			}
 			order, err := s.fenduduClient().Order(ctx, token, *j)
-			if err != nil || order == nil || !order.Success || order.Created != 1 || len(order.CycleIDs) != 1 || !validFenduduIdentifier(order.CycleIDs[0], false) {
-				// Even a 4xx is not replayed: this provider does not document
-				// transactional error semantics or an idempotency key.
+			var rejection *fenduduHTTPError
+			definiteResponse := err == nil || (errors.As(err, &rejection) && slices.Contains([]int{
+				http.StatusBadRequest, http.StatusUnauthorized, http.StatusPaymentRequired,
+				http.StatusForbidden, http.StatusUnprocessableEntity,
+			}, rejection.remote.code))
+			if definiteResponse && order.rejected() {
+				j.Status, j.SupplierStatus, j.SupplierError = "failed", "rejected", order.Error
+				j.Error, j.FinishedAt, j.BudgetReleased = "粉嘟嘟拒绝下单："+order.Error, &now, true
+				state.Fendudu.CheckedAt = nil
+				if err := s.notifyRefillFailed(ctx, state, j, persist); err != nil {
+					return err
+				}
+				return persist()
+			}
+			if err == nil && order != nil && order.Success && order.Pending && order.Created == 0 && len(order.CycleIDs) == 0 {
+				j.Status, j.SupplierStatus = "processing", "pending"
+				j.Error = "粉嘟嘟已受理，等待原订单生成；正在只读核对，不会重复下单"
+				j.SupplierError = strings.TrimSpace(strings.Join([]string{order.Error, order.Warning}, " "))
+				j.NextAttemptAt = now.Add(15 * time.Second)
+				state.Fendudu.CheckedAt = nil
+				return persist()
+			}
+			if err != nil || order == nil || !order.Success || order.Created < 0 || order.Created > 1 || len(order.CycleIDs) != 1 || !validFenduduIdentifier(order.CycleIDs[0], false) {
+				// Unknown results retain the original submission marker, including
+				// legacy jobs submitted before supplier idempotency was supported.
 				j.Status, j.Error = "blocked", "粉嘟嘟下单回执不完整，正在只读核对原订单；不会重复下单"
 				j.SupplierError = "下单响应未包含唯一成功订单"
+				if order != nil && (order.Error != "" || order.Warning != "") {
+					j.SupplierError = strings.TrimSpace(strings.Join([]string{order.Error, order.Warning}, " "))
+				}
 				j.NextAttemptAt = time.Now().Add(15 * time.Second)
 				if err != nil {
 					j.SupplierError = "下单连接或响应读取失败"
@@ -101,6 +130,10 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 						state.Fendudu.RetryAt = now.Add(refillRetryDelay(err, 1))
 					}
 				}
+				var responseError *fenduduHTTPError
+				if errors.As(err, &responseError) {
+					j.SupplierError = responseError.Error()
+				}
 				return persist()
 			}
 			if err := s.fenduduOrderUnclaimed(ctx, state.Jobs, j.ID, order.CycleIDs[0]); err != nil {
@@ -108,6 +141,7 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 				return persist()
 			}
 			j.SupplierID, j.Status, j.SupplierStatus = order.CycleIDs[0], "processing", "queued"
+			j.SupplierError = strings.TrimSpace(strings.Join([]string{order.Error, order.Warning}, " "))
 			j.Error, j.NextAttemptAt = "", now.Add(15*time.Second)
 			state.Fendudu.CheckedAt = nil // Refresh prepaid quotas on the next worker tick.
 			return persist()

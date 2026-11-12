@@ -30,7 +30,7 @@ func (p *fenduduTestProvider) Products(context.Context, string) ([]FenduduProduc
 func (p *fenduduTestProvider) Order(_ context.Context, _ string, j AccountRefillJob) (*fenduduOrder, error) {
 	state, err := decodeAccountRefillState(p.store.raw)
 	require.NoError(p.t, err)
-	require.NotNil(p.t, state.Jobs[0].SubmissionStartedAt, "persist before the non-idempotent POST")
+	require.NotNil(p.t, state.Jobs[0].SubmissionStartedAt, "persist the task ID and parameters before POST")
 	require.Equal(p.t, j.ID, state.Jobs[0].ID)
 	p.orders++
 	p.store.failSave = p.failAfterPost
@@ -295,8 +295,9 @@ func TestFenduduHTTPContract(t *testing.T) {
 	products, err := p.Products(context.Background(), "rvak_fixture")
 	require.NoError(t, err)
 	require.Equal(t, 5, products[0].AvailableNow)
-	_, err = p.Order(context.Background(), "rvak_fixture", AccountRefillJob{Plan: "pro20x", DeliveryGroupIDs: []int64{2, 5}, FenduduConnectionID: "s2e_fixture"})
+	_, err = p.Order(context.Background(), "rvak_fixture", AccountRefillJob{ID: "d8bd88cd-b4a3-5637-92b3-171cf37587c3", Plan: "pro20x", DeliveryGroupIDs: []int64{2, 5}, FenduduConnectionID: "s2e_fixture"})
 	require.NoError(t, err)
+	require.Equal(t, "d8bd88cd-b4a3-5637-92b3-171cf37587c3", order["request_id"])
 	require.Equal(t, float64(1), order["count"])
 	require.Equal(t, "2,5", order["sub2api_group_ids"])
 	require.Equal(t, "s2e_fixture", order["sub2api_config_id"])

@@ -233,8 +233,10 @@ func (s *AccountRefillService) notifyRefillBalance(ctx context.Context, state *a
 // completed imports and delivery delays for both manual and automatic orders. Persist attempts before contacting
 // WeCom, whose API has no idempotency key.
 func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
+	fenduduRejected := j.Provider == refillProviderFendudu && j.SupplierStatus == "rejected"
 	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
-		j.FailedNotificationAt != nil || j.Status != "failed" || (j.SupplierStatus != "failed" && (j.Provider != refillProviderFendudu || j.SupplierStatus != "order_stopped")) || j.SupplierID == "" {
+		j.FailedNotificationAt != nil || j.Status != "failed" ||
+		(!fenduduRejected && ((j.SupplierStatus != "failed" && (j.Provider != refillProviderFendudu || j.SupplierStatus != "order_stopped")) || j.SupplierID == "")) {
 		return nil
 	}
 	now := time.Now()
@@ -257,6 +259,9 @@ func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *ac
 	content := fmt.Sprintf("Sub2API 补号失败\n方式：%s\n套餐：%s\n结果：号商已确认失败，本地预算预占已释放\n积分：%g\n投递分组 ID：%v\n号商任务：%s\n后续：%s\n时间：%s", mode, j.Plan, j.Price, j.DeliveryGroupIDs, refillSupplierTaskID(*j), next, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	if j.Provider == refillProviderFendudu {
 		content = fmt.Sprintf("Sub2API 粉嘟嘟手动补号失败\n结果：号商已停止订单，未扣次数\n套餐：%s\n号商任务：%s\n后续：请按需手动补号。", j.Plan, refillSupplierTaskID(*j))
+		if fenduduRejected {
+			content = fmt.Sprintf("Sub2API 粉嘟嘟手动补号失败\n结果：号商拒绝本次下单，未创建订单\n套餐：%s\n原因：%s\n后续：请处理错误后按需手动补号。", j.Plan, j.SupplierError)
+		}
 	}
 	s.sendRefillNotification(ctx, state, content)
 	return persist()
