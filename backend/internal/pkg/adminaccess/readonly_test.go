@@ -84,6 +84,7 @@ func TestReadOnlyResponseRedactsNestedFieldsWithoutMutatingSource(t *testing.T) 
 func TestReadOnlySettingsExposeOnlyDisplayFields(t *testing.T) {
 	out, err := RedactReadOnlyResponse("/api/v1/admin/settings", map[string]any{
 		"site_name": "Sub2", "ops_monitoring_enabled": true, "default_concurrency": 5,
+		"default_user_rpm_limit": 60, "invitation_code_enabled": true, "smtp_host": "mail.example.test",
 		"admin_api_key": "secret", "unknown_future_credential": "secret", "custom_menu_items": []string{"secret"},
 	})
 	require.NoError(t, err)
@@ -91,6 +92,9 @@ func TestReadOnlySettingsExposeOnlyDisplayFields(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "secret")
 	require.Contains(t, string(raw), "Sub2")
+	require.Contains(t, string(raw), `"default_user_rpm_limit":60`)
+	require.Contains(t, string(raw), `"invitation_code_enabled":true`)
+	require.Contains(t, string(raw), "mail.example.test")
 	require.False(t, IsReadOnly(context.Background()))
 	require.True(t, IsReadOnly(WithReadOnly(context.Background())))
 }
