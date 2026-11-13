@@ -631,6 +631,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { adminAPI } from '@/api/admin'
 import type { Channel, ChannelModelPricing, CreateChannelRequest, UpdateChannelRequest, AccountStatsPricingRule } from '@/api/admin/channels'
@@ -657,6 +658,7 @@ import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const authStore = useAuthStore()
 
 // Web Search global enabled state (loaded once on mount)
 // Platforms that support the account-level Web Search emulation toggle
@@ -675,6 +677,7 @@ const WEB_SEARCH_EMULATION_PLATFORMS: ReadonlySet<string> = new Set([
 
 const webSearchGlobalEnabled = ref(false)
 async function loadWebSearchGlobalState() {
+  if (authStore.isReadOnlyAdmin) return
   try {
     const cfg = await adminAPI.settings.getWebSearchEmulationConfig()
     webSearchGlobalEnabled.value = cfg?.enabled === true && (cfg?.providers?.length ?? 0) > 0

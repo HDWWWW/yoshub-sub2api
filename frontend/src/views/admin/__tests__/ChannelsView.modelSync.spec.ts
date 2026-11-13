@@ -25,6 +25,7 @@ vi.mock('@/api/admin', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess, showError }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ isReadOnlyAdmin: false }) }))
 
 vi.mock('vue-i18n', async () => ({
   ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
