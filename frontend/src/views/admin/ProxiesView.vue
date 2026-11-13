@@ -46,7 +46,7 @@
             >
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
             </button>
-            <button
+            <button v-admin-write
               @click="handleBatchTest"
               :disabled="batchTesting || loading"
               class="btn btn-secondary"
@@ -55,7 +55,7 @@
               <Icon name="play" size="md" class="mr-2" />
               {{ t('admin.proxies.testConnection') }}
             </button>
-            <button
+            <button v-admin-write
               @click="handleBatchQualityCheck"
               :disabled="batchQualityChecking || loading"
               class="btn btn-secondary"
@@ -64,7 +64,7 @@
               <Icon name="shield" size="md" class="mr-2" :class="batchQualityChecking ? 'animate-pulse' : ''" />
               {{ t('admin.proxies.batchQualityCheck') }}
             </button>
-            <button
+            <button v-admin-write
               @click="openBatchDelete"
               :disabled="selectedManualProxyIds.length === 0"
               class="btn btn-danger"
@@ -73,20 +73,20 @@
               <Icon name="trash" size="md" class="mr-2" />
               {{ t('admin.proxies.batchDeleteAction') }}
             </button>
-            <button class="btn btn-secondary" :disabled="selectedManualProxyIds.length === 0 || selectedManualProxyIds.length > 1000" :title="t('ovhIPv6.manualBindingOnly')" @click="openBindingLimits(selectedManualProxyIds)">{{ t('accountRefill.batchBindingLimits') }}</button>
-            <button @click="showImportData = true" class="btn btn-secondary">
+            <button v-admin-write class="btn btn-secondary" :disabled="selectedManualProxyIds.length === 0 || selectedManualProxyIds.length > 1000" :title="t('ovhIPv6.manualBindingOnly')" @click="openBindingLimits(selectedManualProxyIds)">{{ t('accountRefill.batchBindingLimits') }}</button>
+            <button v-admin-write @click="showImportData = true" class="btn btn-secondary">
               {{ t('admin.proxies.dataImport') }}
             </button>
-            <button @click="showExportDataDialog = true" :disabled="selectedCount > 0 && selectedManualProxyIds.length === 0" class="btn btn-secondary">
+            <button v-admin-write @click="showExportDataDialog = true" :disabled="selectedCount > 0 && selectedManualProxyIds.length === 0" class="btn btn-secondary">
               {{ selectedCount > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport') }}
             </button>
-            <button @click="showCreateModal = true" class="btn btn-primary">
+            <button v-admin-write @click="showCreateModal = true" class="btn btn-primary">
               <Icon name="plus" size="md" class="mr-2" />
               {{ t('admin.proxies.createProxy') }}
             </button>
           </div>
         </div>
-        <OvhIPv6Control ref="ovhIPv6Control" @changed="loadProxies" />
+        <OvhIPv6Control v-if="!authStore.isReadOnlyAdmin" ref="ovhIPv6Control" @changed="loadProxies" />
       </template>
 
       <template #table>
@@ -141,7 +141,7 @@
             <div class="flex items-center gap-1.5">
               <code class="code text-xs">{{ row.managed_ipv6 || `${row.host}:${row.port}` }}</code>
               <div v-if="!row.managed_ipv6" class="relative">
-                <button
+                <button v-admin-write
                   type="button"
                   class="rounded p-0.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400"
                   :title="t('admin.proxies.copyProxyUrl')"
@@ -155,7 +155,7 @@
                   v-if="copyMenuProxyId === row.id"
                   class="absolute left-0 top-full z-50 mt-1 w-auto min-w-[180px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-500 dark:bg-dark-700"
                 >
-                  <button
+                  <button v-admin-write
                     v-for="fmt in getCopyFormats(row)"
                     :key="fmt.label"
                     class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-gray-100 dark:hover:bg-dark-600"
@@ -177,7 +177,7 @@
                   {{ visiblePasswordIds.has(row.id) ? row.password : '••••••' }}
                 </span>
               </div>
-              <button
+              <button v-admin-write
                 v-if="row.password"
                 type="button"
                 class="ml-1 rounded p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
@@ -220,7 +220,7 @@
               {{ t('admin.groups.accountsCount', { count: 0 }) }}
             </span>
             <span v-if="row.managed_ipv6" class="mt-1 block text-xs text-gray-500 dark:text-gray-400" :title="t('ovhIPv6.managedHint')">{{ t('ovhIPv6.fixedBindingLimit') }}</span>
-            <button v-else type="button" class="mt-1 block text-xs text-primary-600" @click="openBindingLimits([row.id])">{{ t('accountRefill.bindingLimit') }}: {{ bindingLimits[row.id]?.max_accounts ?? '—' }}</button>
+            <button v-admin-write v-else type="button" class="mt-1 block text-xs text-primary-600" @click="openBindingLimits([row.id])">{{ t('accountRefill.bindingLimit') }}: {{ bindingLimits[row.id]?.max_accounts ?? '—' }}</button>
           </template>
 
           <template #cell-latency="{ row }">
@@ -277,7 +277,7 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button
+              <button v-admin-write
                 @click="handleTestConnection(row)"
                 :disabled="testingProxyIds.has(row.id)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-emerald-50 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-400"
@@ -305,7 +305,7 @@
                 <Icon v-else name="checkCircle" size="sm" />
                 <span class="text-xs">{{ t('admin.proxies.testConnection') }}</span>
               </button>
-              <button
+              <button v-admin-write
                 @click="handleQualityCheck(row)"
                 :disabled="qualityCheckingProxyIds.has(row.id)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
@@ -333,7 +333,7 @@
                 <Icon v-else name="shield" size="sm" />
                 <span class="text-xs">{{ t('admin.proxies.qualityCheck') }}</span>
               </button>
-              <button
+              <button v-admin-write
                 v-if="!row.managed_ipv6"
                 @click="handleEdit(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
@@ -341,7 +341,7 @@
                 <Icon name="edit" size="sm" />
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
-              <button
+              <button v-admin-write
                 v-if="!row.managed_ipv6 || row.managed_ipv6_state === 'reserved'"
                 @click="handleDelete(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
@@ -380,7 +380,7 @@
       <p class="mb-3 text-sm text-gray-500">{{ t('accountRefill.bindingLimitHint', { count: bindingLimitIDs.length }) }}</p>
       <label><span class="input-label">{{ t('accountRefill.bindingLimit') }}</span><input v-model.number="bindingLimitDraft" type="number" min="1" max="100000" step="1" class="input" :disabled="bindingLimitSaving" /></label>
       <p v-if="bindingLimitError" class="mt-2 text-sm text-red-600" role="alert">{{ bindingLimitError }}</p>
-      <template #footer><button class="btn btn-primary" :disabled="bindingLimitSaving || !Number.isInteger(bindingLimitDraft) || bindingLimitDraft < 1 || bindingLimitDraft > 100000" @click="saveBindingLimits">{{ t('common.save') }}</button></template>
+      <template #footer><button v-admin-write class="btn btn-primary" :disabled="bindingLimitSaving || !Number.isInteger(bindingLimitDraft) || bindingLimitDraft < 1 || bindingLimitDraft > 100000" @click="saveBindingLimits">{{ t('common.save') }}</button></template>
     </BaseDialog>
 
     <!-- Create Proxy Modal -->
@@ -397,7 +397,7 @@
         class="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 dark:border-dark-600"
       >
         <div class="flex min-w-0 flex-wrap">
-          <button
+          <button v-admin-write
             type="button"
             @click="createMode = 'standard'"
             :disabled="submitting"
@@ -411,7 +411,7 @@
             <Icon name="plus" size="sm" class="mr-1.5 inline" />
             {{ t('admin.proxies.standardAdd') }}
           </button>
-          <button
+          <button v-admin-write
             type="button"
             @click="createMode = 'batch'"
             :disabled="submitting"
@@ -437,7 +437,7 @@
             </svg>
             {{ t('admin.proxies.batchAdd') }}
           </button>
-          <button type="button" data-testid="add-ovh-ipv6-tab" :disabled="submitting" @click="createMode = 'ovh_ipv6'"
+          <button v-admin-write type="button" data-testid="add-ovh-ipv6-tab" :disabled="submitting" @click="createMode = 'ovh_ipv6'"
             class="-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors"
             :class="createMode === 'ovh_ipv6' ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 dark:text-gray-400'">
             {{ t('ovhIPv6.addSingle') }}
@@ -447,7 +447,7 @@
       </div>
 
       <!-- Standard Add Form -->
-      <form
+      <form v-admin-read-only-form
         v-if="createMode === 'standard'"
         id="create-proxy-form"
         @submit.prevent="handleCreateProxy"
@@ -509,7 +509,7 @@
               class="input pr-10"
               :placeholder="t('admin.proxies.optionalAuth')"
             />
-            <button
+            <button v-admin-write
               type="button"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               @click="createPasswordVisible = !createPasswordVisible"
@@ -521,7 +521,7 @@
         <div>
           <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
           <div class="mb-2 flex flex-wrap gap-2">
-            <button
+            <button v-admin-write
               v-for="d in EXPIRY_PRESETS"
               :key="d"
               type="button"
@@ -615,7 +615,7 @@
 
       </div>
 
-      <form v-else id="allocate-ovh-ipv6-form" class="space-y-4" @submit.prevent="handleAllocateIPv6">
+      <form v-admin-read-only-form v-else id="allocate-ovh-ipv6-form" class="space-y-4" @submit.prevent="handleAllocateIPv6">
         <p class="text-sm text-gray-600 dark:text-gray-300">{{ t('ovhIPv6.addSingleHint') }}</p>
         <label class="block"><span class="input-label">{{ t('ovhIPv6.optionalName') }}</span><input v-model="allocateIPv6Name" type="text" maxlength="100" :disabled="submitting" class="input" /></label>
         <p v-if="allocateIPv6Error" class="text-sm text-red-600 dark:text-red-400" role="alert">{{ allocateIPv6Error }}</p>
@@ -626,7 +626,7 @@
           <button @click="closeCreateModal" :disabled="submitting" type="button" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
-          <button
+          <button v-admin-write
             v-if="createMode === 'standard'"
             type="submit"
             form="create-proxy-form"
@@ -655,7 +655,7 @@
             </svg>
             {{ submitting ? t('admin.proxies.creating') : t('common.create') }}
           </button>
-          <button
+          <button v-admin-write
             v-else-if="createMode === 'batch'"
             @click="handleBatchCreate"
             type="button"
@@ -688,7 +688,7 @@
                 : t('admin.proxies.importProxies', { count: batchParseResult.valid })
             }}
           </button>
-          <button v-else type="submit" form="allocate-ovh-ipv6-form" class="btn btn-primary" :disabled="submitting" data-testid="allocate-ovh-ipv6">{{ t(submitting ? 'admin.proxies.creating' : 'ovhIPv6.addSingle') }}</button>
+          <button v-admin-write v-else type="submit" form="allocate-ovh-ipv6-form" class="btn btn-primary" :disabled="submitting" data-testid="allocate-ovh-ipv6">{{ t(submitting ? 'admin.proxies.creating' : 'ovhIPv6.addSingle') }}</button>
         </div>
       </template>
     </BaseDialog>
@@ -700,7 +700,7 @@
       width="normal"
       @close="closeEditModal"
     >
-      <form
+      <form v-admin-read-only-form
         v-if="editingProxy"
         id="edit-proxy-form"
         @submit.prevent="handleUpdateProxy"
@@ -745,7 +745,7 @@
               class="input pr-10"
               @input="editPasswordDirty = true"
             />
-            <button
+            <button v-admin-write
               type="button"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               @click="editPasswordVisible = !editPasswordVisible"
@@ -761,7 +761,7 @@
         <div>
           <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
           <div class="mb-2 flex flex-wrap gap-2">
-            <button
+            <button v-admin-write
               v-for="d in EXPIRY_PRESETS"
               :key="d"
               type="button"
@@ -801,7 +801,7 @@
           <button @click="closeEditModal" type="button" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
-          <button
+          <button v-admin-write
             v-if="editingProxy"
             type="submit"
             form="edit-proxy-form"
@@ -1013,6 +1013,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
+import { useAuthStore } from '@/stores/auth'
 import OvhIPv6Control from '@/components/admin/proxy/OvhIPv6Control.vue'
 import { ovhIPv6API } from '@/api/admin/ovhIPv6'
 import Select from '@/components/common/Select.vue'
@@ -1030,6 +1031,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 
+const authStore = useAuthStore()
 const columns = computed<Column[]>(() => [
   { key: 'select', label: '', sortable: false },
   { key: 'name', label: t('admin.proxies.columns.name'), sortable: true },
@@ -1043,7 +1045,7 @@ const columns = computed<Column[]>(() => [
   { key: 'created_at', label: t('admin.proxies.columns.createdAt'), sortable: true },
   { key: 'status', label: t('admin.proxies.columns.status'), sortable: true },
   { key: 'actions', label: t('admin.proxies.columns.actions'), sortable: false }
-])
+].filter(col => !authStore.isReadOnlyAdmin || !['select', 'auth', 'actions'].includes(col.key)))
 
 // Filter options
 const protocolOptions = computed(() => [
@@ -1275,7 +1277,7 @@ const loadProxies = async () => {
     pagination.pages = response.pages
     bindingLimits.value = {}
     const manualIds = response.items.filter(p => !p.managed_ipv6).map(p => p.id)
-    if (manualIds.length) {
+    if (!authStore.isReadOnlyAdmin && manualIds.length) {
       try {
         const limits = await proxyBindingLimitsAPI.get(manualIds, currentAbortController.signal)
         if (abortController === currentAbortController && !currentAbortController.signal.aborted) bindingLimits.value = Object.fromEntries(limits.map(item => [item.proxy_id, item]))

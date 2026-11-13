@@ -38,7 +38,7 @@
       @keydown.down.prevent="nudgeInput(-1)"
       @blur="commitInput"
     />
-    <button
+    <button v-admin-write
       v-else
       type="button"
       class="relative flex h-full min-w-[2rem] items-center justify-center px-1 font-mono text-sm tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"

@@ -34,7 +34,7 @@
     </p>
 
     <!-- Action -->
-    <div v-if="actionText || $slots.action" class="mt-6">
+    <div v-admin-write v-if="actionText || $slots.action" class="mt-6">
       <slot name="action">
         <component
           :is="actionTo ? 'RouterLink' : 'button'"

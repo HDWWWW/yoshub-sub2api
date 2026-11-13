@@ -52,7 +52,7 @@
       </div>
 
       <!-- Remove button (always visible, stop propagation) -->
-      <button
+      <button v-admin-write
         type="button"
         @click.stop="emit('remove')"
         class="flex-shrink-0 rounded p-1 text-gray-400 hover:text-red-500"
@@ -268,7 +268,7 @@
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
               {{ t('admin.channels.form.reasoningEffortMultipliers') }}
             </label>
-            <button
+            <button v-admin-write
               v-if="Object.keys(entry.reasoning_effort_multipliers || {}).length"
               type="button"
               class="text-xs text-gray-500 hover:text-red-500"

@@ -41,7 +41,7 @@
           @click.stop
           @mousedown.stop
         >
-          <button
+          <button v-admin-write
             type="button"
             class="dropdown-item select-option select-option-group flex w-full items-center justify-between border-b border-gray-100 px-4 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-100 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-700"
             @click="clear"

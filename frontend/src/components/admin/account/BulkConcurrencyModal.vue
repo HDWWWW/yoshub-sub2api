@@ -7,7 +7,7 @@
     :show-close-button="!submitting"
     @close="handleClose"
   >
-    <form id="bulk-concurrency-form" class="space-y-5" @submit.prevent="submit">
+    <form v-admin-read-only-form id="bulk-concurrency-form" class="space-y-5" @submit.prevent="submit">
       <div class="rounded-lg bg-gray-50 p-4 dark:bg-dark-800">
         <p class="text-sm font-medium text-gray-900 dark:text-white" data-testid="concurrency-group">{{ groupLabel }}</p>
         <p class="mt-1 text-sm text-gray-600 dark:text-dark-300" data-testid="concurrency-scope">
@@ -35,7 +35,7 @@
     </form>
     <template #footer>
       <button type="button" class="btn btn-secondary" :disabled="submitting" @click="handleClose">{{ t('common.cancel') }}</button>
-      <button
+      <button v-admin-write
         type="submit"
         form="bulk-concurrency-form"
         class="btn btn-primary"

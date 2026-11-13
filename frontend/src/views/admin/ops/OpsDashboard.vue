@@ -84,7 +84,7 @@
         />
       </div>
 
-      <OpsSmartWSCard v-if="opsEnabled && !(loading && !hasLoadedOnce)" :refresh-token="dashboardRefreshToken" />
+      <OpsSmartWSCard v-if="!authStore.isReadOnlyAdmin && opsEnabled && !(loading && !hasLoadedOnce)" :refresh-token="dashboardRefreshToken" />
 
       <!-- Row: Token Stats -->
       <div v-if="opsEnabled && showOpenAITokenStats && !(loading && !hasLoadedOnce)" class="grid grid-cols-1 gap-6">
@@ -159,7 +159,7 @@ import {
   type OpsThroughputTrendResponse,
   type OpsMetricThresholds
 } from '@/api/admin/ops'
-import { useAdminSettingsStore, useAppStore } from '@/stores'
+import { useAuthStore, useAdminSettingsStore, useAppStore } from '@/stores'
 import OpsDashboardHeader from './components/OpsDashboardHeader.vue'
 import OpsDashboardSkeleton from './components/OpsDashboardSkeleton.vue'
 import OpsConcurrencyCard from './components/OpsConcurrencyCard.vue'
@@ -181,6 +181,7 @@ const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const adminSettingsStore = useAdminSettingsStore()
+const authStore = useAuthStore()
 const { t } = useI18n()
 
 const opsEnabled = computed(() => adminSettingsStore.opsMonitoringEnabled)

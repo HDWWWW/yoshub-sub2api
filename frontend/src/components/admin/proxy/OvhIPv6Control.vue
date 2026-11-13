@@ -3,7 +3,7 @@
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
       <div class="flex items-center gap-3">
         <span class="text-sm font-medium text-gray-900 dark:text-white">{{ t('ovhIPv6.title') }}</span>
-        <button
+        <button v-admin-write
           type="button"
           role="switch"
           :aria-label="t('ovhIPv6.title')"

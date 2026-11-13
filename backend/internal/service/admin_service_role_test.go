@@ -25,6 +25,26 @@ func TestAdminService_CreateUser_WithAdminRole(t *testing.T) {
 	require.Equal(t, RoleAdmin, user.Role)
 }
 
+func TestAdminService_ReadOnlyAdminRole(t *testing.T) {
+	repo := &userRepoStub{nextID: 30}
+	svc := &adminServiceImpl{userRepo: repo}
+	user, err := svc.CreateUser(context.Background(), &CreateUserInput{
+		Email: "observer@example.com", Password: "pass123456", Role: RoleReadOnlyAdmin,
+	})
+	require.NoError(t, err)
+	require.Equal(t, RoleReadOnlyAdmin, user.Role)
+	require.True(t, user.HasAdminAccess())
+	require.False(t, user.IsAdmin(), "observers must not own administrator keys or MCP grants")
+
+	base := &userRepoStub{user: &User{ID: 42, Email: "owner@example.com", Role: RoleAdmin}}
+	guard := &roleGuardUserRepoStub{rpmUserRepoStub: &rpmUserRepoStub{userRepoStub: base}, adminTotal: 1}
+	svc = &adminServiceImpl{userRepo: guard, redeemCodeRepo: &redeemRepoStub{}}
+	_, err = svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: RoleReadOnlyAdmin})
+	require.Error(t, err)
+	require.Equal(t, "LAST_ADMIN_DEMOTE_FORBIDDEN", infraerrors.Reason(err))
+	require.Nil(t, guard.lastUpdated)
+}
+
 func TestAdminService_CreateUser_DefaultsToUserRole(t *testing.T) {
 	repo := &userRepoStub{nextID: 31}
 	svc := &adminServiceImpl{userRepo: repo}

@@ -5,7 +5,7 @@
     width="normal"
     @close="emit('cancel')"
   >
-    <form id="refund-form" @submit.prevent="handleSubmit" class="space-y-4">
+    <form v-admin-read-only-form id="refund-form" @submit.prevent="handleSubmit" class="space-y-4">
       <!-- Refund Request Info -->
       <div
         v-if="order?.refund_requested_at || order?.refund_request_reason"
@@ -147,10 +147,10 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button type="button" @click="emit('cancel')" class="btn btn-secondary">
+        <button v-admin-write type="button" @click="emit('cancel')" class="btn btn-secondary">
           {{ t('common.cancel') }}
         </button>
-        <button
+        <button v-admin-write
           type="submit"
           form="refund-form"
           :disabled="submitting || form.amount <= 0 || (requireForce && !form.force)"

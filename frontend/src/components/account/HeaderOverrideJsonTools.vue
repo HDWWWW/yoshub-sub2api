@@ -1,5 +1,5 @@
 <template>
-  <button
+  <button v-admin-write
     type="button"
     class="rounded-lg bg-primary-50 px-3 py-1 text-xs text-primary-700 transition-colors hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-400 dark:hover:bg-primary-900/50"
     @click="toggleImportPanel"
@@ -24,7 +24,7 @@
       :placeholder="IMPORT_JSON_PLACEHOLDER"
     ></textarea>
     <div class="flex gap-2">
-      <button
+      <button v-admin-write
         type="button"
         class="rounded-lg bg-primary-600 px-3 py-1 text-xs text-white transition-colors hover:bg-primary-700"
         @click="applyImport"

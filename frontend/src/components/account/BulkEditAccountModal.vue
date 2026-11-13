@@ -29,7 +29,7 @@
         <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('admin.accounts.bulkEdit.proxyResultsHint') }}</p>
       </template>
     </div>
-    <form v-else id="bulk-edit-account-form" class="space-y-5" @submit.prevent="() => handleSubmit()">
+    <form v-admin-read-only-form v-else id="bulk-edit-account-form" class="space-y-5" @submit.prevent="() => handleSubmit()">
       <!-- Info -->
       <div class="rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
         <p class="text-sm text-blue-700 dark:text-blue-400">
@@ -87,7 +87,7 @@
           role="group"
           aria-labelledby="bulk-edit-openai-passthrough-label"
         >
-          <button
+          <button v-admin-write
             id="bulk-edit-openai-passthrough-toggle"
             type="button"
             :class="[
@@ -138,7 +138,7 @@
           role="group"
           aria-labelledby="bulk-edit-openai-flatten-namespaces-label"
         >
-          <button
+          <button v-admin-write
             id="bulk-edit-openai-flatten-namespaces-toggle"
             type="button"
             :class="[
@@ -189,7 +189,7 @@
           role="group"
           aria-labelledby="bulk-edit-openai-long-context-billing-label"
         >
-          <button
+          <button v-admin-write
             type="button"
             data-testid="bulk-edit-openai-long-context-billing-toggle"
             role="switch"
@@ -469,7 +469,7 @@
                     class="input flex-1"
                     :placeholder="t('admin.accounts.actualModel')"
                   />
-                  <button
+                  <button v-admin-write
                     type="button"
                     class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                     @click="removeModelMapping(index)"
@@ -607,7 +607,7 @@
               class="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-sm font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400"
             >
               {{ code }}
-              <button
+              <button v-admin-write
                 type="button"
                 class="hover:text-red-900 dark:hover:text-red-300"
                 @click="removeErrorCode(code)"
@@ -688,7 +688,7 @@
           />
         </div>
         <div v-if="enableHeaderOverride" id="bulk-edit-header-override-body" class="mt-3 space-y-3">
-          <button
+          <button v-admin-write
             type="button"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -977,7 +977,7 @@
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.openai.codexCLIOnlyDesc') }}
           </p>
-          <button
+          <button v-admin-write
             id="bulk-edit-openai-codex-cli-only-toggle"
             type="button"
             :class="[
@@ -1021,7 +1021,7 @@
           <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}
           </p>
-          <button
+          <button v-admin-write
             id="bulk-edit-openai-codex-app-server-toggle"
             type="button"
             :class="[
@@ -1314,7 +1314,7 @@
                 :placeholder="t('admin.accounts.toModel')"
                 data-testid="bulk-edit-openai-compact-model-mapping-input"
               />
-              <button
+              <button v-admin-write
                 type="button"
                 class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                 @click="removeOpenAICompactModelMapping(index)"
@@ -1361,7 +1361,7 @@
         >
           <div class="mb-3 flex items-center justify-between">
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.quotaControl.rpmLimit.hint') }}</span>
-            <button
+            <button v-admin-write
               type="button"
               @click="rpmLimitEnabled = !rpmLimitEnabled"
               :class="[
@@ -1493,7 +1493,7 @@
         <button type="button" class="btn btn-secondary" :disabled="submitting" @click="handleClose">
           {{ t(proxyResult || proxyResultUnconfirmed ? 'admin.accounts.bulkEdit.closeAndRefresh' : 'common.cancel') }}
         </button>
-        <button
+        <button v-admin-write
           v-if="!proxyResult && !proxyResultUnconfirmed"
           type="submit"
           form="bulk-edit-account-form"

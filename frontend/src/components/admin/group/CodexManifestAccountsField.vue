@@ -9,7 +9,7 @@
           {{ t("admin.groups.codexModelsManifest.hint") }}
         </p>
       </div>
-      <Toggle
+      <Toggle v-admin-read-only-control
         data-testid="codex-manifest-toggle"
         :aria-label="t('admin.groups.codexModelsManifest.enable')"
         :model-value="config.enabled"
@@ -41,7 +41,7 @@
           class="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2.5 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
         >
           {{ accountLabel(id) }}
-          <button
+          <button v-admin-write
             type="button"
             class="ml-0.5 text-primary-500 hover:text-primary-700 dark:hover:text-primary-200"
             :aria-label="`remove account ${id}`"
@@ -102,7 +102,7 @@
             {{ t("admin.groups.codexModelsManifest.fallbackHint") }}
           </p>
         </div>
-        <Toggle
+        <Toggle v-admin-read-only-control
           data-testid="codex-manifest-fallback-toggle"
           :aria-label="t('admin.groups.codexModelsManifest.fallback')"
           :model-value="config.fallback_to_scheduler"

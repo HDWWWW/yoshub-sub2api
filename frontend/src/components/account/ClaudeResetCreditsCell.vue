@@ -11,7 +11,7 @@
     <div class="flex flex-wrap items-center gap-1.5">
       <slot name="pre-actions" />
 
-      <button
+      <button v-admin-write
         v-if="visible"
         type="button"
         data-testid="claude-reset-count"
@@ -37,7 +37,7 @@
         {{ t('admin.accounts.claudeResetCredits.count') }}<span v-if="status" class="ml-0.5 tabular-nums">{{ totalResets }}</span>
       </button>
 
-      <button
+      <button v-admin-write
         v-if="visible"
         type="button"
         data-testid="claude-reset-redeem"

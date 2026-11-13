@@ -275,7 +275,7 @@ async function saveAllSettings() {
             <div>
               <label class="font-medium text-gray-900 dark:text-white">{{ t('admin.ops.settings.enableAlert') }}</label>
             </div>
-            <Toggle v-model="emailConfig.alert.enabled" />
+            <Toggle v-admin-read-only-control v-model="emailConfig.alert.enabled" />
           </div>
 
           <div v-if="emailConfig.alert.enabled">
@@ -299,7 +299,7 @@ async function saveAllSettings() {
                 class="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
               >
                 {{ email }}
-                <button type="button" class="text-blue-700/80 hover:text-blue-900" @click="removeRecipient('alert', email)">×</button>
+                <button v-admin-write type="button" class="text-blue-700/80 hover:text-blue-900" @click="removeRecipient('alert', email)">×</button>
               </span>
             </div>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
@@ -323,7 +323,7 @@ async function saveAllSettings() {
             <div>
               <label class="font-medium text-gray-900 dark:text-white">{{ t('admin.ops.settings.enableReport') }}</label>
             </div>
-            <Toggle v-model="emailConfig.report.enabled" />
+            <Toggle v-admin-read-only-control v-model="emailConfig.report.enabled" />
           </div>
 
           <div v-if="emailConfig.report.enabled">
@@ -347,7 +347,7 @@ async function saveAllSettings() {
                 class="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
               >
                 {{ email }}
-                <button type="button" class="text-blue-700/80 hover:text-blue-900" @click="removeRecipient('report', email)">×</button>
+                <button v-admin-write type="button" class="text-blue-700/80 hover:text-blue-900" @click="removeRecipient('report', email)">×</button>
               </span>
             </div>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
@@ -358,14 +358,14 @@ async function saveAllSettings() {
           <div v-if="emailConfig.report.enabled" class="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div class="flex items-center justify-between">
               <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.dailySummary') }}</label>
-              <Toggle v-model="emailConfig.report.daily_summary_enabled" />
+              <Toggle v-admin-read-only-control v-model="emailConfig.report.daily_summary_enabled" />
             </div>
             <div v-if="emailConfig.report.daily_summary_enabled">
               <input v-model="emailConfig.report.daily_summary_schedule" type="text" class="input" placeholder="0 9 * * *" />
             </div>
             <div class="flex items-center justify-between">
               <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.weeklySummary') }}</label>
-              <Toggle v-model="emailConfig.report.weekly_summary_enabled" />
+              <Toggle v-admin-read-only-control v-model="emailConfig.report.weekly_summary_enabled" />
             </div>
             <div v-if="emailConfig.report.weekly_summary_enabled">
               <input v-model="emailConfig.report.weekly_summary_schedule" type="text" class="input" placeholder="0 9 * * 1" />
@@ -446,7 +446,7 @@ async function saveAllSettings() {
 
             <div class="flex items-center justify-between">
               <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.enableCleanup') }}</label>
-              <Toggle v-model="advancedSettings.data_retention.cleanup_enabled" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.data_retention.cleanup_enabled" />
             </div>
 
             <div v-if="advancedSettings.data_retention.cleanup_enabled">
@@ -504,7 +504,7 @@ async function saveAllSettings() {
                 <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.ops.settings.enableAggregation') }}</label>
                 <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.aggregationHint') }}</p>
               </div>
-              <Toggle v-model="advancedSettings.aggregation.aggregation_enabled" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.aggregation.aggregation_enabled" />
             </div>
           </div>
 
@@ -553,7 +553,7 @@ async function saveAllSettings() {
                   {{ t('admin.ops.settings.ignoreCountTokensErrorsHint') }}
                 </p>
               </div>
-              <Toggle v-model="advancedSettings.ignore_count_tokens_errors" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.ignore_count_tokens_errors" />
             </div>
 
             <div class="flex items-center justify-between">
@@ -563,7 +563,7 @@ async function saveAllSettings() {
                   {{ t('admin.ops.settings.ignoreContextCanceledHint') }}
                 </p>
               </div>
-              <Toggle v-model="advancedSettings.ignore_context_canceled" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.ignore_context_canceled" />
             </div>
 
             <div class="flex items-center justify-between">
@@ -573,7 +573,7 @@ async function saveAllSettings() {
                   {{ t('admin.ops.settings.ignoreNoAvailableAccountsHint') }}
                 </p>
               </div>
-              <Toggle v-model="advancedSettings.ignore_no_available_accounts" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.ignore_no_available_accounts" />
             </div>
 
             <div class="flex items-center justify-between">
@@ -583,7 +583,7 @@ async function saveAllSettings() {
                   {{ t('admin.ops.settings.ignoreInsufficientBalanceErrorsHint') }}
                 </p>
               </div>
-              <Toggle v-model="advancedSettings.ignore_insufficient_balance_errors" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.ignore_insufficient_balance_errors" />
             </div>
           </div>
 
@@ -598,7 +598,7 @@ async function saveAllSettings() {
                   {{ t('admin.ops.settings.enableAutoRefreshHint') }}
                 </p>
               </div>
-              <Toggle v-model="advancedSettings.auto_refresh_enabled" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.auto_refresh_enabled" />
             </div>
 
             <div v-if="advancedSettings.auto_refresh_enabled">
@@ -625,7 +625,7 @@ async function saveAllSettings() {
                   {{ t('admin.ops.settings.displayAlertEventsHint') }}
                 </p>
               </div>
-              <Toggle v-model="advancedSettings.display_alert_events" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.display_alert_events" />
             </div>
 
             <div class="flex items-center justify-between">
@@ -635,7 +635,7 @@ async function saveAllSettings() {
                   {{ t('admin.ops.settings.displayOpenAITokenStatsHint') }}
                 </p>
               </div>
-              <Toggle v-model="advancedSettings.display_openai_token_stats" />
+              <Toggle v-admin-read-only-control v-model="advancedSettings.display_openai_token_stats" />
             </div>
           </div>
         </div>
@@ -645,7 +645,7 @@ async function saveAllSettings() {
     <template #footer>
       <div class="flex justify-end gap-2">
         <button class="btn btn-secondary" @click="emit('close')">{{ t('common.cancel') }}</button>
-        <button class="btn btn-primary" :disabled="loading || !settingsLoaded || saving || !validation.valid" @click="saveAllSettings">
+        <button v-admin-write class="btn btn-primary" :disabled="loading || !settingsLoaded || saving || !validation.valid" @click="saveAllSettings">
           {{ saving ? t('common.saving') : t('common.save') }}
         </button>
       </div>

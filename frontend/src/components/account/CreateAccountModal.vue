@@ -39,7 +39,7 @@
     </div>
 
     <!-- Step 1: Basic Info -->
-    <form
+    <form v-admin-read-only-form
       v-if="step === 1"
       id="create-account-form"
       @submit.prevent="handleSubmit"
@@ -1323,7 +1323,7 @@
                     {{ vertexClientEmail ? t('admin.accounts.vertexSaJsonKeyHidden') : t('admin.accounts.vertexSaJsonDropHint') }}
                   </p>
                 </div>
-                <button
+                <button v-admin-write
                   type="button"
                   class="btn btn-secondary shrink-0"
                   @click="vertexServiceAccountFileInput?.click()"
@@ -1422,7 +1422,7 @@
                   ]"
                   :placeholder="t('admin.accounts.actualModel')"
                 />
-                <button
+                <button v-admin-write
                   type="button"
                   @click="removeAntigravityModelMapping(index)"
                   class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
@@ -1727,7 +1727,7 @@
                   class="input flex-1"
                   :placeholder="t('admin.accounts.actualModel')"
                 />
-                <button
+                <button v-admin-write
                   type="button"
                   @click="removeModelMapping(index)"
                   class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
@@ -1790,7 +1790,7 @@
                 {{ t('admin.accounts.poolModeHint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="poolModeEnabled = !poolModeEnabled"
               :class="[
@@ -1878,7 +1878,7 @@
                 {{ t('admin.accounts.customErrorCodesHint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="customErrorCodesEnabled = !customErrorCodesEnabled"
               :class="[
@@ -1952,7 +1952,7 @@
                 class="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-sm font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400"
               >
                 {{ code }}
-                <button
+                <button v-admin-write
                   type="button"
                   @click="removeErrorCode(code)"
                   class="hover:text-red-900 dark:hover:text-red-300"
@@ -1979,7 +1979,7 @@
                 {{ t('admin.accounts.headerOverride.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="headerOverrideEnabled = !headerOverrideEnabled"
               :class="[
@@ -2221,7 +2221,7 @@
                 {{ t('admin.accounts.poolModeHint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="poolModeEnabled = !poolModeEnabled"
               :class="[
@@ -2375,7 +2375,7 @@
               {{ t('admin.accounts.grokCustomBaseUrl.hint') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             data-testid="grok-custom-base-url-toggle"
             @click="grokOAuthCustomBaseUrlEnabled = !grokOAuthCustomBaseUrlEnabled"
@@ -2416,7 +2416,7 @@
               {{ t('admin.accounts.headerOverride.hint') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             @click="headerOverrideEnabled = !headerOverrideEnabled"
             :class="[
@@ -2549,7 +2549,7 @@
                   class="input flex-1"
                   :placeholder="t('admin.accounts.actualModel')"
                 />
-                <button
+                <button v-admin-write
                   type="button"
                   @click="removeModelMapping(index)"
                   class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
@@ -2599,7 +2599,7 @@
               {{ t('admin.accounts.tempUnschedulable.hint') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             @click="tempUnschedEnabled = !tempUnschedEnabled"
             :class="[
@@ -2665,7 +2665,7 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-                  <button
+                  <button v-admin-write
                     type="button"
                     @click="removeTempUnschedRule(index)"
                     class="rounded p-1 text-red-500 transition-colors hover:text-red-600"
@@ -2829,7 +2829,7 @@
                 {{ t('admin.accounts.quotaControl.windowCost.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="windowCostEnabled = !windowCostEnabled"
               :class="[
@@ -2889,7 +2889,7 @@
                 {{ t('admin.accounts.quotaControl.sessionLimit.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="sessionLimitEnabled = !sessionLimitEnabled"
               :class="[
@@ -2946,7 +2946,7 @@
                 {{ t('admin.accounts.quotaControl.rpmLimit.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="rpmLimitEnabled = !rpmLimitEnabled"
               :class="[
@@ -3059,7 +3059,7 @@
                 {{ t('admin.accounts.quotaControl.tlsFingerprint.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="tlsFingerprintEnabled = !tlsFingerprintEnabled"
               :class="[
@@ -3094,7 +3094,7 @@
                 {{ t('admin.accounts.quotaControl.sessionIdMasking.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="sessionIdMaskingEnabled = !sessionIdMaskingEnabled"
               :class="[
@@ -3121,7 +3121,7 @@
                 {{ t('admin.accounts.quotaControl.cacheTTLOverride.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="cacheTTLOverrideEnabled = !cacheTTLOverrideEnabled"
               :class="[
@@ -3161,7 +3161,7 @@
                 {{ t('admin.accounts.quotaControl.customBaseUrl.hint') }}
               </p>
             </div>
-            <button
+            <button v-admin-write
               type="button"
               @click="customBaseUrlEnabled = !customBaseUrlEnabled"
               :class="[
@@ -3286,7 +3286,7 @@
               {{ t('admin.accounts.openai.oauthPassthroughDesc') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
             :class="[
@@ -3316,7 +3316,7 @@
               {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             data-testid="create-openai-flatten-namespaces-toggle"
             @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
@@ -3369,7 +3369,7 @@
               {{ t('admin.accounts.anthropic.apiKeyPassthroughDesc') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             @click="anthropicPassthroughEnabled = !anthropicPassthroughEnabled"
             :class="[
@@ -3469,7 +3469,7 @@
               {{ t('admin.accounts.openai.codexCLIOnlyDesc') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             @click="codexCLIOnlyEnabled = !codexCLIOnlyEnabled"
             :class="[
@@ -3495,7 +3495,7 @@
               {{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}
             </p>
           </div>
-          <button
+          <button v-admin-write
             type="button"
             @click="codexCLIOnlyAppServerEnabled = !codexCLIOnlyAppServerEnabled"
             :class="[
@@ -3559,7 +3559,7 @@
               <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
               <span class="text-gray-400">→</span>
               <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.toModel')" />
-              <button type="button" @click="removeOpenAICompactModelMapping(index)" class="text-red-500 hover:text-red-700">
+              <button v-admin-write type="button" @click="removeOpenAICompactModelMapping(index)" class="text-red-500 hover:text-red-700">
                 <Icon name="trash" size="sm" />
               </button>
             </div>
@@ -3631,7 +3631,7 @@
             {{ t('admin.accounts.openai.imagesUrlToB64JsonDesc') }}
           </p>
         </div>
-        <button
+        <button v-admin-write
           type="button"
           data-testid="openai-images-url-to-b64-json-toggle"
           role="switch"
@@ -3801,7 +3801,7 @@
         <button @click="handleClose" type="button" class="btn btn-secondary">
           {{ t('common.cancel') }}
         </button>
-        <button
+        <button v-admin-write
           type="submit"
           form="create-account-form"
           :disabled="submitting"
@@ -3841,7 +3841,7 @@
         <button type="button" class="btn btn-secondary" @click="goBackToBasicInfo">
           {{ t('common.back') }}
         </button>
-        <button
+        <button v-admin-write
           v-if="isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"

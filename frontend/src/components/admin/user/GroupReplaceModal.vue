@@ -59,7 +59,7 @@
     <template #footer>
       <div class="flex justify-end gap-3">
         <button @click="$emit('close')" class="btn btn-secondary px-5">{{ t('common.cancel') }}</button>
-        <button
+        <button v-admin-write
           @click="handleReplace"
           :disabled="!selectedGroupId || submitting"
           class="btn btn-primary px-6"

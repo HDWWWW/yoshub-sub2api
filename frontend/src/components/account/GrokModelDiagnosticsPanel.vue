@@ -22,7 +22,7 @@
           </span>
         </p>
       </div>
-      <button
+      <button v-admin-write
         v-if="canSync"
         type="button"
         data-testid="grok-diagnostics-sync"

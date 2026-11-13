@@ -4,6 +4,7 @@
  */
 
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
+import { isAdminMutation } from '@/utils/adminPermissions'
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
 import {
@@ -40,6 +41,12 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const storedUser = localStorage.getItem('auth_user')
+    let role = ''
+    try { role = storedUser ? JSON.parse(storedUser).role : '' } catch { /* Invalid cached user. */ }
+    if (role === 'admin_readonly' && isAdminMutation(config.method || 'GET', String(config.url || ''))) {
+      return Promise.reject({ status: 403, code: 'ADMIN_READ_ONLY', message: 'Read-only administrator' })
+    }
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
     if (token && config.headers) {

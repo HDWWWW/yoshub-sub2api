@@ -145,7 +145,7 @@ const dailyFixedHint = computed(() =>
             </p>
           </div>
         </div>
-        <button
+        <button v-admin-write
           type="button"
           @click="localEnabled = !localEnabled"
           :class="[

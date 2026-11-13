@@ -1,11 +1,11 @@
 <template>
   <button type="button" class="btn btn-secondary" data-testid="open-retry-default" @click="open">{{ t('accountRefill.retryDefaultTitle') }}</button>
   <BaseDialog :show="show" :title="t('accountRefill.retryDefaultTitle')" width="normal" @close="!saving && (show = false)">
-    <form class="space-y-4" @submit.prevent="save">
+    <form v-admin-read-only-form class="space-y-4" @submit.prevent="save">
       <p class="text-sm text-gray-500">{{ t('accountRefill.retryDefaultHint') }}</p>
       <label class="block"><span class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</span><input v-model.number="count" data-testid="retry-default-count" class="input" type="number" min="0" :max="MAX_SAME_ACCOUNT_RETRY_COUNT" step="1" required :disabled="loading || saving" /></label>
       <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
-      <button type="submit" class="btn btn-primary" :disabled="loading || saving || !loaded || !valid">{{ t('common.save') }}</button>
+      <button v-admin-write type="submit" class="btn btn-primary" :disabled="loading || saving || !loaded || !valid">{{ t('common.save') }}</button>
     </form>
   </BaseDialog>
 </template>

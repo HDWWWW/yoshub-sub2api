@@ -10,7 +10,7 @@
           </select>
         </label>
         <button class="btn btn-secondary" :disabled="loading || saving !== null" @click="load">{{ t('common.refresh') }}</button>
-        <button class="btn btn-secondary" :disabled="loading || saving !== null" data-testid="restore-all-scheduling" @click="restoreAll">{{ t('accountRefill.restoreAllAutomatic') }}</button>
+        <button v-admin-write class="btn btn-secondary" :disabled="loading || saving !== null" data-testid="restore-all-scheduling" @click="restoreAll">{{ t('accountRefill.restoreAllAutomatic') }}</button>
       </div>
       <p class="text-xs text-gray-500">{{ t('accountRefill.restoreAllHint') }}</p>
       <p v-if="notice" class="text-sm text-green-700" role="status">{{ notice }}</p>
@@ -33,8 +33,8 @@
             <td class="whitespace-nowrap p-2 text-xs">{{ row.effective_expires_at ? formatDateTime(row.effective_expires_at) : '—' }}</td>
             <td class="p-2"><div class="flex items-center gap-2">
               <input v-model.number="drafts[row.account_id]" type="number" min="0" max="9999" step="1" class="input w-20" :disabled="saving !== null" :aria-label="`${t('accountRefill.manualPriority')} ${row.name}`" />
-              <button class="btn btn-secondary text-xs" :disabled="saving !== null || !valid(drafts[row.account_id])" @click="save(row.account_id, 'manual')">{{ t('common.save') }}</button>
-              <button class="btn btn-secondary text-xs" :disabled="saving !== null || row.manual_priority === null" @click="save(row.account_id, 'auto')">{{ t('accountRefill.restoreAutomatic') }}</button>
+              <button v-admin-write class="btn btn-secondary text-xs" :disabled="saving !== null || !valid(drafts[row.account_id])" @click="save(row.account_id, 'manual')">{{ t('common.save') }}</button>
+              <button v-admin-write class="btn btn-secondary text-xs" :disabled="saving !== null || row.manual_priority === null" @click="save(row.account_id, 'auto')">{{ t('accountRefill.restoreAutomatic') }}</button>
             </div></td>
           </tr></tbody>
         </table>

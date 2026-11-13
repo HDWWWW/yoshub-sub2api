@@ -11,7 +11,7 @@
         <p class="text-sm text-gray-500 dark:text-gray-400">
           {{ t('admin.errorPassthrough.description') }}
         </p>
-        <button @click="showCreateModal = true" class="btn btn-primary btn-sm">
+        <button v-admin-write @click="showCreateModal = true" class="btn btn-primary btn-sm">
           <Icon name="plus" size="sm" class="mr-1" />
           {{ t('admin.errorPassthrough.createRule') }}
         </button>
@@ -161,7 +161,7 @@
                 </div>
               </td>
               <td class="px-3 py-2">
-                <button
+                <button v-admin-write
                   @click="toggleEnabled(rule)"
                   :class="[
                     'relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -178,14 +178,14 @@
               </td>
               <td class="px-3 py-2">
                 <div class="flex items-center gap-1">
-                  <button
+                  <button v-admin-write
                     @click="handleEdit(rule)"
                     class="p-1 text-gray-500 hover:text-primary-600 dark:hover:text-primary-400"
                     :title="t('common.edit')"
                   >
                     <Icon name="edit" size="sm" />
                   </button>
-                  <button
+                  <button v-admin-write
                     @click="handleDelete(rule)"
                     class="p-1 text-gray-500 hover:text-red-600 dark:hover:text-red-400"
                     :title="t('common.delete')"
@@ -215,7 +215,7 @@
       width="wide"
       @close="closeFormModal"
     >
-      <form @submit.prevent="handleSubmit" class="space-y-4">
+      <form v-admin-read-only-form @submit.prevent="handleSubmit" class="space-y-4">
         <!-- Basic Info -->
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -407,7 +407,7 @@
           <button @click="closeFormModal" type="button" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
-          <button @click="handleSubmit" :disabled="submitting" class="btn btn-primary">
+          <button v-admin-write @click="handleSubmit" :disabled="submitting" class="btn btn-primary">
             <Icon v-if="submitting" name="refresh" size="sm" class="mr-1 animate-spin" />
             {{ showEditModal ? t('common.update') : t('common.create') }}
           </button>

@@ -75,7 +75,7 @@
             </div>
           </div>
 
-          <button
+          <button v-admin-write
             type="button"
             class="btn btn-secondary"
             @click="removeOrGroup(groupIndex)"
@@ -131,7 +131,7 @@
               </div>
 
               <div class="flex justify-end">
-                <button
+                <button v-admin-write
                   type="button"
                   class="btn btn-secondary"
                   @click="removeAndCondition(groupIndex, condIndex)"

@@ -14,7 +14,7 @@
       </label>
       <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
       <p v-if="loading" class="text-sm text-gray-500">{{ t('common.loading') }}</p>
-      <form v-if="draft && view" class="space-y-5" @submit.prevent="save">
+      <form v-admin-read-only-form v-if="draft && view" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="saving || loading" class="space-y-5">
           <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
             <input v-model="draft.enabled" data-testid="auto-fast-enabled" type="checkbox" class="rounded" />
@@ -48,7 +48,7 @@
             <button type="button" class="btn btn-secondary text-xs" data-testid="auto-fast-reload" @click="load">{{ t('accountAutoFast.reload') }}</button>
           </div>
           <div class="flex items-center gap-3">
-            <button type="submit" class="btn btn-primary" data-testid="auto-fast-save" :disabled="!valid || changedElsewhere">{{ t('common.save') }}</button>
+            <button v-admin-write type="submit" class="btn btn-primary" data-testid="auto-fast-save" :disabled="!valid || changedElsewhere">{{ t('common.save') }}</button>
             <span v-if="saved" role="status" class="text-sm text-green-600">{{ t('accountAutoFast.saved') }}</span>
           </div>
         </fieldset>

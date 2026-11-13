@@ -117,7 +117,7 @@
         <button type="button" class="btn btn-secondary" @click="handleClose">
           {{ t('common.close') }}
         </button>
-        <button
+        <button v-admin-write
           type="button"
           class="btn btn-primary"
           :disabled="!isActive || resetting"

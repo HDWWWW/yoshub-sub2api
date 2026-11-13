@@ -20,6 +20,7 @@ import (
 	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userallowedgroup"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
@@ -551,14 +552,16 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 		q = q.Where(dbuser.RoleEQ(filters.Role))
 	}
 	if filters.Search != "" {
-		q = q.Where(
-			dbuser.Or(
-				dbuser.EmailContainsFold(filters.Search),
-				dbuser.UsernameContainsFold(filters.Search),
-				dbuser.NotesContainsFold(filters.Search),
-				dbuser.HasAPIKeysWith(apikey.KeyContainsFold(filters.Search)),
-			),
-		)
+		search := []predicate.User{
+			dbuser.EmailContainsFold(filters.Search),
+			dbuser.UsernameContainsFold(filters.Search),
+			dbuser.NotesContainsFold(filters.Search),
+		}
+		// Key substring matching would expose a credential oracle to observers.
+		if !adminaccess.IsReadOnly(ctx) {
+			search = append(search, dbuser.HasAPIKeysWith(apikey.KeyContainsFold(filters.Search)))
+		}
+		q = q.Where(dbuser.Or(search...))
 	}
 
 	if filters.GroupName != "" {

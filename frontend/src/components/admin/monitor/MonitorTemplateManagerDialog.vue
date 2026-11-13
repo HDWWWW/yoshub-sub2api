@@ -32,7 +32,7 @@
     <!-- active provider list -->
     <div v-if="!editing" class="space-y-2">
       <div class="flex justify-end">
-        <button class="btn btn-primary btn-sm" @click="openCreateForm">
+        <button v-admin-write class="btn btn-primary btn-sm" @click="openCreateForm">
           <Icon name="plus" size="sm" class="mr-1" />
           {{ t('admin.channelMonitor.template.createButton') }}
         </button>
@@ -89,7 +89,7 @@
             </p>
           </div>
           <div class="flex flex-shrink-0 gap-2">
-            <button
+            <button v-admin-write
               class="btn btn-secondary btn-sm"
               :disabled="tpl.associated_monitors === 0"
               :title="t('admin.channelMonitor.template.applyTooltip')"
@@ -98,10 +98,10 @@
               <Icon name="refresh" size="sm" class="mr-1" />
               {{ t('admin.channelMonitor.template.applyButton') }}
             </button>
-            <button class="btn btn-secondary btn-sm" @click="openEditForm(tpl)">
+            <button v-admin-write class="btn btn-secondary btn-sm" @click="openEditForm(tpl)">
               {{ t('common.edit') }}
             </button>
-            <button class="btn btn-secondary btn-sm text-red-600" @click="handleDelete(tpl)">
+            <button v-admin-write class="btn btn-secondary btn-sm text-red-600" @click="handleDelete(tpl)">
               {{ t('common.delete') }}
             </button>
           </div>
@@ -198,7 +198,7 @@
           <button class="btn btn-secondary" @click="$emit('close')">
             {{ t('common.close') }}
           </button>
-          <button v-if="editing" class="btn btn-primary" :disabled="submitting" @click="handleSubmit">
+          <button v-admin-write v-if="editing" class="btn btn-primary" :disabled="submitting" @click="handleSubmit">
             {{ submitting ? t('common.submitting') : editing === 'new' ? t('common.create') : t('common.update') }}
           </button>
         </div>

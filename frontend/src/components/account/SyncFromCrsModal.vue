@@ -7,7 +7,7 @@
     @close="handleClose"
   >
     <!-- Step 1: Input credentials -->
-    <form
+    <form v-admin-read-only-form
       v-if="currentStep === 'input'"
       id="sync-from-crs-form"
       class="space-y-4"
@@ -199,7 +199,7 @@
           >
             {{ t('common.cancel') }}
           </button>
-          <button
+          <button v-admin-write
             class="btn btn-primary"
             type="submit"
             form="sync-from-crs-form"
@@ -219,7 +219,7 @@
           >
             {{ t('admin.accounts.crsBack') }}
           </button>
-          <button
+          <button v-admin-write
             class="btn btn-primary"
             type="button"
             :disabled="syncing || hasNewButNoneSelected"

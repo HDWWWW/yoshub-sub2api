@@ -93,7 +93,7 @@
                 </button>
               </div>
             </div>
-            <button
+            <button v-admin-write
               v-if="!authStore.isSimpleMode"
               @click="openSortModal"
               class="btn btn-secondary"
@@ -102,7 +102,7 @@
               <Icon name="arrowsUpDown" size="md" class="mr-2" />
               {{ t("admin.groups.sortOrder") }}
             </button>
-            <button
+            <button v-admin-write
               @click="openCreateModal"
               class="btn btn-primary"
               data-tour="groups-create-btn"
@@ -381,14 +381,14 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button
+              <button v-admin-write
                 @click="handleEdit(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
                 <Icon name="edit" size="sm" />
                 <span class="text-xs">{{ t("common.edit") }}</span>
               </button>
-              <button
+              <button v-admin-write
                 v-if="!authStore.isSimpleMode"
                 data-testid="group-duplicate"
                 :title="
@@ -442,7 +442,7 @@
                   t("admin.groups.rpmOverrides")
                 }}</span>
               </button>
-              <button
+              <button v-admin-write
                 v-if="!authStore.isSimpleMode && supportsGroupOpenAIFast(row.platform)"
                 data-testid="group-first-token-optimization"
                 @click="firstTokenGroup = row; showFirstTokenModal = true"
@@ -451,7 +451,7 @@
                 <Icon name="bolt" size="sm" />
                 <span class="text-xs">{{ t('admin.groups.firstTokenOptimization.action') }}</span>
               </button>
-              <button
+              <button v-admin-write
                 @click="handleDelete(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
@@ -491,7 +491,7 @@
       width="wide"
       @close="closeCreateModal"
     >
-      <form
+      <form v-admin-read-only-form
         id="create-group-form"
         @submit.prevent="handleCreateGroup"
         class="space-y-5"
@@ -573,7 +573,7 @@
                 copyAccountsGroupOptions.find((o) => o.value === groupId)
                   ?.label || `#${groupId}`
               }}
-              <button
+              <button v-admin-write
                 type="button"
                 @click="
                   createForm.copy_accounts_from_group_ids =
@@ -704,7 +704,7 @@
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <Toggle v-model="createForm.is_exclusive" />
+            <Toggle v-admin-read-only-control v-model="createForm.is_exclusive" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 createForm.is_exclusive
@@ -787,7 +787,7 @@
                 {{ t("admin.groups.modelAllowlist.hint") }}
               </p>
             </div>
-            <Toggle v-model="createModelAllowlistState.enabled" />
+            <Toggle v-admin-read-only-control v-model="createModelAllowlistState.enabled" />
           </div>
           <div
             v-if="createModelAllowlistState.enabled"
@@ -806,14 +806,14 @@
                 }}
               </span>
               <div class="flex items-center gap-1.5">
-                <button
+                <button v-admin-write
                   type="button"
                   class="rounded px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
                   @click="selectAllModelAllowlistItems(createModelAllowlistState)"
                 >
                   {{ t("admin.groups.modelAllowlist.selectAll") }}
                 </button>
-                <button
+                <button v-admin-write
                   type="button"
                   class="rounded px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                   @click="invertModelAllowlistSelection(createModelAllowlistState)"
@@ -853,7 +853,7 @@
                     {{ t("admin.groups.modelAllowlist.wildcardTag") }}
                   </span>
                 </span>
-                <button
+                <button v-admin-write
                   type="button"
                   :disabled="index === 0"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
@@ -861,7 +861,7 @@
                 >
                   <Icon name="arrowUp" size="sm" />
                 </button>
-                <button
+                <button v-admin-write
                   type="button"
                   :disabled="index === createModelAllowlistState.items.length - 1"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
@@ -880,7 +880,7 @@
                   class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-none dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
                   @keydown.enter.prevent="submitCreateAllowlistCustomEntry"
                 />
-                <button
+                <button v-admin-write
                   type="button"
                   class="rounded bg-primary-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                   @click="submitCreateAllowlistCustomEntry"
@@ -1396,7 +1396,7 @@
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <Toggle v-model="createForm.mcp_xml_inject" />
+            <Toggle v-admin-read-only-control v-model="createForm.mcp_xml_inject" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 createForm.mcp_xml_inject
@@ -1438,7 +1438,7 @@
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <Toggle v-model="createForm.claude_code_only" />
+            <Toggle v-admin-read-only-control v-model="createForm.claude_code_only" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 createForm.claude_code_only
@@ -1505,7 +1505,7 @@
               <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.groups.modelPricing.title") }}</h4>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.groups.modelPricing.description") }}</p>
             </div>
-            <button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="addGroupPricing(createForm.model_pricing)">
+            <button v-admin-write type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="addGroupPricing(createForm.model_pricing)">
               <Icon name="plus" size="sm" class="mr-1" />{{ t("admin.groups.modelPricing.add") }}
             </button>
           </div>
@@ -1601,7 +1601,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.force") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="create-force-openai-fast"
               :aria-label="t('admin.groups.openaiFast.force')"
               v-model="createForm.force_openai_fast"
@@ -1615,7 +1615,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.reversePriority") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="create-reverse-account-priority"
               :aria-label="t('admin.groups.openaiFast.reversePriority')"
               v-model="createForm.reverse_account_priority"
@@ -1628,7 +1628,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.forceUltrafast") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="create-force-openai-ultrafast"
               :aria-label="t('admin.groups.openaiFast.forceUltrafast')"
               v-model="createForm.force_openai_ultrafast"
@@ -1642,7 +1642,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.filter") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="create-filter-openai-service-tier"
               :aria-label="t('admin.groups.openaiFast.filter')"
               v-model="createForm.filter_openai_service_tier"
@@ -1656,7 +1656,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.free") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="create-free-openai-fast"
               :aria-label="t('admin.groups.openaiFast.free')"
               v-model="createForm.free_openai_fast"
@@ -1679,7 +1679,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">{{
               t("admin.groups.openaiLive.allow")
             }}</label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               :model-value="createForm.allow_live"
               @update:model-value="toggleLive('create')"
             />
@@ -1703,7 +1703,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">{{
               t("admin.groups.openaiMessages.allowDispatch")
             }}</label>
-            <Toggle v-model="createForm.allow_messages_dispatch" />
+            <Toggle v-admin-read-only-control v-model="createForm.allow_messages_dispatch" />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiMessages.allowDispatchHint") }}
@@ -1814,7 +1814,7 @@
                   <span>{{
                     t("admin.groups.openaiMessages.noExactMappings")
                   }}</span>
-                  <button
+                  <button v-admin-write
                     type="button"
                     @click="addCreateMessagesDispatchMapping"
                     class="flex items-center gap-1.5 text-sm font-medium text-primary-600 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
@@ -1874,7 +1874,7 @@
                           />
                         </div>
                       </div>
-                      <button
+                      <button v-admin-write
                         type="button"
                         @click="removeCreateMessagesDispatchMapping(row)"
                         class="mt-6 flex h-9 w-9 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
@@ -1887,7 +1887,7 @@
                     </div>
                   </div>
 
-                  <button
+                  <button v-admin-write
                     type="button"
                     @click="addCreateMessagesDispatchMapping"
                     class="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 bg-white py-3 text-sm font-medium text-gray-500 transition-all hover:border-primary-300 hover:bg-primary-50/50 hover:text-primary-600 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-400 dark:hover:border-primary-800 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
@@ -1928,7 +1928,7 @@
                 }}
               </p>
             </div>
-            <Toggle v-model="createForm.require_oauth_only" />
+            <Toggle v-admin-read-only-control v-model="createForm.require_oauth_only" />
           </div>
 
           <!-- require_privacy_set toggle -->
@@ -1945,7 +1945,7 @@
                 }}
               </p>
             </div>
-            <Toggle v-model="createForm.require_privacy_set" />
+            <Toggle v-admin-read-only-control v-model="createForm.require_privacy_set" />
           </div>
         </div>
 
@@ -2002,7 +2002,7 @@
           </div>
           <!-- 启用开关 -->
           <div class="flex items-center gap-3 mb-3">
-            <Toggle v-model="createForm.model_routing_enabled" />
+            <Toggle v-admin-read-only-control v-model="createForm.model_routing_enabled" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 createForm.model_routing_enabled
@@ -2057,7 +2057,7 @@
                         class="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2.5 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
                       >
                         {{ account.name }}
-                        <button
+                        <button v-admin-write
                           type="button"
                           @click="removeSelectedAccount(rule, account.id)"
                           class="ml-0.5 text-primary-500 hover:text-primary-700 dark:hover:text-primary-200"
@@ -2120,7 +2120,7 @@
                     </p>
                   </div>
                 </div>
-                <button
+                <button v-admin-write
                   type="button"
                   @click="removeCreateRoutingRule(rule)"
                   class="mt-5 p-1.5 text-gray-400 hover:text-red-500 transition-colors"
@@ -2132,7 +2132,7 @@
             </div>
           </div>
           <!-- 添加规则按钮（仅在启用时显示） -->
-          <button
+          <button v-admin-write
             v-if="createForm.model_routing_enabled"
             type="button"
             @click="addCreateRoutingRule"
@@ -2154,7 +2154,7 @@
           >
             {{ t("common.cancel") }}
           </button>
-          <button
+          <button v-admin-write
             type="submit"
             form="create-group-form"
             :disabled="submitting"
@@ -2194,7 +2194,7 @@
       width="wide"
       @close="closeEditModal"
     >
-      <form
+      <form v-admin-read-only-form
         v-if="editingGroup"
         id="edit-group-form"
         @submit.prevent="handleUpdateGroup"
@@ -2276,7 +2276,7 @@
                 copyAccountsGroupOptionsForEdit.find((o) => o.value === groupId)
                   ?.label || `#${groupId}`
               }}
-              <button
+              <button v-admin-write
                 type="button"
                 @click="
                   editForm.copy_accounts_from_group_ids =
@@ -2404,7 +2404,7 @@
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <Toggle v-model="editForm.is_exclusive" />
+            <Toggle v-admin-read-only-control v-model="editForm.is_exclusive" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 editForm.is_exclusive
@@ -2492,7 +2492,7 @@
                 {{ t("admin.groups.modelAllowlist.hint") }}
               </p>
             </div>
-            <Toggle v-model="editModelAllowlistState.enabled" />
+            <Toggle v-admin-read-only-control v-model="editModelAllowlistState.enabled" />
           </div>
           <div
             v-if="editModelAllowlistState.enabled"
@@ -2511,14 +2511,14 @@
                 }}
               </span>
               <div class="flex items-center gap-1.5">
-                <button
+                <button v-admin-write
                   type="button"
                   class="rounded px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
                   @click="selectAllModelAllowlistItems(editModelAllowlistState)"
                 >
                   {{ t("admin.groups.modelAllowlist.selectAll") }}
                 </button>
-                <button
+                <button v-admin-write
                   type="button"
                   class="rounded px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                   @click="invertModelAllowlistSelection(editModelAllowlistState)"
@@ -2558,7 +2558,7 @@
                     {{ t("admin.groups.modelAllowlist.wildcardTag") }}
                   </span>
                 </span>
-                <button
+                <button v-admin-write
                   type="button"
                   :disabled="index === 0"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
@@ -2566,7 +2566,7 @@
                 >
                   <Icon name="arrowUp" size="sm" />
                 </button>
-                <button
+                <button v-admin-write
                   type="button"
                   :disabled="index === editModelAllowlistState.items.length - 1"
                   class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
@@ -2585,7 +2585,7 @@
                   class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-none dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
                   @keydown.enter.prevent="submitEditAllowlistCustomEntry"
                 />
-                <button
+                <button v-admin-write
                   type="button"
                   class="rounded bg-primary-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                   @click="submitEditAllowlistCustomEntry"
@@ -3101,7 +3101,7 @@
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <Toggle v-model="editForm.mcp_xml_inject" />
+            <Toggle v-admin-read-only-control v-model="editForm.mcp_xml_inject" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 editForm.mcp_xml_inject
@@ -3143,7 +3143,7 @@
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <Toggle v-model="editForm.claude_code_only" />
+            <Toggle v-admin-read-only-control v-model="editForm.claude_code_only" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 editForm.claude_code_only
@@ -3220,7 +3220,7 @@
               <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.groups.modelPricing.title") }}</h4>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.groups.modelPricing.description") }}</p>
             </div>
-            <button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="addGroupPricing(editForm.model_pricing)">
+            <button v-admin-write type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="addGroupPricing(editForm.model_pricing)">
               <Icon name="plus" size="sm" class="mr-1" />{{ t("admin.groups.modelPricing.add") }}
             </button>
           </div>
@@ -3316,7 +3316,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.force") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="edit-force-openai-fast"
               :aria-label="t('admin.groups.openaiFast.force')"
               v-model="editForm.force_openai_fast"
@@ -3330,7 +3330,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.reversePriority") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="edit-reverse-account-priority"
               :aria-label="t('admin.groups.openaiFast.reversePriority')"
               v-model="editForm.reverse_account_priority"
@@ -3343,7 +3343,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.forceUltrafast") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="edit-force-openai-ultrafast"
               :aria-label="t('admin.groups.openaiFast.forceUltrafast')"
               v-model="editForm.force_openai_ultrafast"
@@ -3357,7 +3357,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.filter") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="edit-filter-openai-service-tier"
               :aria-label="t('admin.groups.openaiFast.filter')"
               v-model="editForm.filter_openai_service_tier"
@@ -3371,7 +3371,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">
               {{ t("admin.groups.openaiFast.free") }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               data-testid="edit-free-openai-fast"
               :aria-label="t('admin.groups.openaiFast.free')"
               v-model="editForm.free_openai_fast"
@@ -3394,7 +3394,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">{{
               t("admin.groups.openaiLive.allow")
             }}</label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               :model-value="editForm.allow_live"
               @update:model-value="toggleLive('edit')"
             />
@@ -3418,7 +3418,7 @@
             <label class="text-sm text-gray-600 dark:text-gray-400">{{
               t("admin.groups.openaiMessages.allowDispatch")
             }}</label>
-            <Toggle v-model="editForm.allow_messages_dispatch" />
+            <Toggle v-admin-read-only-control v-model="editForm.allow_messages_dispatch" />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiMessages.allowDispatchHint") }}
@@ -3528,7 +3528,7 @@
                   <span>{{
                     t("admin.groups.openaiMessages.noExactMappings")
                   }}</span>
-                  <button
+                  <button v-admin-write
                     type="button"
                     @click="addEditMessagesDispatchMapping"
                     class="flex items-center gap-1.5 text-sm font-medium text-primary-600 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
@@ -3588,7 +3588,7 @@
                           />
                         </div>
                       </div>
-                      <button
+                      <button v-admin-write
                         type="button"
                         @click="removeEditMessagesDispatchMapping(row)"
                         class="mt-6 flex h-9 w-9 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
@@ -3601,7 +3601,7 @@
                     </div>
                   </div>
 
-                  <button
+                  <button v-admin-write
                     type="button"
                     @click="addEditMessagesDispatchMapping"
                     class="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 bg-white py-3 text-sm font-medium text-gray-500 transition-all hover:border-primary-300 hover:bg-primary-50/50 hover:text-primary-600 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-400 dark:hover:border-primary-800 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
@@ -3642,7 +3642,7 @@
                 }}
               </p>
             </div>
-            <Toggle v-model="editForm.require_oauth_only" />
+            <Toggle v-admin-read-only-control v-model="editForm.require_oauth_only" />
           </div>
 
           <!-- require_privacy_set toggle -->
@@ -3659,7 +3659,7 @@
                 }}
               </p>
             </div>
-            <Toggle v-model="editForm.require_privacy_set" />
+            <Toggle v-admin-read-only-control v-model="editForm.require_privacy_set" />
           </div>
         </div>
 
@@ -3716,7 +3716,7 @@
           </div>
           <!-- 启用开关 -->
           <div class="flex items-center gap-3 mb-3">
-            <Toggle v-model="editForm.model_routing_enabled" />
+            <Toggle v-admin-read-only-control v-model="editForm.model_routing_enabled" />
             <span class="text-sm text-gray-500 dark:text-gray-400">
               {{
                 editForm.model_routing_enabled
@@ -3771,7 +3771,7 @@
                         class="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2.5 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
                       >
                         {{ account.name }}
-                        <button
+                        <button v-admin-write
                           type="button"
                           @click="removeSelectedAccount(rule, account.id, true)"
                           class="ml-0.5 text-primary-500 hover:text-primary-700 dark:hover:text-primary-200"
@@ -3834,7 +3834,7 @@
                     </p>
                   </div>
                 </div>
-                <button
+                <button v-admin-write
                   type="button"
                   @click="removeEditRoutingRule(rule)"
                   class="mt-5 p-1.5 text-gray-400 hover:text-red-500 transition-colors"
@@ -3846,7 +3846,7 @@
             </div>
           </div>
           <!-- 添加规则按钮（仅在启用时显示） -->
-          <button
+          <button v-admin-write
             v-if="editForm.model_routing_enabled"
             type="button"
             @click="addEditRoutingRule"
@@ -3868,7 +3868,7 @@
           >
             {{ t("common.cancel") }}
           </button>
-          <button
+          <button v-admin-write
             type="submit"
             form="edit-group-form"
             :disabled="submitting"
@@ -3995,7 +3995,7 @@
           >
             {{ t("common.cancel") }}
           </button>
-          <button
+          <button v-admin-write
             @click="saveSortOrder"
             :disabled="sortSubmitting"
             class="btn btn-primary"
@@ -4134,7 +4134,7 @@
                     </td>
                     <td class="px-3 py-2">
                       <div class="flex justify-end gap-1">
-                        <button
+                        <button v-admin-write
                           type="button"
                           class="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
                           :title="t('common.edit')"
@@ -4142,7 +4142,7 @@
                         >
                           <Icon name="edit" size="sm" />
                         </button>
-                        <button
+                        <button v-admin-write
                           type="button"
                           class="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                           :title="t('common.delete')"
@@ -4160,7 +4160,7 @@
         </section>
 
         <section class="space-y-5">
-          <form class="space-y-3" @submit.prevent="saveCompositeRoute">
+          <form v-admin-read-only-form class="space-y-3" @submit.prevent="saveCompositeRoute">
             <div class="flex items-center justify-between gap-3">
               <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                 {{
@@ -4272,7 +4272,7 @@
                 />
                 {{ t("admin.groups.compositeRoutes.enabled") }}
               </label>
-              <button
+              <button v-admin-write
                 type="submit"
                 class="btn btn-primary"
                 :disabled="compositeRouteSaving"
@@ -4738,7 +4738,7 @@ const toggleColumn = (key: string) => {
 
 const columns = computed<Column[]>(() =>
   allColumns.value.filter(
-    (col) => ALWAYS_VISIBLE_COLUMNS.has(col.key) || !hiddenColumns.has(col.key),
+    (col) => (!authStore.isReadOnlyAdmin || col.key !== "actions") && (ALWAYS_VISIBLE_COLUMNS.has(col.key) || !hiddenColumns.has(col.key)),
   ),
 );
 

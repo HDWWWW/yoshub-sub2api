@@ -528,6 +528,7 @@ export default {
       deleteConfirmMessage: "确定要删除用户 '{email}' 吗？此操作无法撤销。",
       searchPlaceholder: '邮箱/用户名/备注/API Key 模糊搜索...',
       searchUsers: '邮箱/用户名/备注/API Key 模糊搜索',
+      searchUsersReadOnly: '邮箱/用户名/备注模糊搜索',
       roleFilter: '角色筛选',
       allRoles: '全部角色',
       allStatus: '全部状态',
@@ -627,9 +628,12 @@ export default {
       failedToLoadApiKeys: '加载用户 API 密钥失败',
       deleteConfirm: "确定要删除用户 '{email}' 吗？此操作无法撤销。",
       roles: {
+        // Ordinary administrators can inspect native pages without changing them.
         admin: '管理员',
+        admin_readonly: '普通管理员（只读）',
         user: '用户'
       },
+      readOnlyNotice: '普通管理员：仅可查看，不能修改配置、读取密钥或访问受限功能。',
       form: {
         emailLabel: '邮箱',
         emailPlaceholder: '请输入邮箱',

@@ -16,6 +16,9 @@
 
       <!-- Main Content -->
       <main class="p-4 md:p-6 lg:p-8">
+        <p v-if="authStore.isReadOnlyAdmin" class="mb-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:bg-blue-950 dark:text-blue-200" role="status">
+          {{ t('admin.users.readOnlyNotice') }}
+        </p>
         <slot />
       </main>
     </div>
@@ -25,6 +28,7 @@
 <script setup lang="ts">
 import '@/styles/onboarding.css'
 import { computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import { useOnboardingTour } from '@/composables/useOnboardingTour'
@@ -34,12 +38,13 @@ import AppHeader from './AppHeader.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const { t } = useI18n()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const isAdmin = computed(() => authStore.user?.role === 'admin')
 
 const { replayTour } = useOnboardingTour({
   storageKey: isAdmin.value ? 'admin_guide' : 'user_guide',
-  autoStart: true
+  autoStart: !authStore.isReadOnlyAdmin
 })
 
 const onboardingStore = useOnboardingStore()

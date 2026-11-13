@@ -1,5 +1,5 @@
 <template>
-  <section class="mx-auto w-full max-w-6xl space-y-5 px-1 py-2 sm:px-2">
+  <section v-admin-read-only-form class="mx-auto w-full max-w-6xl space-y-5 px-1 py-2 sm:px-2">
     <header
       class="page-header mb-0 flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700 sm:p-6"
     >
@@ -14,7 +14,7 @@
           {{ t('channelMonitorV2.settings.description') }}
         </p>
       </div>
-      <button
+      <button v-admin-write
         type="button"
         class="btn btn-primary"
         :disabled="saving || !dirty"
@@ -55,14 +55,14 @@
               {{ t('channelMonitorV2.settings.enableHint') }}
             </p>
           </div>
-          <Toggle v-model="draft.enabled" />
+          <Toggle v-admin-read-only-control v-model="draft.enabled" />
         </div>
         <div class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
           <div>
             <strong class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.refreshTitle') }}</strong>
             <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">{{ t('channelMonitorV2.settings.refreshHint') }}</p>
           </div>
-          <div class="tabs inline-flex w-auto" role="group" :aria-label="t('channelMonitorV2.settings.refreshAria')">
+          <div v-admin-read-only-control class="tabs inline-flex w-auto" role="group" :aria-label="t('channelMonitorV2.settings.refreshAria')">
             <button
               type="button"
               class="tab"
@@ -114,7 +114,7 @@
             :key="platform.platform"
             class="grid grid-cols-1 items-center gap-3 px-5 py-3 sm:grid-cols-[auto_7rem_minmax(0,1fr)_auto]"
           >
-            <Toggle v-model="platform.enabled" />
+            <Toggle v-admin-read-only-control v-model="platform.enabled" />
             <strong class="text-sm font-medium text-gray-900 dark:text-white">{{ platformLabel(platform.platform) }}</strong>
             <input
               class="input"

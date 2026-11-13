@@ -2,7 +2,7 @@
   <div>
     <div class="mb-2 flex items-center justify-between gap-2">
       <label class="input-label mb-0">{{ t('admin.accounts.opencodeGo.protocolRules.title') }}</label>
-      <button
+      <button v-admin-write
         type="button"
         class="text-xs text-primary-600 hover:text-primary-700 dark:text-primary-400"
         @click="restoreDefaults"
@@ -31,7 +31,7 @@
               {{ t(`admin.accounts.cnProviders.apiProtocol.${option.labelKey}`) }}
             </option>
           </select>
-          <button
+          <button v-admin-write
             type="button"
             class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
             :aria-label="t('admin.accounts.opencodeGo.protocolRules.remove')"

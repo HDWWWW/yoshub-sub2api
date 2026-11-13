@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -53,7 +54,7 @@ func (h *ScheduledTestHandler) ListByAccount(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, plans)
+	writeScheduledTestRead(c, plans)
 }
 
 // Create POST /admin/scheduled-test-plans
@@ -171,5 +172,19 @@ func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 		response.InternalError(c, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, results)
+	writeScheduledTestRead(c, results)
+}
+
+// These legacy endpoints return a raw array, so preserve their envelope while
+// applying the same observer redaction as response.Success.
+func writeScheduledTestRead(c *gin.Context, data any) {
+	if adminaccess.IsReadOnly(c.Request.Context()) {
+		var err error
+		data, err = adminaccess.RedactReadOnlyResponse(c.FullPath(), data)
+		if err != nil {
+			response.InternalError(c, "Failed to prepare read-only response")
+			return
+		}
+	}
+	c.JSON(http.StatusOK, data)
 }

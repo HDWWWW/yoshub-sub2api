@@ -11,6 +11,11 @@ import (
 
 func AdminComplianceGuard(settingService *service.SettingService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Observers cannot operate the deployment or accept commitments for it.
+		if role, _ := GetUserRoleFromContext(c); role == service.RoleReadOnlyAdmin {
+			c.Next()
+			return
+		}
 		if settingService == nil || isAdminComplianceBypassPath(c.Request.URL.Path) {
 			c.Next()
 			return

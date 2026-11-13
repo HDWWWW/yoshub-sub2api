@@ -141,7 +141,7 @@
         <button type="button" class="btn btn-secondary" @click="handleClose">
           {{ t('common.cancel') }}
         </button>
-        <button
+        <button v-admin-write
           v-if="isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"

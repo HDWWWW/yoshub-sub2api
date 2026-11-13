@@ -30,7 +30,7 @@
       :close-on-escape="!sending"
       @close="closeDialog"
     >
-      <form :id="formID" class="space-y-4" @submit.prevent="sendInvite">
+      <form v-admin-read-only-form :id="formID" class="space-y-4" @submit.prevent="sendInvite">
         <p class="text-sm text-gray-600 dark:text-gray-300">
           {{ t('admin.accounts.openaiReferral.fromAccount') }} <strong>{{ account.name }}</strong>
         </p>
@@ -80,7 +80,7 @@
       </form>
       <template #footer>
         <button type="button" class="btn btn-secondary" :disabled="sending" @click="closeDialog">{{ t('common.close') }}</button>
-        <button type="submit" :form="formID" class="btn btn-primary" :disabled="!canSend" data-testid="referral-send">
+        <button v-admin-write type="submit" :form="formID" class="btn btn-primary" :disabled="!canSend" data-testid="referral-send">
           {{ sending ? t('admin.accounts.openaiReferral.sending') : t('admin.accounts.openaiReferral.send') }}
         </button>
       </template>

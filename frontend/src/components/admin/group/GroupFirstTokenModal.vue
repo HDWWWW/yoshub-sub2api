@@ -19,7 +19,7 @@
     </div>
     <template #footer>
       <button class="btn btn-secondary" :disabled="saving" @click="close">{{ t('common.cancel') }}</button>
-      <button class="btn btn-primary" :disabled="saving || loading || failed" @click="save">{{ t('common.save') }}</button>
+      <button v-admin-write class="btn btn-primary" :disabled="saving || loading || failed" @click="save">{{ t('common.save') }}</button>
     </template>
   </BaseDialog>
 </template>

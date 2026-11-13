@@ -149,7 +149,7 @@
                       />
                     </td>
                     <td class="px-2 py-2">
-                      <button
+                      <button v-admin-write
                         type="button"
                         class="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                         @click="removeLocal(entry.user_id)"
@@ -189,7 +189,7 @@
           <button type="button" class="btn btn-sm px-4 py-1.5" @click="handleClose">
             {{ t('common.close') }}
           </button>
-          <button
+          <button v-admin-write
             v-if="isDirty"
             type="button"
             class="btn btn-primary btn-sm px-4 py-1.5"

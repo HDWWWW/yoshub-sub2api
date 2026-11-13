@@ -198,7 +198,7 @@ onMounted(() => {
           </svg>
           {{ t('common.refresh') }}
         </button>
-        <button class="btn btn-sm btn-secondary" :disabled="!config" @click="openEditor">{{ t('common.edit') }}</button>
+        <button v-admin-write class="btn btn-sm btn-secondary" :disabled="!config" @click="openEditor">{{ t('common.edit') }}</button>
       </div>
     </div>
 
@@ -301,7 +301,7 @@ onMounted(() => {
                 class="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
               >
                 {{ email }}
-                <button
+                <button v-admin-write
                   type="button"
                   class="text-blue-700/80 hover:text-blue-900 dark:text-blue-300"
                   @click="removeRecipient('alert', email)"
@@ -366,7 +366,7 @@ onMounted(() => {
                 class="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
               >
                 {{ email }}
-                <button
+                <button v-admin-write
                   type="button"
                   class="text-blue-700/80 hover:text-blue-900 dark:text-blue-300"
                   @click="removeRecipient('report', email)"
@@ -431,8 +431,8 @@ onMounted(() => {
     </div>
     <template #footer>
       <div class="flex justify-end gap-2">
-        <button class="btn btn-secondary" @click="showEditor = false">{{ t('common.cancel') }}</button>
-        <button class="btn btn-primary" :disabled="saving || !editorValidation.valid" @click="saveConfig">
+        <button v-admin-write class="btn btn-secondary" @click="showEditor = false">{{ t('common.cancel') }}</button>
+        <button v-admin-write class="btn btn-primary" :disabled="saving || !editorValidation.valid" @click="saveConfig">
           {{ saving ? t('common.saving') : t('common.save') }}
         </button>
       </div>

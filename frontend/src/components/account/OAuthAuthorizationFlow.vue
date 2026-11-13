@@ -187,7 +187,7 @@
             </div>
 
             <!-- Validate Button -->
-            <button
+            <button v-admin-write
               type="button"
               class="btn btn-primary w-full"
               :disabled="loading || !refreshTokenInput.trim()"
@@ -266,7 +266,7 @@
               </p>
             </div>
 
-            <button
+            <button v-admin-write
               type="button"
               class="btn btn-primary w-full"
               :disabled="loading || !ssoCookieInput.trim()"
@@ -414,7 +414,7 @@
               </p>
             </div>
 
-            <button
+            <button v-admin-write
               type="button"
               class="btn btn-primary w-full"
               :disabled="loading || !codexSessionInput.trim()"
@@ -487,7 +487,7 @@
               </p>
             </div>
 
-            <button
+            <button v-admin-write
               type="button"
               class="btn btn-primary w-full"
               :disabled="loading || !codexPATInput.trim()"
@@ -700,7 +700,7 @@
                     {{ t('admin.accounts.oauth.gemini.projectIdHint') }}
                   </p>
                 </div>
-                <button
+                <button v-admin-write
                   v-if="!authUrl"
                   type="button"
                   :disabled="loading"
@@ -767,7 +767,7 @@
                       />
                     </button>
                   </div>
-                  <button
+                  <button v-admin-write
                     type="button"
                     class="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
                     @click="handleRegenerate"

@@ -111,7 +111,7 @@
           {{ imageUploadLabel }}
         </label>
         <div class="flex items-center gap-3">
-          <button
+          <button v-admin-write
             type="button"
             class="btn btn-secondary btn-sm shrink-0"
             :disabled="status === 'connecting'"
@@ -150,7 +150,7 @@
           {{ t('admin.accounts.grok.audioUploadLabel') }}
         </label>
         <div class="flex items-center gap-3">
-          <button
+          <button v-admin-write
             type="button"
             class="btn btn-secondary btn-sm shrink-0"
             :disabled="status === 'connecting'"
@@ -333,7 +333,7 @@
         >
           {{ t('common.close') }}
         </button>
-        <button
+        <button v-admin-write
           @click="startTest"
           :disabled="!canStartTest"
           :class="[

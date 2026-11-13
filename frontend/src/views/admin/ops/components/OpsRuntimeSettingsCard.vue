@@ -264,7 +264,7 @@ onMounted(() => {
       <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-700/50">
         <div class="mb-3 flex items-center justify-between">
           <h4 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.runtime.alertTitle') }}</h4>
-          <button class="btn btn-sm btn-secondary" @click="openAlertEditor">{{ t('common.edit') }}</button>
+          <button v-admin-write class="btn btn-sm btn-secondary" @click="openAlertEditor">{{ t('common.edit') }}</button>
         </div>
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div class="text-xs text-gray-600 dark:text-gray-300">
@@ -447,7 +447,7 @@ onMounted(() => {
                   <div class="text-xs font-bold text-gray-900 dark:text-white">
                     {{ t('admin.ops.runtime.silencing.entries.entryTitle', { n: idx + 1 }) }}
                   </div>
-                  <button class="btn btn-sm btn-danger" type="button" @click="removeSilenceEntry(idx)">{{ t('common.delete') }}</button>
+                  <button v-admin-write class="btn btn-sm btn-danger" type="button" @click="removeSilenceEntry(idx)">{{ t('common.delete') }}</button>
                 </div>
 
                 <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -525,8 +525,8 @@ onMounted(() => {
 
     <template #footer>
       <div class="flex justify-end gap-2">
-        <button class="btn btn-secondary" @click="showAlertEditor = false">{{ t('common.cancel') }}</button>
-        <button class="btn btn-primary" :disabled="saving || !alertValidation.valid" @click="saveAlertSettings">
+        <button v-admin-write class="btn btn-secondary" @click="showAlertEditor = false">{{ t('common.cancel') }}</button>
+        <button v-admin-write class="btn btn-primary" :disabled="saving || !alertValidation.valid" @click="saveAlertSettings">
           {{ saving ? t('common.saving') : t('common.save') }}
         </button>
       </div>

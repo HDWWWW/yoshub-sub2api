@@ -214,9 +214,20 @@ func validateJWTForAdmin(
 	}
 
 	// 检查管理员权限
-	if !user.IsAdmin() {
+	if !user.HasAdminAccess() {
 		AbortWithError(c, 403, "FORBIDDEN", "Admin access required")
 		return false
+	}
+
+	if user.Role == service.RoleReadOnlyAdmin {
+		if !adminaccess.ReadOnlyRouteAllowed(c.Request.Method, c.FullPath()) {
+			AbortWithError(c, 403, "ADMIN_READ_ONLY", "普通管理员仅可查看原生后台，不能修改配置或访问受限功能")
+			return false
+		}
+		c.Request = c.Request.WithContext(adminaccess.WithReadOnly(c.Request.Context()))
+		// Never reuse a full administrator's cached account/settings response.
+		c.Request.Header.Del("If-None-Match")
+		c.Header("Cache-Control", "private, no-store")
 	}
 
 	c.Set(string(ContextKeyUser), AuthSubject{

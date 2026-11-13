@@ -5,7 +5,7 @@
     width="normal"
     @close="handleClose"
   >
-    <form class="space-y-4" @submit.prevent="submit">
+    <form v-admin-read-only-form class="space-y-4" @submit.prevent="submit">
       <div>
         <label class="input-label">{{ t('admin.affiliates.withdraw.user') }}</label>
         <div
@@ -119,7 +119,7 @@
         <button type="button" class="btn btn-secondary" :disabled="submitting" @click="handleClose">
           {{ t('common.cancel') }}
         </button>
-        <button
+        <button v-admin-write
           type="button"
           class="btn btn-primary"
           :disabled="!canSubmit"

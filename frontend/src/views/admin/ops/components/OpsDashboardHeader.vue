@@ -962,7 +962,7 @@ function handleToolbarRefresh() {
         </button>
 
         <!-- Settings Button (hidden in fullscreen) -->
-        <button
+        <button v-admin-write
           v-if="!props.fullscreen"
           type="button"
           class="flex h-8 items-center gap-1.5 rounded-lg bg-gray-100 px-3 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600"

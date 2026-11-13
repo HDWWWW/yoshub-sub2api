@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -2596,7 +2597,7 @@ func (h *AccountHandler) GetUsage(c *gin.Context) {
 	force := c.Query("force") == "true"
 
 	var usage *service.UsageInfo
-	if source == "passive" {
+	if source == "passive" || adminaccess.IsReadOnly(c.Request.Context()) {
 		usage, err = h.accountUsageService.GetPassiveUsage(c.Request.Context(), accountID)
 	} else {
 		usage, err = h.accountUsageService.GetUsage(c.Request.Context(), accountID, force)

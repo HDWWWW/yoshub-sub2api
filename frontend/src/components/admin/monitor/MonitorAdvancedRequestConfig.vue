@@ -25,7 +25,7 @@
             class="input flex-1 font-mono text-xs"
             @blur="commitHeaders"
           />
-          <button
+          <button v-admin-write
             type="button"
             class="flex-none rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400"
             :title="t('common.delete')"

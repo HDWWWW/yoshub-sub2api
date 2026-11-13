@@ -1,3 +1,4 @@
+import { useAuthStore } from './auth'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import adminComplianceAPI, { type AdminComplianceStatus } from '@/api/admin/compliance'
@@ -15,7 +16,7 @@ export const useAdminComplianceStore = defineStore('adminCompliance', () => {
   let stateVersion = 0
 
   const required = computed(() => status.value?.required === true)
-  const shouldShow = computed(() => required.value || forceVisible.value)
+  const shouldShow = computed(() => !useAuthStore().isReadOnlyAdmin && (required.value || forceVisible.value))
   const currentLocale = computed(() => getLocale())
   const expectedPhrase = computed(() => {
     if (currentLocale.value === 'zh') {

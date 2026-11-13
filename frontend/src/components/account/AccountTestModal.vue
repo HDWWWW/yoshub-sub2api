@@ -203,7 +203,7 @@
         >
           {{ t('common.close') }}
         </button>
-        <button
+        <button v-admin-write
           @click="startTest"
           :disabled="status === 'connecting' || !selectedModelId"
           :class="[

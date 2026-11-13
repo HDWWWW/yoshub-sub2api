@@ -20,7 +20,7 @@
       <nav ref="tabsNav" class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
         <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="!!manualPending && ['manual', 'fendudu'].includes(tab) && (tab === 'fendudu') !== (manualPending.provider === 'fendudu')" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
       </nav>
-      <form id="refill-settings" class="space-y-5" @submit.prevent="save">
+      <form v-admin-read-only-form id="refill-settings" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="busy" class="space-y-5">
           <div v-show="activeTab === 'connection'" class="space-y-5">
             <label class="block"><span class="input-label">{{ t('accountRefill.token') }} · {{ t(view.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span>
@@ -119,7 +119,7 @@
                 <p id="refill-flatten-namespaces-label" class="input-label mb-0">{{ t('admin.accounts.openai.flattenNamespaces') }}</p>
                 <p id="refill-flatten-namespaces-description" class="input-hint">{{ t('admin.accounts.openai.flattenNamespacesDesc') }}</p>
               </div>
-              <Toggle
+              <Toggle v-admin-read-only-control
                 :model-value="form.delivery.openai_responses_flatten_namespaces === true"
                 data-testid="refill-flatten-namespaces-toggle"
                 aria-labelledby="refill-flatten-namespaces-label"
@@ -167,7 +167,7 @@
           <summary class="cursor-pointer text-sm font-medium">{{ t('accountRefill.fenduduConnectionSettings') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</summary>
           <label class="block"><span class="input-label">{{ t('accountRefill.fenduduToken') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span><input v-model="fenduduToken" type="password" autocomplete="new-password" class="input" placeholder="rvak_…" :disabled="busy" data-testid="fendudu-token" /><span class="input-hint">{{ t('accountRefill.tokenHint') }}</span></label>
           <label class="block"><span class="input-label">{{ t('accountRefill.fenduduConnection') }}</span><input v-model="fenduduConnectionID" class="input" placeholder="s2e_…" :disabled="busy" data-testid="fendudu-connection-id" /><span class="input-hint">{{ t('accountRefill.fenduduConnectionHint') }}</span></label>
-          <button type="button" class="btn btn-secondary" :disabled="busy || dirty || conflict || !!manualPending" data-testid="fendudu-save" @click="saveFendudu">{{ t('accountRefill.fenduduSave') }}</button>
+          <button v-admin-write type="button" class="btn btn-secondary" :disabled="busy || dirty || conflict || !!manualPending" data-testid="fendudu-save" @click="saveFendudu">{{ t('accountRefill.fenduduSave') }}</button>
           <p class="text-xs text-gray-500">{{ t('accountRefill.fenduduUpdated') }} {{ date(view.fendudu?.checked_at) }}</p>
         </details>
         <p class="text-sm leading-6 text-gray-500">{{ t(isFendudu ? 'accountRefill.fenduduHint' : 'accountRefill.manualHint') }}</p>
@@ -195,8 +195,8 @@
         <p v-if="!manualTokenConfigured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
         <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain') }}</p>
         <div class="flex flex-wrap gap-3">
-          <button type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : isFendudu ? 'accountRefill.fenduduSubmit' : 'accountRefill.manualSubmit') }}</button>
-          <button type="button" class="btn btn-secondary" :disabled="manualForceDisabled" data-testid="manual-refill-force" @click="submitManual(true)">{{ t('accountRefill.manualForce') }}</button>
+          <button v-admin-write type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : isFendudu ? 'accountRefill.fenduduSubmit' : 'accountRefill.manualSubmit') }}</button>
+          <button v-admin-write type="button" class="btn btn-secondary" :disabled="manualForceDisabled" data-testid="manual-refill-force" @click="submitManual(true)">{{ t('accountRefill.manualForce') }}</button>
         </div>
         <p class="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{{ t(isFendudu ? 'accountRefill.fenduduForceHint' : 'accountRefill.manualForceHint') }}</p>
       </div>
@@ -257,7 +257,7 @@
                     <div v-if="job.supplier_status" class="mt-1 text-xs text-gray-500" data-testid="refill-supplier-status">{{ t('accountRefill.supplierStatus') }}: {{ supplierStateLabel(job.supplier_status) }} · {{ job.supplier_status }}</div>
                     <div v-if="job.supplier_error" class="mt-1 break-words text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.supplierError') }}: {{ job.supplier_error }}</div>
                     <div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div>
-                    <button v-if="['blocked', 'import_failed'].includes(job.status) && !(job.provider === 'fendudu' && !job.supplier_id && job.submission_started_at)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
+                    <button v-admin-write v-if="['blocked', 'import_failed'].includes(job.status) && !(job.provider === 'fendudu' && !job.supplier_id && job.submission_started_at)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
                     <div v-if="job.provider === 'fendudu' && job.status === 'blocked' && !job.supplier_id && job.submission_started_at" class="mt-2 space-y-2"><label class="block text-xs">{{ t('accountRefill.fenduduOrderID') }}<input v-model="reconcileIDs[job.id]" class="input mt-1" placeholder="rvc_…" :disabled="busy" :data-testid="`fendudu-order-${job.id}`" /></label><button type="button" class="btn btn-secondary text-xs" :disabled="busy || !reconcileIDs[job.id]?.trim()" @click="reconcileFendudu(job)">{{ t('accountRefill.fenduduReconcile') }}</button></div>
                     <details v-if="job.status === 'blocked' && !job.supplier_id" class="mt-2 text-xs">
                       <summary class="cursor-pointer text-amber-700">{{ t('accountRefill.dismiss') }}</summary>
@@ -291,7 +291,7 @@
       <span class="mr-auto text-xs text-gray-500">{{ dirty ? t('accountRefill.dirty') : '' }}</span>
       <button type="button" class="btn btn-secondary" :disabled="loading" @click="refresh(false)">{{ t('accountRefill.refresh') }}</button>
       <button type="button" class="btn btn-secondary" :disabled="busy || !view || dirty" :title="t('accountRefill.checkHint')" @click="check">{{ t('accountRefill.check') }}</button>
-      <button type="submit" form="refill-settings" class="btn btn-primary" :disabled="busy || !dirty || conflict || !form" data-testid="refill-save">{{ t(busy ? 'accountRefill.saving' : 'accountRefill.save') }}</button>
+      <button v-admin-write type="submit" form="refill-settings" class="btn btn-primary" :disabled="busy || !dirty || conflict || !form" data-testid="refill-save">{{ t(busy ? 'accountRefill.saving' : 'accountRefill.save') }}</button>
     </template>
   </BaseDialog>
   <TotpStepUpDialog :controller="downloadStepUp" />

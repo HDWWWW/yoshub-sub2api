@@ -96,7 +96,7 @@
           >
             {{ t('admin.accounts.usageWindow.passiveSampled') }}
           </span>
-          <button
+          <button v-admin-write
             type="button"
             class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="activeQueryLoading || loading"
@@ -151,7 +151,7 @@
         -->
         <OpenAIQuotaResetCell :account="account" @account-updated="handleQuotaResetAccountUpdated">
           <template #pre-actions>
-            <button
+            <button v-admin-write
               type="button"
               class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="activeQueryLoading || loading"
@@ -255,7 +255,7 @@
           >
             {{ t('admin.accounts.openVerification') }}
           </a>
-          <button
+          <button v-admin-write
             type="button"
             class="text-[10px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
             :title="t('admin.accounts.copyLink')"
@@ -364,7 +364,7 @@
         the cache TTL. Shown in every state, including errors, where a retry matters most.
       -->
       <div v-if="!loading" class="mt-1">
-        <button
+        <button v-admin-write
           type="button"
           class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="antigravity-active-query"

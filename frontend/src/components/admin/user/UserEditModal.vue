@@ -5,7 +5,7 @@
     width="normal"
     @close="$emit('close')"
   >
-    <form v-if="user" id="edit-user-form" @submit.prevent="handleUpdateUser" class="space-y-5">
+    <form v-admin-read-only-form v-if="user" id="edit-user-form" @submit.prevent="handleUpdateUser" class="space-y-5">
       <div>
         <label class="input-label">{{ t('admin.users.email') }}</label>
         <input v-model="form.email" type="email" class="input" />
@@ -20,7 +20,7 @@
               <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" /></svg>
             </button>
           </div>
-          <button type="button" @click="generatePassword" class="btn btn-secondary px-3">
+          <button v-admin-write type="button" @click="generatePassword" class="btn btn-secondary px-3">
             <Icon name="refresh" size="md" />
           </button>
         </div>
@@ -71,7 +71,7 @@
     <template #footer>
       <div class="flex justify-end gap-3">
         <button @click="$emit('close')" type="button" class="btn btn-secondary">{{ t('common.cancel') }}</button>
-        <button type="submit" form="edit-user-form" :disabled="submitting" class="btn btn-primary">
+        <button v-admin-write type="submit" form="edit-user-form" :disabled="submitting" class="btn btn-primary">
           {{ submitting ? t('admin.users.updating') : t('common.update') }}
         </button>
       </div>
@@ -103,6 +103,7 @@ const { t } = useI18n(); const appStore = useAppStore(); const { copyToClipboard
 const submitting = ref(false); const passwordCopied = ref(false)
 const roleOptions = computed(() => [
   { value: 'user', label: t('admin.users.roles.user') },
+  { value: 'admin_readonly', label: t('admin.users.roles.admin_readonly') },
   { value: 'admin', label: t('admin.users.roles.admin') }
 ])
 const form = reactive({

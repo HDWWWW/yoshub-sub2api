@@ -56,7 +56,7 @@
           @change="loadHistory(1)"
         />
         <!-- Deposit button - matches menu style -->
-        <button
+        <button v-admin-write
           v-if="!hideActions"
           @click="emit('deposit')"
           class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700"
@@ -65,7 +65,7 @@
           {{ t('admin.users.deposit') }}
         </button>
         <!-- Withdraw button - matches menu style -->
-        <button
+        <button v-admin-write
           v-if="!hideActions"
           @click="emit('withdraw')"
           class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700"

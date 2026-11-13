@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -97,6 +98,18 @@ func jwtAuth(
 			return
 		}
 
+		// Observers cannot use the personal key API to read or issue gateway keys.
+		if user.Role == service.RoleReadOnlyAdmin && (c.FullPath() == "/api/v1/keys" || strings.HasPrefix(c.FullPath(), "/api/v1/keys/") || strings.HasPrefix(c.FullPath(), "/api/v1/user/mcp/")) {
+			AbortWithError(c, 403, "ADMIN_READ_ONLY", "普通管理员不能读取或管理密钥")
+			return
+		}
+		// Usage rows and subscriptions also embed keys and group configuration.
+		// Keep the same redaction when an observer uses the native user pages.
+		if user.Role == service.RoleReadOnlyAdmin && (strings.HasPrefix(c.FullPath(), "/api/v1/usage") || strings.HasPrefix(c.FullPath(), "/api/v1/subscriptions") || strings.HasPrefix(c.FullPath(), "/api/v1/groups")) {
+			c.Request = c.Request.WithContext(adminaccess.WithReadOnly(c.Request.Context()))
+			c.Request.Header.Del("If-None-Match")
+			c.Header("Cache-Control", "private, no-store")
+		}
 		c.Set(string(ContextKeyUser), AuthSubject{
 			UserID:      user.ID,
 			Concurrency: user.Concurrency,

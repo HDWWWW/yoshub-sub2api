@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,15 @@ type PaginatedData struct {
 
 // Success 返回成功响应
 func Success(c *gin.Context, data any) {
+	if adminaccess.IsReadOnly(c.Request.Context()) {
+		c.Header("Cache-Control", "private, no-store")
+		var err error
+		data, err = adminaccess.RedactReadOnlyResponse(c.FullPath(), data)
+		if err != nil {
+			InternalError(c, "Failed to prepare read-only response")
+			return
+		}
+	}
 	c.JSON(http.StatusOK, Response{
 		Code:    0,
 		Message: "success",

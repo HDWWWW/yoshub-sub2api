@@ -70,7 +70,7 @@
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <button
+        <button v-admin-write
           type="button"
           class="btn btn-primary btn-sm"
           :disabled="saving || !session.trim() || !state.encryption_key_configured"
@@ -80,7 +80,7 @@
           <Icon name="check" size="xs" class="mr-1.5" />
           {{ t('common.save') }}
         </button>
-        <button
+        <button v-admin-write
           v-if="state.configured"
           type="button"
           class="btn btn-secondary btn-sm text-red-600 dark:text-red-400"
@@ -91,7 +91,7 @@
           <Icon name="trash" size="xs" class="mr-1.5" />
           {{ t('admin.accounts.ollamaCloud.deleteSession') }}
         </button>
-        <button
+        <button v-admin-write
           v-if="state.configured"
           type="button"
           class="btn btn-secondary btn-sm"

@@ -97,7 +97,7 @@
           </template>
 
           <template #cell-enabled="{ row }">
-            <Toggle :modelValue="row.enabled" @update:modelValue="toggleEnabled(row)" />
+            <Toggle v-admin-read-only-control :modelValue="row.enabled" @update:modelValue="toggleEnabled(row)" />
           </template>
 
           <template #cell-actions="{ row }">

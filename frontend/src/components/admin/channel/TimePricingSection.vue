@@ -101,7 +101,7 @@
             @blur="formatMultiplier(index, ($event.target as HTMLInputElement).value)"
           />
         </div>
-        <button
+        <button v-admin-write
           type="button"
           class="flex h-8 w-8 items-center justify-center rounded text-gray-400 hover:text-red-500"
           :title="t('admin.channels.form.removeTimePeriod')"

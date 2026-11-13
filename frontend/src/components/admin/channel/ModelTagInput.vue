@@ -9,7 +9,7 @@
         :class="getPlatformTagClass(props.platform || '')"
       >
         {{ model }}
-        <button
+        <button v-admin-write
           type="button"
           @click="removeModel(idx)"
           class="ml-0.5 rounded-full p-0.5 hover:bg-primary-200 dark:hover:bg-primary-800"

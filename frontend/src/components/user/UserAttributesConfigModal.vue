@@ -6,7 +6,7 @@
         <p class="text-sm text-gray-500 dark:text-dark-400">
           {{ t('admin.users.attributes.description') }}
         </p>
-        <button @click="openCreateModal" class="btn btn-primary btn-sm">
+        <button v-admin-write @click="openCreateModal" class="btn btn-primary btn-sm">
           <Icon name="plus" size="sm" class="mr-1.5" :stroke-width="2" />
           {{ t('admin.users.attributes.addAttribute') }}
         </button>
@@ -68,14 +68,14 @@
 
           <!-- Actions -->
           <div class="flex items-center gap-1">
-            <button
+            <button v-admin-write
               @click="openEditModal(attr)"
               class="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               :title="t('common.edit')"
             >
               <Icon name="edit" size="sm" />
             </button>
-            <button
+            <button v-admin-write
               @click="confirmDelete(attr)"
               class="rounded-lg p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               :title="t('common.delete')"
@@ -103,7 +103,7 @@
     width="normal"
     @close="closeEditModal"
   >
-    <form id="attribute-form" @submit.prevent="handleSave" class="space-y-4">
+    <form v-admin-read-only-form id="attribute-form" @submit.prevent="handleSave" class="space-y-4">
       <!-- Key -->
       <div>
         <label class="input-label">{{ t('admin.users.attributes.key') }}</label>
@@ -158,7 +158,7 @@
             :placeholder="t('admin.users.attributes.optionLabel')"
             required
           />
-          <button
+          <button v-admin-write
             type="button"
             @click="removeOption(index)"
             class="rounded-lg p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600"
@@ -212,7 +212,7 @@
         <button @click="closeEditModal" type="button" class="btn btn-secondary">
           {{ t('common.cancel') }}
         </button>
-        <button type="submit" form="attribute-form" :disabled="saving" class="btn btn-primary">
+        <button v-admin-write type="submit" form="attribute-form" :disabled="saving" class="btn btn-primary">
           <svg v-if="saving" class="-ml-1 mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />

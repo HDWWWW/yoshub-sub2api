@@ -14,7 +14,7 @@
       </label>
       <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
       <p v-if="loading" class="text-sm text-gray-500">{{ t('common.loading') }}</p>
-      <form v-if="draft && view" class="space-y-5" @submit.prevent="save">
+      <form v-admin-read-only-form v-if="draft && view" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="saving || loading || testing" class="space-y-5">
           <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
             <input v-model="draft.enabled" data-testid="risk-enabled" type="checkbox" class="rounded" />
@@ -87,7 +87,7 @@
             <h3 class="text-sm font-semibold">{{ t('accountRisk.manualTitle') }}</h3>
             <p class="text-xs text-gray-500">{{ t('accountRisk.manualHint') }}</p>
             <label class="block"><span class="input-label">{{ t('accountRisk.manualAccount') }}</span><select v-model.number="testAccountID" class="input" data-testid="risk-test-account"><option :value="0" disabled>{{ t('accountRisk.chooseAccount') }}</option><option v-for="account in view.test_accounts || []" :key="account.id" :value="account.id">#{{ account.id }} {{ account.name }} · {{ account.schedulable ? t('accountRisk.schedulingOn') : t('accountRisk.schedulingOff') }}</option></select></label>
-            <button type="button" class="btn btn-secondary" data-testid="risk-test-now" :disabled="!valid || !testAccountID || testing" @click="testNow">{{ testing ? t('accountRisk.testing') : t('accountRisk.testNow') }}</button>
+            <button v-admin-write type="button" class="btn btn-secondary" data-testid="risk-test-now" :disabled="!valid || !testAccountID || testing" @click="testNow">{{ testing ? t('accountRisk.testing') : t('accountRisk.testNow') }}</button>
             <div v-if="testResult" role="status" data-testid="risk-test-result" class="space-y-2 text-sm">
               <p :class="testResult.matched === true ? 'text-green-600' : 'text-amber-600'">{{ testResult.message }}</p>
               <pre v-if="testResult.text" class="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 dark:bg-dark-700">{{ testResult.text }}</pre>
@@ -95,7 +95,7 @@
             </div>
           </section>
           <p class="text-xs text-gray-500">{{ t('accountRisk.stopHint') }}</p>
-          <button type="submit" class="btn btn-primary" data-testid="risk-save" :disabled="!valid">{{ t('common.save') }}</button>
+          <button v-admin-write type="submit" class="btn btn-primary" data-testid="risk-save" :disabled="!valid">{{ t('common.save') }}</button>
           <span v-if="saved" role="status" class="ml-3 text-sm text-green-600">{{ t('accountRisk.saved') }}</span>
         </fieldset>
         <section class="space-y-2 rounded-lg border border-gray-200 p-3 text-sm dark:border-dark-600">

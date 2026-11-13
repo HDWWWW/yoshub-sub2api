@@ -75,6 +75,12 @@ func (u *User) IsAdmin() bool {
 	return u.Role == RoleAdmin
 }
 
+// HasAdminAccess includes observers, without granting full administrator privileges.
+// Keep IsAdmin strict for API key ownership, MCP grants and privileged operations.
+func (u *User) HasAdminAccess() bool {
+	return u.IsAdmin() || u.Role == RoleReadOnlyAdmin
+}
+
 func (u *User) IsActive() bool {
 	return u.Status == StatusActive
 }

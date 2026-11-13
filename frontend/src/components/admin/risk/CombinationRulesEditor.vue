@@ -77,8 +77,8 @@ function exportRules() {
     <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ t('admin.riskControl.combination.hint') }}</p>
     <div class="flex flex-wrap items-center gap-2">
       <button type="button" class="btn btn-primary" :disabled="modelValue.length >= 100 || busy" data-test="add-rule" @click="addRule">{{ t('admin.riskControl.combination.add') }}</button>
-      <button type="button" class="btn btn-secondary" :disabled="busy" @click="importInput?.click()">{{ t('admin.riskControl.combination.import') }}</button>
-      <button type="button" class="btn btn-secondary" :disabled="!modelValue.length" @click="exportRules">{{ t('admin.riskControl.combination.export') }}</button>
+      <button v-admin-write type="button" class="btn btn-secondary" :disabled="busy" @click="importInput?.click()">{{ t('admin.riskControl.combination.import') }}</button>
+      <button v-admin-write type="button" class="btn btn-secondary" :disabled="!modelValue.length" @click="exportRules">{{ t('admin.riskControl.combination.export') }}</button>
       <input ref="importInput" type="file" accept=".json,application/json" class="hidden" @change="importRules" />
       <span class="text-sm text-gray-500">{{ modelValue.length }} / 100</span>
     </div>
@@ -87,8 +87,8 @@ function exportRules() {
       <div class="flex items-center justify-between gap-3">
         <span class="min-w-0 break-words font-semibold">{{ rule.name || t('admin.riskControl.combination.unnamed') }}</span>
         <div class="flex shrink-0 items-center gap-3">
-          <Toggle :model-value="rule.enabled" :aria-label="t('admin.riskControl.combination.enabled')" @update:model-value="update(index, { enabled: $event })" />
-          <button type="button" class="text-sm text-red-600 hover:underline" data-test="remove-rule" @click="emit('update:modelValue', modelValue.filter((_, i) => i !== index))">{{ t('common.delete') }}</button>
+          <Toggle v-admin-read-only-control :model-value="rule.enabled" :aria-label="t('admin.riskControl.combination.enabled')" @update:model-value="update(index, { enabled: $event })" />
+          <button v-admin-write type="button" class="text-sm text-red-600 hover:underline" data-test="remove-rule" @click="emit('update:modelValue', modelValue.filter((_, i) => i !== index))">{{ t('common.delete') }}</button>
         </div>
       </div>
       <div class="grid gap-4 sm:grid-cols-2">
@@ -99,12 +99,12 @@ function exportRules() {
       </div>
       <div class="grid gap-3 sm:grid-cols-2">
         <div v-for="(group, groupIndex) in rule.groups" :key="groupIndex" class="space-y-2 rounded-lg bg-gray-50 p-3 dark:bg-dark-800" data-test="rule-group">
-          <div class="flex items-center justify-between"><span class="text-xs text-gray-500">{{ t('admin.riskControl.combination.group', { n: groupIndex + 1 }) }}</span><button type="button" class="text-xs text-red-600 disabled:opacity-40" :disabled="rule.groups.length <= 2" @click="update(index, { groups: rule.groups.filter((_, i) => i !== groupIndex) })">{{ t('common.delete') }}</button></div>
+          <div class="flex items-center justify-between"><span class="text-xs text-gray-500">{{ t('admin.riskControl.combination.group', { n: groupIndex + 1 }) }}</span><button v-admin-write type="button" class="text-xs text-red-600 disabled:opacity-40" :disabled="rule.groups.length <= 2" @click="update(index, { groups: rule.groups.filter((_, i) => i !== groupIndex) })">{{ t('common.delete') }}</button></div>
           <label class="block"><span class="sr-only">{{ t('admin.riskControl.combination.groupName') }}</span><input :value="group.name" :placeholder="t('admin.riskControl.combination.groupName')" maxlength="80" class="input" data-test="group-name" @input="updateGroup(index, groupIndex, { name: field($event) })" /></label>
           <label class="block"><span class="sr-only">{{ t('admin.riskControl.combination.words') }}</span><textarea :value="group.keywords.join('\n')" :placeholder="t('admin.riskControl.combination.words')" rows="5" class="input resize-y text-sm" data-test="group-words" @input="updateGroup(index, groupIndex, { keywords: field($event).split(/\r?\n/) })"></textarea></label>
         </div>
       </div>
-      <button type="button" class="btn btn-secondary text-sm" :disabled="rule.groups.length >= 8" data-test="add-group" @click="update(index, { groups: [...rule.groups, { name: '', keywords: [] }] })">{{ t('admin.riskControl.combination.addGroup') }}</button>
+      <button v-admin-write type="button" class="btn btn-secondary text-sm" :disabled="rule.groups.length >= 8" data-test="add-group" @click="update(index, { groups: [...rule.groups, { name: '', keywords: [] }] })">{{ t('admin.riskControl.combination.addGroup') }}</button>
       <p class="break-all text-xs text-gray-400">ID: {{ rule.id }}</p>
     </section>
     <div class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-600">

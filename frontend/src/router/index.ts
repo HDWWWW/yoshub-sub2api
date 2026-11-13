@@ -4,6 +4,7 @@
  */
 
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { readOnlyAdminPageAllowed } from '@/utils/adminPermissions'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
@@ -611,7 +612,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin/settings',
     name: 'AdminSettings',
-    component: () => import('@/views/admin/SettingsView.vue'),
+    component: () => import('@/views/admin/SettingsEntryView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
@@ -915,6 +916,11 @@ router.beforeEach(async (to, _from, next) => {
       path: '/login',
       query: { redirect: to.fullPath } // Save intended destination
     })
+    return
+  }
+
+  if (authStore.isReadOnlyAdmin && !readOnlyAdminPageAllowed(to.path)) {
+    next('/admin/accounts')
     return
   }
 

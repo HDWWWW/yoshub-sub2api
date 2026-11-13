@@ -159,7 +159,7 @@
             >
               <Icon name="questionCircle" size="md" />
             </button>
-            <button @click="showAssignModal = true" class="btn btn-primary">
+            <button v-admin-write @click="showAssignModal = true" class="btn btn-primary">
               <Icon name="plus" size="md" class="mr-2" />
               {{ t('admin.subscriptions.assignSubscription') }}
             </button>
@@ -174,7 +174,7 @@
             <span class="mr-2 text-sm font-medium text-primary-800 dark:text-primary-200">
               {{ t('admin.subscriptions.bulk.selected', { count: selectedCount }) }}
             </span>
-            <button
+            <button v-admin-write
               v-for="action in bulkActions"
               :key="action"
               type="button"
@@ -418,7 +418,7 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button
+              <button v-admin-write
                 v-if="row.status === 'active' || row.status === 'expired'"
                 @click="handleExtend(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
@@ -426,7 +426,7 @@
                 <Icon name="calendar" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.adjust') }}</span>
               </button>
-              <button
+              <button v-admin-write
                 v-if="row.status === 'active'"
                 @click="handleResetQuota(row)"
                 :disabled="resettingQuota && resettingSubscription?.id === row.id"
@@ -435,7 +435,7 @@
                 <Icon name="refresh" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.resetQuota') }}</span>
               </button>
-              <button
+              <button v-admin-write
                 v-if="row.status === 'active'"
                 @click="handleRevoke(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
@@ -443,7 +443,7 @@
                 <Icon name="ban" size="sm" />
                 <span class="text-xs">{{ t('admin.subscriptions.revoke') }}</span>
               </button>
-              <button
+              <button v-admin-write
                 v-if="row.status === 'revoked'"
                 @click="handleRestore(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
@@ -496,7 +496,7 @@
       :close-on-escape="!submitting"
       @close="closeAssignModal"
     >
-      <form
+      <form v-admin-read-only-form
         id="assign-subscription-form"
         @submit.prevent="handleAssignSubscription"
         class="space-y-5"
@@ -563,7 +563,7 @@
             <ul class="max-h-40 space-y-1 overflow-y-auto">
               <li v-for="user in assignUsers" :key="user.id" class="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-1 text-sm dark:bg-dark-700">
                 <span class="truncate">{{ user.email }} <span class="text-gray-500">#{{ user.id }}</span></span>
-                <button
+                <button v-admin-write
                   type="button"
                   :disabled="submitting"
                   :aria-label="t('admin.subscriptions.batchAssign.removeUser', { email: user.email })"
@@ -624,7 +624,7 @@
           <button @click="closeAssignModal" type="button" :disabled="submitting" class="btn btn-secondary">
             {{ batchAssignResult ? t('common.close') : t('common.cancel') }}
           </button>
-          <button
+          <button v-admin-write
             type="submit"
             form="assign-subscription-form"
             :disabled="submitting || (batchAssignEnabled && assignUsers.length === 0)"
@@ -663,7 +663,7 @@
       width="narrow"
       @close="closeExtendModal"
     >
-      <form
+      <form v-admin-read-only-form
         v-if="extendingSubscription"
         id="extend-subscription-form"
         @submit.prevent="handleExtendSubscription"
@@ -712,7 +712,7 @@
           <button @click="closeExtendModal" type="button" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
-          <button
+          <button v-admin-write
             type="submit"
             form="extend-subscription-form"
             :disabled="submitting"

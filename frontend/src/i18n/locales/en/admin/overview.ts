@@ -528,6 +528,7 @@ export default {
       deleteConfirmMessage: "Are you sure you want to delete user '{email}'? This action cannot be undone.",
       searchPlaceholder: 'Search by email, username, notes, or API key...',
       searchUsers: 'Search by email, username, notes, or API key',
+      searchUsersReadOnly: 'Search by email, username, or notes',
       roleFilter: 'Role Filter',
       allRoles: 'All Roles',
       allStatus: 'All Status',
@@ -741,9 +742,12 @@ export default {
       createdAt: 'Created',
       totalRecharged: 'Total Recharged',
       roles: {
+        // Ordinary administrators can inspect native pages without changing them.
         admin: 'Admin',
+        admin_readonly: 'Administrator (read only)',
         user: 'User'
       },
+      readOnlyNotice: 'Read-only administrator: configuration changes, credentials and restricted features are unavailable.',
       // Settings Dropdowns
       filterSettings: 'Filter Settings',
       columnSettings: 'Column Settings',

@@ -16,7 +16,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="flex items-center gap-1.5">
-    <button
+    <button v-admin-write
       type="button"
       @click="emit('update:enabled', !enabled)"
       :class="[

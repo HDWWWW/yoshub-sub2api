@@ -5,7 +5,7 @@
     width="normal"
     @close="emit('close')"
   >
-    <form id="bulk-edit-user-limits-form" class="space-y-5" @submit.prevent="handleSubmit">
+    <form v-admin-read-only-form id="bulk-edit-user-limits-form" class="space-y-5" @submit.prevent="handleSubmit">
       <p class="text-sm font-medium text-gray-700 dark:text-gray-300">
         {{ t('admin.users.bulkLimits.selectedCount', { count: selectedIds.length }) }}
       </p>
@@ -16,7 +16,7 @@
             <label for="bulk-concurrency" class="input-label mb-0">
               {{ t('admin.users.columns.concurrency') }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               v-model="enableConcurrency"
               :aria-label="t('admin.users.bulkLimits.enableConcurrency')"
               data-test="enable-concurrency"
@@ -39,7 +39,7 @@
             <label for="bulk-rpm-limit" class="input-label mb-0">
               {{ t('admin.users.form.rpmLimit') }}
             </label>
-            <Toggle
+            <Toggle v-admin-read-only-control
               v-model="enableRPMLimit"
               :aria-label="t('admin.users.bulkLimits.enableRPMLimit')"
               data-test="enable-rpm-limit"
@@ -75,7 +75,7 @@
         <button type="button" class="btn btn-secondary" @click="emit('close')">
           {{ t('common.cancel') }}
         </button>
-        <button
+        <button v-admin-write
           type="submit"
           form="bulk-edit-user-limits-form"
           class="btn btn-primary"

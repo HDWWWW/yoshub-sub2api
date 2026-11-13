@@ -5,7 +5,7 @@
     width="wide"
     @close="$emit('close')"
   >
-    <form id="channel-monitor-form" @submit.prevent="handleSubmit" class="space-y-5">
+    <form v-admin-read-only-form id="channel-monitor-form" @submit.prevent="handleSubmit" class="space-y-5">
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.name') }} <span class="text-red-500">*</span></label>
         <input v-model="form.name" type="text" required class="input" :placeholder="t('admin.channelMonitor.form.namePlaceholder')" />
@@ -167,7 +167,7 @@
 
       <div class="flex items-center justify-between">
         <label class="input-label mb-0">{{ t('admin.channelMonitor.form.enabled') }}</label>
-        <Toggle v-model="form.enabled" />
+        <Toggle v-admin-read-only-control v-model="form.enabled" />
       </div>
 
       <!-- 高级设置区：请求模板 + 自定义 headers/body（仅探活模式有意义） -->
@@ -207,7 +207,7 @@
         <button @click="$emit('close')" type="button" class="btn btn-secondary">
           {{ t('common.cancel') }}
         </button>
-        <button
+        <button v-admin-write
           type="submit"
           form="channel-monitor-form"
           :disabled="submitting"

@@ -92,14 +92,14 @@
           </div>
           <div class="flex items-end">
             <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-              <Toggle v-model="newPlan.enabled" />
+              <Toggle v-admin-read-only-control v-model="newPlan.enabled" />
               {{ t('admin.scheduledTests.enabled') }}
             </label>
           </div>
           <div class="flex items-end">
             <div>
               <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                <Toggle v-model="newPlan.auto_recover" />
+                <Toggle v-admin-read-only-control v-model="newPlan.auto_recover" />
                 {{ t('admin.scheduledTests.autoRecover') }}
               </label>
               <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
@@ -124,7 +124,7 @@
           >
             {{ t('common.cancel') }}
           </button>
-          <button
+          <button v-admin-write
             @click="handleCreate"
             :disabled="!newPlan.model_id || !newPlan.cron_expression || creating"
             class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
@@ -177,7 +177,7 @@
 
               <!-- Enabled Toggle -->
               <div class="flex items-center gap-1.5" @click.stop>
-                <Toggle
+                <Toggle v-admin-read-only-control
                   :model-value="plan.enabled"
                   @update:model-value="(val: boolean) => handleToggleEnabled(plan, val)"
                 />
@@ -210,14 +210,14 @@
 
               <!-- Actions -->
               <div class="flex items-center gap-1" @click.stop>
-                <button
+                <button v-admin-write
                   @click="startEdit(plan)"
                   class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-900/20"
                   :title="t('admin.scheduledTests.editPlan')"
                 >
                   <Icon name="edit" size="sm" :stroke-width="2" />
                 </button>
-                <button
+                <button v-admin-write
                   @click="confirmDeletePlan(plan)"
                   class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
                   :title="t('admin.scheduledTests.deletePlan')"
@@ -311,14 +311,14 @@
               </div>
               <div class="flex items-end">
                 <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                  <Toggle v-model="editForm.enabled" />
+                  <Toggle v-admin-read-only-control v-model="editForm.enabled" />
                   {{ t('admin.scheduledTests.enabled') }}
                 </label>
               </div>
               <div class="flex items-end">
                 <div>
                   <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                    <Toggle v-model="editForm.auto_recover" />
+                    <Toggle v-admin-read-only-control v-model="editForm.auto_recover" />
                     {{ t('admin.scheduledTests.autoRecover') }}
                   </label>
                   <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
@@ -343,7 +343,7 @@
               >
                 {{ t('common.cancel') }}
               </button>
-              <button
+              <button v-admin-write
                 @click="handleEdit"
                 :disabled="!editForm.model_id || !editForm.cron_expression || updating"
                 class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
