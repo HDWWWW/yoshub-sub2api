@@ -208,8 +208,8 @@ func TestSmartWS_BareErrorAndTailRetainUsageAndResponseIdentity(t *testing.T) {
 	}
 }
 
-// Regression contract: an uncertain dispatch must never be automatically replayed.
-func TestSmartWS_DispatchedDisconnectNeverReplays(t *testing.T) {
+// Converted chat and buffered Responses retain their no-replay contract.
+func TestSmartWS_ProtectedDisconnectNeverReplays(t *testing.T) {
 	for _, chat := range []bool{false, true} {
 		name := "responses"
 		if chat {
@@ -229,12 +229,16 @@ func TestSmartWS_DispatchedDisconnectNeverReplays(t *testing.T) {
 				// The upstream definitely received the request, then disconnected
 				// without acknowledging whether generation or tools were started.
 			})
-			c, rec := forcedWSContext(t, "/v1/responses", 1, "audit-thread")
+			path := "/v1/responses"
+			if chat {
+				path = "/v1/chat/completions"
+			}
+			c, rec := forcedWSContext(t, path, 1, "audit-thread")
 			var err error
 			if chat {
 				_, err = s.ForwardAsChatCompletions(c.Request.Context(), c, a, []byte(`{"model":"gpt-5.1","stream":true,"messages":[{"role":"user","content":"hello"}]}`), "", "")
 			} else {
-				_, err = s.Forward(c.Request.Context(), c, a, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+				_, err = s.Forward(c.Request.Context(), c, a, []byte(`{"model":"gpt-5.1","stream":false,"input":"hello"}`))
 			}
 			require.Error(t, err)
 			require.EqualValues(t, 1, received.Load())
@@ -245,6 +249,91 @@ func TestSmartWS_DispatchedDisconnectNeverReplays(t *testing.T) {
 			require.Equal(t, smartWSUncertainCode, gjson.Get(rec.Body.String(), "error.code").String())
 			require.Contains(t, rec.Body.String(), "may have been executed")
 			require.True(t, SmartWSFailureDelivered(c))
+		})
+	}
+}
+
+func TestSmartWSHTTPPreOutputDisconnectRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		frames []string
+		retry  bool
+	}{
+		{"before_ack", nil, true},
+		{"metadata", []string{`{"type":"response.created","response":{"id":"failed_attempt","status":"in_progress","output":[],"usage":null}}`, `{"type":"codex.response.metadata","metadata":{}}`}, true},
+		{"oauth_metadata", []string{`{"type":"response.created","response":{"id":"failed_attempt","status":"in_progress","output":[],"usage":null}}`, `{"type":"codex.response.metadata","metadata":{}}`}, true},
+		{"empty_message", []string{forcedWSCreated, `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","content":[]}}`}, true},
+		{"tool_started", []string{forcedWSCreated, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"run","arguments":""}}`}, false},
+		{"observed_usage", []string{forcedWSCreated, `{"type":"response.metadata","response":{"id":"resp_force","usage":{"input_tokens":9,"output_tokens":2}}}`}, false},
+		{"zero_usage", []string{forcedWSCreated, `{"type":"response.metadata","response":{"id":"resp_force","usage":{"input_tokens":0,"output_tokens":0}}}`}, false},
+		{"invalid_event", []string{forcedWSCreated, `{"type":"not a valid event"}`}, false},
+		{"invalid_frame", []string{forcedWSCreated}, false},
+		{"policy_close", []string{forcedWSCreated}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			svc, account, transport := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+				conn, err := forcedWSUpgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+				frames := tc.frames
+				if attempts.Add(1) > 1 {
+					frames = []string{forcedWSCreated, forcedWSCompleted}
+				}
+				for _, frame := range frames {
+					if conn.WriteMessage(websocket.TextMessage, []byte(frame)) != nil {
+						return
+					}
+				}
+				switch tc.name {
+				case "invalid_frame":
+					_, _ = conn.UnderlyingConn().Write([]byte{0xc1, 0x00}) // invalid RSV1 bit
+				case "policy_close":
+					_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "rejected"))
+				}
+			})
+			if tc.name == "oauth_metadata" {
+				account.Type = AccountTypeOAuth
+				account.Credentials["access_token"] = "test-oauth-token"
+			}
+			c, rec := forcedWSContext(t, "/v1/responses", 1, "pre-output-recovery")
+			// Simulate the already delivered happy notification using the same
+			// byte accounting as production; it must survive account retries once.
+			const notification = "data: {\"type\":\"gateway.status.delta\",\"delta\":\"upstream_connected\",\"metadata\":{\"gateway_status\":\"upstream_connected\"}}\n\n"
+			n, err := c.Writer.WriteString(notification)
+			require.NoError(t, err)
+			recordOpenAIStreamKeepaliveBytes(c, n)
+			body := []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`)
+			result, err := svc.Forward(c.Request.Context(), c, account, body)
+			var failure *UpstreamFailoverError
+			require.ErrorAs(t, err, &failure)
+			require.Equal(t, tc.retry, failure.ShouldRetryNextAccount())
+			require.EqualValues(t, 1, attempts.Load(), "transport itself must never replay")
+			require.Zero(t, transport.callCount)
+			if !tc.retry {
+				require.True(t, SmartWSFailureDelivered(c))
+				if tc.name == "observed_usage" {
+					require.NotNil(t, result)
+					require.Equal(t, 9, result.Usage.InputTokens)
+				}
+				return
+			}
+			require.True(t, failure.RetryableOnSameAccount)
+			require.False(t, SmartWSFailureDelivered(c))
+			require.Equal(t, notification, rec.Body.String(), "failed attempt must not reach the client")
+			result, err = svc.Forward(c.Request.Context(), c, account, body)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, 7, result.Usage.OutputTokens)
+			require.EqualValues(t, 2, attempts.Load())
+			require.NotContains(t, rec.Body.String(), "failed_attempt")
+			require.NotContains(t, rec.Body.String(), smartWSUncertainCode)
+			require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.completed"`))
 		})
 	}
 }

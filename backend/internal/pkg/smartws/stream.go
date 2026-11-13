@@ -52,7 +52,7 @@ func (b *eventBody) Close() error {
 	})
 	return nil
 }
-func (b *eventBody) failure(reason string) (int, error) {
+func (b *eventBody) failure(reason string, transportFailure bool) (int, error) {
 	if err := b.ctx.Err(); err != nil {
 		_ = b.Close()
 		b.pool.count("cancelled")
@@ -94,7 +94,7 @@ func (b *eventBody) failure(reason string) (int, error) {
 	b.pool.count("stream_failure_" + code)
 
 	_ = b.Close()
-	return 0, &SentError{Err: errors.New(reason)}
+	return 0, &SentError{Err: errors.New(reason), TransportFailure: transportFailure}
 }
 func (b *eventBody) Read(destination []byte) (int, error) {
 	if len(destination) == 0 {
@@ -134,7 +134,7 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 			timer.Stop()
 		}
 		if timedOut {
-			return b.failure("upstream read timeout")
+			return b.failure("upstream read timeout", true)
 		}
 
 		if next.err != nil {
@@ -163,10 +163,10 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 			} else if errors.Is(next.err, websocket.ErrReadLimit) {
 				b.pool.count("socket_frame_limit")
 			}
-			return b.failure("upstream connection interrupted or invalid")
+			return b.failure("upstream connection interrupted or invalid", isTransportFailure(next.err))
 		}
 		if validateJSON(next.data) != nil {
-			return b.failure("invalid upstream JSON event")
+			return b.failure("invalid upstream JSON event", false)
 		}
 		var event struct {
 			Type       string `json:"type"`
@@ -177,12 +177,12 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 			} `json:"response"`
 		}
 		if json.Unmarshal(next.data, &event) != nil || !eventTypePattern.MatchString(event.Type) {
-			return b.failure("invalid upstream event type")
+			return b.failure("invalid upstream event type", false)
 		}
 		id := event.ResponseID
 		if event.Response != nil && event.Response.ID != "" {
 			if id != "" && id != event.Response.ID {
-				return b.failure("conflicting upstream response IDs")
+				return b.failure("conflicting upstream response IDs", false)
 			}
 			id = event.Response.ID
 		}
@@ -191,13 +191,13 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 		b.mu.Unlock()
 		if event.Type == "response.created" || (current == "" && event.Type == "response.in_progress" && id != "") {
 			if current != "" || id == "" {
-				return b.failure("unexpected upstream response.created")
+				return b.failure("unexpected upstream response.created", false)
 			}
 			b.pool.mu.Lock()
 			last := b.connection.lastResponseID
 			b.pool.mu.Unlock()
 			if id == last {
-				return b.failure("stale upstream response")
+				return b.failure("stale upstream response", false)
 			}
 			b.mu.Lock()
 			b.responseID = id
@@ -209,24 +209,24 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 			last := b.connection.lastResponseID
 			b.pool.mu.Unlock()
 			if id == last {
-				return b.failure("stale upstream response")
+				return b.failure("stale upstream response", false)
 			}
 			b.mu.Lock()
 			b.responseID = id
 			b.mu.Unlock()
 			current = id
 		} else if current == "" && event.Type != "error" && event.Type != "response.failed" && !isControlEvent(event.Type) {
-			return b.failure("upstream event before response.created")
+			return b.failure("upstream event before response.created", false)
 		}
 		if current != "" && id != "" && id != current {
-			return b.failure("upstream response ID mismatch")
+			return b.failure("upstream response ID mismatch", false)
 		}
 		terminal, success := false, false
 		switch event.Type {
 		case "response.completed", "response.done":
 			terminal = true
 			if event.Response == nil || event.Response.ID == "" || event.Response.ID != current || event.Response.Status != "completed" {
-				return b.failure("invalid completed response")
+				return b.failure("invalid completed response", false)
 			}
 			success = true
 		case "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":

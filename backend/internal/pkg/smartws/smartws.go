@@ -24,11 +24,30 @@ import (
 
 // SentError means a generation may have reached upstream. Callers must not replay
 // this request merely because no response bytes have reached the client yet.
-type SentError struct{ Err error }
+type SentError struct {
+	Err error
+	// TransportFailure distinguishes a dropped connection from a protocol,
+	// policy or frame-limit failure. It does not authorize replay by itself.
+	TransportFailure bool
+}
 
 func (e *SentError) Error() string     { return "smart WS request possibly dispatched: " + e.Err.Error() }
 func (e *SentError) Unwrap() error     { return e.Err }
 func (e *SentError) RequestSent() bool { return true }
+
+func isTransportFailure(err error) bool {
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		switch closeErr.Code {
+		case 1000, 1001, 1006, 1011, 1012, 1013:
+			return true
+		default:
+			return false
+		}
+	}
+	var networkErr net.Error
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &networkErr)
+}
 
 // Keep King's 16 MiB request ceiling. Check both original body and encoded
 // wire message; this local bound is not an upstream capacity guarantee.
@@ -613,7 +632,7 @@ func (p *Pool) TryWithOptions(req *http.Request, proxyURL, scope string, opts Op
 	if err != nil {
 		p.count("dispatch_uncertain")
 		p.release(c, l, false, "")
-		return nil, true, &SentError{Err: errors.New("upstream write interrupted")}
+		return nil, true, &SentError{Err: errors.New("upstream write interrupted"), TransportFailure: isTransportFailure(err)}
 	}
 	p.count("dispatched")
 	body := newEventBody(req.Context(), p, c, l)

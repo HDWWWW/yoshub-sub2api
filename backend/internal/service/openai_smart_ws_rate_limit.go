@@ -9,12 +9,29 @@ import (
 )
 
 // A confirmed rejection is distinct from both an unsent request and an
-// uncertain dispatch. Only this proof can reopen the gateway's retry policy.
+// uncertain dispatch. Native WS recovery still requires this proof.
 const smartWSRejected int32 = -1
 
 func (d *smartWSDispatch) observe(c *gin.Context, payload []byte) {
 	if d == nil || len(payload) == 0 {
 		return
+	}
+	// Observe every frame, including those after response.created established
+	// acceptance. Empty message/reasoning scaffolding is still pre-output;
+	// tool starts, opaque content and any usage object must prevent replay.
+	typ := gjson.GetBytes(payload, "type").String()
+	if d.httpPreOutputRecovery && !d.replayUnsafe.Load() {
+		if gjson.GetBytes(payload, "response.usage").IsObject() || gjson.GetBytes(payload, "usage").IsObject() ||
+			gjson.GetBytes(payload, "response.output.#").Int() > 0 || gjson.GetBytes(payload, "output.#").Int() > 0 ||
+			openAIStreamDataStartsClientOutput(string(payload), typ) {
+			d.replayUnsafe.Store(true)
+		}
+		if typ == "response.output_item.added" {
+			itemType := gjson.GetBytes(payload, "item.type").String()
+			if itemType != "message" && itemType != "reasoning" {
+				d.replayUnsafe.Store(true)
+			}
+		}
 	}
 	var usage OpenAIUsage
 	parseOpenAIWSResponseUsageFromCompletedEvent(payload, &usage)
@@ -32,7 +49,6 @@ func (d *smartWSDispatch) observe(c *gin.Context, payload []byte) {
 	if d.accepted.Load() {
 		return
 	}
-	typ := gjson.GetBytes(payload, "type").String()
 	if (typ == "error" || typ == "response.failed") && !smartWSIsExplicitRateLimit(payload) {
 		d.accepted.Store(true)
 	}

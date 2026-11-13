@@ -65,7 +65,16 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 			rememberSmartWSHTTPFailure(c, response.Header, raw, first, tail, observation.start)
 			return first
 		},
-		OnDispatch: func() { observation.dispatched = true; dispatch.state.Store(smartWSMayBeSent) },
+		OnDispatch: func() {
+			observation.dispatched = true
+			// Only complete streaming HTTP Responses requests can recover here.
+			// Native WS, converters, HTTP fallback and continuations keep their
+			// existing no-replay rules even if nothing reached the client.
+			dispatch.httpPreOutputRecovery = c.Request.Method == http.MethodPost &&
+				strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses") &&
+				gjson.GetBytes(raw, "stream").Bool() && gjson.GetBytes(raw, "previous_response_id").String() == ""
+			dispatch.state.Store(smartWSMayBeSent)
+		},
 		OnEvent: func(payload []byte) {
 			dispatch.observe(c, payload)
 			observation.event(payload)
@@ -82,6 +91,7 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		},
 	})
 	if err != nil {
+		dispatch.observeReadError(err)
 		return response, handled, smartWSUncertainError(err)
 	}
 	if !handled {
@@ -108,6 +118,7 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 				payload = append(payload, []byte(strings.TrimSpace(strings.TrimPrefix(line, "data: ")))...)
 			}
 			if readErr != nil {
+				dispatch.observeReadError(readErr)
 				_ = source.Close()
 				return nil, true, smartWSUncertainError(readErr)
 			}
@@ -124,7 +135,7 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 			_ = source.Close()
 			return openAIHTTPWSErrorResponse(copyReq, openAIHTTPWSEventErrorStatus(payload), response.Header, payload), true, nil
 		}
-		response.Body = &smartWSPrefixedBody{Reader: io.MultiReader(bytes.NewReader(first.Bytes()), reader), Closer: source}
+		response.Body = &smartWSPrefixedBody{Reader: io.MultiReader(bytes.NewReader(first.Bytes()), reader), Closer: source, dispatch: dispatch}
 	} else if response != nil && response.StatusCode >= 400 {
 		// This is an explicit handshake rejection, before generation dispatch.
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
@@ -149,4 +160,11 @@ func (s *OpenAIGatewayService) independentSmartWSStats() map[string]any {
 type smartWSPrefixedBody struct {
 	io.Reader
 	io.Closer
+	dispatch *smartWSDispatch
+}
+
+func (b *smartWSPrefixedBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	b.dispatch.observeReadError(err)
+	return n, err
 }

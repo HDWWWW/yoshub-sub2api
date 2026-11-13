@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/smartws"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -329,6 +330,17 @@ type smartWSDispatch struct {
 	state    atomic.Int32
 	accepted atomic.Bool
 	policy   atomic.Pointer[[]byte]
+	// Set at HTTP dispatch; observations stay sticky until the next attempt.
+	httpPreOutputRecovery bool
+	transportFailure      atomic.Bool
+	replayUnsafe          atomic.Bool
+}
+
+func (d *smartWSDispatch) observeReadError(err error) {
+	var sent *smartws.SentError
+	if d != nil && errors.As(err, &sent) && sent.TransportFailure {
+		d.transportFailure.Store(true)
+	}
 }
 
 const (
@@ -337,6 +349,10 @@ const (
 	smartWSReceived
 	smartWSTerminal
 )
+
+// The failed attempt has been handed back to the HTTP retry owner. Do not let
+// its dispatch state rewrite errors raised before the next attempt dispatches.
+const smartWSHTTPRetryable int32 = -2
 
 func beginSmartWSDispatch(c *gin.Context) *smartWSDispatch {
 	d := &smartWSDispatch{}
@@ -374,12 +390,40 @@ func smartWSOutcomeUncertain(c *gin.Context) bool {
 	return state >= smartWSMayBeSent && state < smartWSTerminal
 }
 
-// Generic failover formatting hides whether generation may already have begun.
-// Deliver an explicit non-replay outcome while retaining any observed usage.
+// A transport interruption before output is recoverable by the HTTP handler's
+// existing bounded retry policy. This cannot prove that upstream did no work:
+// never extend it to observed usage/tools, explicit refusals or continuations.
+func smartWSCanRetryHTTPBeforeOutput(c *gin.Context) bool {
+	if !smartWSOutcomeUncertain(c) || SmartWSFailureDelivered(c) || c.Request.Context().Err() != nil ||
+		GetOpsCyberPolicy(c) != nil || openAIStreamClientOutputStarted(c, false) {
+		return false
+	}
+	v, _ := c.Get(smartWSDispatchKey)
+	d, _ := v.(*smartWSDispatch)
+	return d != nil && d.httpPreOutputRecovery && d.transportFailure.Load() && !d.replayUnsafe.Load() && d.policy.Load() == nil
+}
+
+// Recover eligible pre-output transport failures without writing to the client.
+// Other uncertain outcomes remain explicit and retain any observed usage.
 func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult, err error) (*OpenAIForwardResult, error) {
 	if err == nil || !smartWSOutcomeUncertain(c) || SmartWSFailureDelivered(c) ||
 		c.Request.Context().Err() != nil || (result != nil && result.ClientDisconnect) {
 		return result, err
+	}
+	if smartWSCanRetryHTTPBeforeOutput(c) && (result == nil || (!openAIUsageHasTokens(&result.Usage) && result.ImageCount == 0)) {
+		const message = "Upstream connection ended before model output"
+		payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "code": "upstream_stream_disconnected", "message": message}})
+		setOpsUpstreamError(c, http.StatusBadGateway, message, "")
+		failure := &UpstreamFailoverError{}
+		var previous *UpstreamFailoverError
+		if errors.As(err, &previous) {
+			*failure = *previous
+		}
+		failure.StatusCode, failure.ResponseBody = http.StatusBadGateway, payload
+		failure.NextAccountAction, failure.RetryableOnSameAccount = NextAccountRetry, true
+		v, _ := c.Get(smartWSDispatchKey)
+		v.(*smartWSDispatch).state.Store(smartWSHTTPRetryable)
+		return result, failure
 	}
 	payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "code": smartWSUncertainCode, "message": smartWSUncertainMessage}})
 	setOpsUpstreamError(c, http.StatusBadGateway, smartWSUncertainMessage, "")
@@ -403,8 +447,8 @@ func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult
 }
 
 // Also applied at the public forward boundary, so stream, timeout, conversion
-// and account retry paths cannot accidentally turn an uncertain dispatch into
-// an automatic replay. It intentionally retains observed usage in the result.
+// and account retry paths cannot replay an uncertain dispatch unless the HTTP
+// pre-output policy explicitly handed it back. Observed usage stays in result.
 func stopSmartWSReplay(c *gin.Context, err error) error {
 	if err == nil || !smartWSHasDispatched(c) {
 		return err
