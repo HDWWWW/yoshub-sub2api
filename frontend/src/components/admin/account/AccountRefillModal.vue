@@ -48,6 +48,16 @@
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryNotifyHint') }}</p>
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryHint') }}</p>
             </div>
+            <div v-if="form.fendudu_fallback" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="refill-fendudu-fallback">
+              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.fendudu_fallback.enabled" type="checkbox" data-testid="refill-fendudu-fallback-enabled" />{{ t('accountRefill.fallbackEnabled') }}</label>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <label class="block"><span class="input-label">{{ t('accountRefill.fallbackFailures') }}</span><input v-model.number="form.fendudu_fallback.failure_threshold" type="number" min="1" max="100" step="1" required class="input" data-testid="refill-fendudu-fallback-failures" /></label>
+                <label class="block"><span class="input-label">{{ t('accountRefill.fallbackMinutes') }}</span><input v-model.number="form.fendudu_fallback.timeout_minutes" type="number" min="1" max="1440" step="1" required class="input" data-testid="refill-fendudu-fallback-minutes" /></label>
+              </div>
+              <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.fallbackHint') }}</p>
+              <p v-if="!view.fendudu?.token_configured" class="text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.fallbackConnectionRequired') }}</p>
+              <p v-if="view.fendudu_fallback_status" class="text-xs text-gray-500" data-testid="refill-fendudu-fallback-status">{{ t('accountRefill.fallbackStatus', { count: view.fendudu_fallback_status.consecutive_failures }) }}<span v-if="view.fendudu_fallback_status.message"> · {{ view.fendudu_fallback_status.message }}</span></p>
+            </div>
             <div class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
               <div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">{{ t('accountRefill.dailyTasks') }}</span><button type="button" class="btn btn-secondary" :disabled="busy || (form.daily_schedules?.length || 0) >= 20" data-testid="refill-daily-add" @click="addDailySchedule">{{ t('accountRefill.dailyAdd') }}</button></div>
               <div v-for="(daily, index) in form.daily_schedules" :key="daily.id" class="space-y-3 border-t border-gray-100 pt-3 dark:border-dark-700" data-testid="refill-daily-row">
@@ -442,6 +452,7 @@ function accept(data: RefillView, reset: boolean) {
   data.config.timeout_retry_enabled ??= true
   data.config.timeout_retry_notify ??= true
   data.config.timeout_retry_minutes ??= 10
+  data.config.fendudu_fallback ??= { enabled: false, failure_threshold: 3, timeout_minutes: 5 }
   data.config.daily_schedules ??= data.config.daily_schedule ? [{ id: 'legacy', plan: '', ...data.config.daily_schedule }] : []
   for (const daily of data.config.daily_schedules) daily.day_mode ??= ''
   delete data.config.daily_schedule
@@ -513,6 +524,13 @@ function dailyStatus(id: string) {
 }
 async function save() {
   if (!form.value || busy.value || conflict.value) return
+  const fallback = form.value.fendudu_fallback
+  if (fallback && (!Number.isInteger(fallback.failure_threshold) || fallback.failure_threshold < 1 || fallback.failure_threshold > 100 || !Number.isInteger(fallback.timeout_minutes) || fallback.timeout_minutes < 1 || fallback.timeout_minutes > 1440)) {
+    error.value = t('accountRefill.fallbackInvalid'); activeTab.value = 'rules'; return
+  }
+  if (fallback?.enabled && !view.value?.fendudu?.token_configured) {
+    error.value = t('accountRefill.fallbackConnectionRequired'); activeTab.value = 'rules'; return
+  }
   if (!Number.isInteger(form.value.timeout_retry_minutes) || form.value.timeout_retry_minutes! < 1 || form.value.timeout_retry_minutes! > 1440) {
     error.value = t('accountRefill.timeoutRetryInvalid'); activeTab.value = 'rules'; return
   }

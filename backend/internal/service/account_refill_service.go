@@ -122,6 +122,7 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
+	FenduduFallbackStatus     AccountRefillFenduduFallbackStatus          `json:"fendudu_fallback_status"`
 	WorkdayCalendar           *AccountRefillCalendarView                  `json:"workday_calendar,omitempty"`
 	DailyScheduleStatuses     map[string]AccountRefillDailyScheduleStatus `json:"daily_schedule_statuses,omitempty"`
 	Fendudu                   FenduduRefillView                           `json:"fendudu"`
@@ -189,8 +190,9 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state), WorkdayCalendar: state.WorkdayCalendar.view(),
-		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),
-		ForecastObservation: s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
+		FenduduFallbackStatus: refillFenduduFallbackStatus(&state),
+		CapacityObservation:   s.capacityObservation(state.Config, state.Revision, time.Now()),
+		ForecastObservation:   s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
 }
 
 func saveRefillState(state *accountRefillState, save func(string) error) error {
@@ -379,6 +381,17 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 		if c.TimeoutRetryNotify == nil {
 			c.TimeoutRetryNotify = state.Config.TimeoutRetryNotify
 		}
+		if c.FenduduFallback == nil {
+			c.FenduduFallback = state.Config.FenduduFallback
+		}
+		if c.FenduduFallback.enabled() && state.Fendudu.EncryptedToken == "" {
+			return errors.New("启用备用补号前请先保存粉嘟嘟连接设置")
+		}
+		if c.FenduduFallback.enabled() && (!state.Config.FenduduFallback.enabled() || c.Enabled && !state.Config.Enabled) {
+			state.FenduduFallback.Since = time.Now()
+		}
+		state.FenduduFallback.NextAttemptAt = time.Time{}
+		state.FenduduFallback.Message = ""
 		if c.Delivery.SameAccountRetryCount == nil && state.Config.Delivery.SameAccountRetryCount != nil {
 			count := *state.Config.Delivery.SameAccountRetryCount
 			c.Delivery.SameAccountRetryCount = &count
@@ -516,7 +529,10 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			token, err = s.encryptor.Decrypt(state.EncryptedToken)
 			if err != nil {
 				state.Message = "密钥解密失败，请重新保存 API Key"
-				return persist()
+				if !state.Config.FenduduFallback.enabled() {
+					return persist()
+				}
+				token = ""
 			}
 		}
 		// Delivered manual orders still need lease updates when monitoring is off.
@@ -528,13 +544,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				}
 			}
 		}
-		if now.Before(state.ProviderRetryAt) {
-			if timeoutNotice != nil {
-				state.Message = "号商限流或暂不可用，等待退避结束后重试"
-			}
-			return nil
-		}
-		if !preview && token != "" {
+		if !preview && token != "" && !time.Now().Before(state.ProviderRetryAt) {
 			// Continue accepted work even when automation or its time window is off.
 			if index := nextAccountRefillJob(state.Jobs, state.Config, now); index >= 0 {
 				if err := s.advance(ctx, token, &state, &state.Jobs[index], persist); err != nil {
@@ -542,7 +552,17 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				}
 			}
 		}
+		// Reconcile the primary delivery first, then evaluate the backup even
+		// during primary backoff or a long normal monitoring interval.
+		if !preview {
+			if reserved, err := s.runFenduduFallback(ctx, &state, time.Now(), persist); err != nil || reserved {
+				return err
+			}
+		}
 		if time.Now().Before(state.ProviderRetryAt) {
+			if timeoutNotice != nil {
+				state.Message = "号商限流或暂不可用，等待退避结束后重试"
+			}
 			return nil
 		}
 		if !preview {

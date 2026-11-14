@@ -36,6 +36,7 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
+	FenduduFallback           *AccountRefillFenduduFallbackConfig    `json:"fendudu_fallback,omitempty"`
 	DailySchedules            []AccountRefillDailySchedule           `json:"daily_schedules"`
 	DailySchedule             *AccountRefillDailySchedule            `json:"daily_schedule,omitempty"`
 	TimeoutRetryEnabled       *bool                                  `json:"timeout_retry_enabled,omitempty"`
@@ -110,6 +111,9 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
+	if err := c.FenduduFallback.validate(); err != nil {
+		return err
+	}
 	if err := validateRefillDailySchedules(c); err != nil {
 		return err
 	}
@@ -199,6 +203,8 @@ func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {
 }
 
 type AccountRefillJob struct {
+	FenduduFallbackJobID   string                      `json:"fendudu_fallback_job_id,omitempty"`
+	FallbackForJobID       string                      `json:"fallback_for_job_id,omitempty"`
 	Provider               string                      `json:"provider,omitempty"`
 	FenduduConnectionID    string                      `json:"fendudu_connection_id,omitempty"`
 	SubmissionStartedAt    *time.Time                  `json:"submission_started_at,omitempty"`
@@ -293,6 +299,7 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
+	FenduduFallback       accountRefillFenduduFallbackState           `json:"fendudu_fallback"`
 	WorkdayCalendar       *refillWorkdayCalendar                      `json:"workday_calendar,omitempty"`
 	Fendudu               fenduduRefillState                          `json:"fendudu"`
 	DailyScheduleStatus   AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`

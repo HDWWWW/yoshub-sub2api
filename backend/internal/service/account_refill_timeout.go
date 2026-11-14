@@ -27,8 +27,8 @@ func refillTimeoutRetryDuration(c AccountRefillConfig) time.Duration {
 // cannot extend it. Ignore overdue orders only for demand and capacity, never
 // for reconciliation or financial reservations.
 func refillJobTimedOut(c AccountRefillConfig, job AccountRefillJob, now time.Time) bool {
-	return refillTimeoutRetryEnabled(c) && job.pending() && job.AccountID == 0 &&
-		!job.CreatedAt.IsZero() && !now.Before(job.CreatedAt.Add(refillTimeoutRetryDuration(c)))
+	return job.pending() && job.AccountID == 0 && (job.FenduduFallbackJobID != "" ||
+		refillTimeoutRetryEnabled(c) && !job.CreatedAt.IsZero() && !now.Before(job.CreatedAt.Add(refillTimeoutRetryDuration(c))))
 }
 
 func markRefillTimeouts(state *accountRefillState, now time.Time) bool {
@@ -58,7 +58,7 @@ func refillTimeoutCandidate(state *accountRefillState, jobs []AccountRefillJob, 
 	var candidate *AccountRefillJob
 	for i := range jobs {
 		j := &jobs[i]
-		if !j.pending() || j.AccountID != 0 || j.CreatedAt.IsZero() {
+		if !j.pending() || j.AccountID != 0 || j.CreatedAt.IsZero() || j.FenduduFallbackJobID != "" {
 			continue
 		}
 		if due := j.CreatedAt.Add(refillTimeoutRetryDuration(c)); due.After(deadline) {

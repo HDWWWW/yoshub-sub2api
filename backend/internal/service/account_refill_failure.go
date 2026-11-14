@@ -13,7 +13,7 @@ func refillImmediateFailureRetryEnabled(c AccountRefillConfig) bool {
 // A confirmed failure supplies the plan for an existing demand slot. It never
 // adds demand or submits from a second worker. Old terminal jobs are not replayed.
 func markRefillFailureReplacement(state *accountRefillState, job *AccountRefillJob) {
-	if job.ManualRequestID != "" || job.DailyBatchID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
+	if job.Provider != "" || job.FenduduFallbackJobID != "" || job.ManualRequestID != "" || job.DailyBatchID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
 		return
 	}
 	if job.TimeoutIgnoredAt != nil {

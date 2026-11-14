@@ -21,6 +21,7 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
+  fendudu_fallback?: { enabled: boolean; failure_threshold: number; timeout_minutes: number } | null
   daily_schedule?: { enabled: boolean; time: string; quantity: number; plan?: string; day_mode?: '' | 'china_workday' }
   daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string; day_mode?: '' | 'china_workday' }[] | null
 	rotation_enabled: boolean
@@ -106,6 +107,7 @@ export interface RefillCapacityObservation {
   no_capacity?: boolean
 }
 export interface RefillView {
+  fendudu_fallback_status?: { consecutive_failures: number; last_at: string | null; message: string }
   workday_calendar?: { years: number[]; synced_at: string; checked_at: string; message: string }
   fendudu?: { token_configured: boolean; connection_id: string; products: { product: string; label: string; available_now: number; blocked_reason: string; expired: boolean }[] | null; checked_at: string | null }
   daily_schedule_status?: { next_at: string; last_at: string; last_quantity: number; last_batch_id?: string; retry_at: string; message: string }

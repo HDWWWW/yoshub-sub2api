@@ -201,7 +201,8 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 		return persist()
 	}
 	j.Status, j.Error, j.FinishedAt = "imported", "", &now
-	state.Message = "粉嘟嘟账号已推入号池，并已应用本单保存的手动补号设置"
+	completeRefillExpiryDemand(state, *j)
+	state.Message = "粉嘟嘟账号已推入号池，并已应用本单保存的推送设置"
 	if err := s.notifyRefillImported(ctx, state, j, persist); err != nil {
 		return err
 	}
