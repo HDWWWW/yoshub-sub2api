@@ -182,11 +182,14 @@ func TestSmartWS_NonJSONHandshakeErrorIsPreserved(t *testing.T) {
 	})
 	c, recorder := forcedWSContext(t, "/v1/responses", 1, "non-json-error")
 	_, err := s.Forward(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
-	require.Error(t, err)
-	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
-	require.Equal(t, payload, recorder.Body.String())
-	require.Equal(t, "7", recorder.Header().Get("Retry-After"))
-	require.Contains(t, recorder.Header().Get("Content-Type"), "text/plain")
+	var failure *UpstreamFailoverError
+	require.ErrorAs(t, err, &failure)
+	require.Equal(t, http.StatusServiceUnavailable, failure.StatusCode)
+	require.Equal(t, payload, string(failure.ResponseBody))
+	require.Equal(t, "7", failure.ResponseHeaders.Get("Retry-After"))
+	require.True(t, failure.RetryableOnSameAccount)
+	require.True(t, failure.PreserveUpstreamError)
+	require.Empty(t, recorder.Body.String(), "the handler must exhaust the retry budget before writing the error")
 	require.Zero(t, transport.callCount)
 }
 

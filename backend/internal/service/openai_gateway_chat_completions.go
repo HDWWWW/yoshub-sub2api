@@ -1039,9 +1039,14 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					errorPayload = []byte(`{"error":` + originalError.Raw + `}`)
 				}
 			}
+			if account != nil && account.Platform == PlatformOpenAI && !IsResponseCommitted(c) {
+				defaultStatus = openAIHTTPWSEventErrorStatus(payloadBytes)
+				errType, code, message := OpenAIUpstreamErrorFields(defaultStatus, payloadBytes)
+				errorPayload, _ = json.Marshal(gin.H{"error": gin.H{"type": errType, "code": code, "message": message, "status_code": defaultStatus}})
+			}
 			if c != nil && c.Writer != nil && !c.Writer.Written() {
-				if smartWSHasDispatched(c) {
-					c.Data(openAIHTTPWSEventErrorStatus(payloadBytes), "application/json", errorPayload)
+				if smartWSHasDispatched(c) || (account != nil && account.Platform == PlatformOpenAI && !IsResponseCommitted(c)) {
+					c.Data(defaultStatus, "application/json", errorPayload)
 				} else {
 					writeChatCompletionsError(c, defaultStatus, defaultErrType, defaultMsg)
 				}

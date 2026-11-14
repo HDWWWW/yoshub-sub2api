@@ -16,6 +16,38 @@ const openAIUpstreamClientErrorFallbackType = "invalid_request_error"
 // 仍然比 "Upstream request failed" 明确：它说明拒绝来自请求本身，而不是链路故障。
 const openAIUpstreamClientErrorFallbackMessage = "Upstream rejected the request"
 
+// OpenAIUpstreamErrorFields keeps the provider's structured code/type while
+// excluding its surrounding response, headers and account data.
+func OpenAIUpstreamErrorFields(status int, body []byte) (errType, code, message string) {
+	errType, code = "upstream_error", "upstream_error"
+	if status == http.StatusTooManyRequests {
+		errType, code = "rate_limit_error", "rate_limit_exceeded"
+	}
+	obj := gjson.GetBytes(body, "response.error")
+	if !obj.IsObject() {
+		obj = gjson.GetBytes(body, "error")
+	}
+	if obj.IsObject() {
+		if value := strings.TrimSpace(obj.Get("type").String()); value != "" {
+			errType = value
+		}
+		if value := strings.TrimSpace(obj.Get("code").String()); value != "" {
+			code = value
+		}
+		message = obj.Get("message").String()
+	}
+	if message == "" {
+		message = extractUpstreamErrorMessage(body)
+	}
+	if message == "" && !gjson.ValidBytes(body) {
+		message = string(body)
+	}
+	if message == "" {
+		message = http.StatusText(status)
+	}
+	return truncateString(errType, 128), truncateString(code, 128), sanitizeUpstreamErrorMessage(truncateString(message, 4096))
+}
+
 // isOpenAIDeterministicClientError 判断上游状态码是否表示「请求本身非法」。
 //
 // 只认 400：同一份请求体换任何账号、重试多少次都会得到同样的结果。

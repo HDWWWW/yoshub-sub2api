@@ -70,7 +70,7 @@ func (s *OpenAIGatewayService) smartWSNativeHandshakeFailure(ctx context.Context
 		return nil
 	}
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, dialErr.ResponseBody)
-	if retry := s.smartWSRateLimitRejection(c, account, dialErr.StatusCode, dialErr.ResponseHeaders, body, true, model); retry != nil {
+	if retry := s.smartWSRetryableRejection(c, account, dialErr.StatusCode, dialErr.ResponseHeaders, body, true, model); retry != nil {
 		return retry
 	}
 	classification := classifySmartWSHandshake(dialErr.StatusCode, body)

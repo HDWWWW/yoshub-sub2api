@@ -166,6 +166,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	var retrySelection *service.AccountSelectionResult
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 
@@ -181,22 +182,30 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		if h.endExpiredOpenAI429Recovery(c, streamStarted) {
 			return
 		}
-		selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(c.Request.Context())
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			selectionCtx,
-			apiKey.GroupID,
-			"",
-			sessionHash,
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			false,
-			true,
-			requestPlatform,
-		)
-		cancelSelection()
+		selection := retrySelection
+		retrySelection = nil
+		var scheduleDecision service.OpenAIAccountScheduleDecision
+		var err error
+		if selection == nil {
+			selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(c.Request.Context())
+			selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForCapability(
+				selectionCtx,
+				apiKey.GroupID,
+				"",
+				sessionHash,
+				forwardModel,
+				failedAccountIDs,
+				service.OpenAIUpstreamTransportAny,
+				service.OpenAIEndpointCapabilityChatCompletions,
+				false,
+				false,
+				true,
+				requestPlatform,
+			)
+			cancelSelection()
+		} else {
+			scheduleDecision.Layer = "same_account_retry"
+		}
 		if err != nil && h.endExpiredOpenAI429Recovery(c, streamStarted) {
 			return
 		}
@@ -396,6 +405,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 								return
 							case <-time.After(retryDelay):
 							}
+							retrySelection = h.gatewayService.SameAccountRetrySelection(selection)
 							continue
 						}
 					}

@@ -65,13 +65,21 @@ func TestSmartWSHandshakeAccountFailureClassification(t *testing.T) {
 			c, rec := forcedWSContext(t, "/v1/responses", 1, "classification")
 			_, err := s.Forward(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.1","input":"hello","stream":true}`))
 			require.Error(t, err)
-			require.Equal(t, test.status, rec.Code)
-			require.Equal(t, test.body, rec.Body.String())
-			require.Equal(t, "7", rec.Header().Get("Retry-After"))
-			require.Zero(t, upstream.callCount)
-			require.Equal(t, test.accountFailure, repo.tempCalls+repo.setErrorCalls > 0)
 			var stop *UpstreamFailoverError
 			require.ErrorAs(t, err, &stop)
+			if test.status >= 500 {
+				require.Empty(t, rec.Body.String())
+				require.Equal(t, test.status, stop.StatusCode)
+				require.Equal(t, test.body, string(stop.ResponseBody))
+				require.Equal(t, "7", stop.ResponseHeaders.Get("Retry-After"))
+				require.True(t, stop.RetryableOnSameAccount)
+			} else {
+				require.Equal(t, test.status, rec.Code)
+				require.Equal(t, test.body, rec.Body.String())
+				require.Equal(t, "7", rec.Header().Get("Retry-After"))
+			}
+			require.Zero(t, upstream.callCount)
+			require.Equal(t, test.accountFailure, repo.tempCalls+repo.setErrorCalls > 0)
 			require.Equal(t, test.accountFailure, stop.ShouldReportAccountScheduleFailure())
 			snapshot := s.getOpenAIWSConnPool().SmartWSSnapshot()
 			require.EqualValues(t, 1, snapshot.Counters["failed"])

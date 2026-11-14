@@ -1099,6 +1099,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		observation.reused = lease.Reused() || turn > 1
 		defer func() { observation.finish(ctx, turnResult, turnErr) }()
 		wroteDownstream := false
+		var nativeRetry smartWSNativeRetryBudget
 		if account.Platform == PlatformOpenAI {
 			cancelDone := make(chan struct{})
 			stopCancel := context.AfterFunc(ctx, func() { defer close(cancelDone); lease.MarkBroken() })
@@ -1220,9 +1221,28 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				markOpenAICyberPolicyEvent(c, upstreamMessage, http.StatusOK, &usage)
 			}
 			if account.Platform == PlatformOpenAI && (eventType == "error" || eventType == "response.failed") {
-				failureTail := readSmartWSFailedTail(ctx, lease, upstreamMessage, responseID, func(frame []byte) { dispatch.observe(c, frame) })
+				failureTail := readSmartWSFailedTail(ctx, lease, upstreamMessage, responseID, func(frame []byte) { dispatch.observe(c, frame) }, lease.readRejectionTail)
+				if turn > 1 && nativeRetry.attempts < account.GetPoolModeRetryCount() && !wroteDownstream && lease.canRetryRejectedTurn() {
+					if retry := s.smartWSRetryableRejection(c, account, openAIHTTPWSEventErrorStatus(upstreamMessage), lease.HandshakeHeaders(), upstreamMessage, false, mappedModel); retry != nil && nativeRetry.wait(ctx, account, retry, turn) {
+						// A terminal usage/policy tail may arrive during backoff.
+						if tail := readSmartWSFailedTail(ctx, lease, upstreamMessage, responseID, func(frame []byte) { dispatch.observe(c, frame) }, lease.readRejectionTail); len(tail) > 0 {
+							failureTail = tail
+						}
+						if !dispatch.accepted.Load() && lease.canRetryRejectedTurn() && ctx.Err() == nil {
+							observation.finish(ctx, nil, retry)
+							observation = s.beginSmartWSObservation(nil)
+							observation.reused, observation.dispatched = true, true
+							dispatch = beginSmartWSDispatch(c)
+							dispatch.state.Store(smartWSMayBeSent)
+							if writeErr := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); writeErr != nil {
+								return nil, wrapOpenAIWSIngressTurnError("write_upstream", writeErr, false)
+							}
+							continue
+						}
+					}
+				}
 				if turn == 1 && !wroteDownstream {
-					if retry := s.smartWSRateLimitRejection(c, account, openAIHTTPWSEventErrorStatus(upstreamMessage), lease.HandshakeHeaders(), upstreamMessage, false, mappedModel); retry != nil {
+					if retry := s.smartWSRetryableRejection(c, account, openAIHTTPWSEventErrorStatus(upstreamMessage), lease.HandshakeHeaders(), upstreamMessage, false, mappedModel); retry != nil {
 						lease.MarkBroken()
 						return nil, retry
 					}

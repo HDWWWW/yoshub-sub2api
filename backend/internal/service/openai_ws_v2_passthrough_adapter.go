@@ -1188,7 +1188,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			cancel()
 		},
 	}
-	nativeObserver := &smartWSNativeObserver{FrameConn: relayUpstreamFrameConn, s: s, c: c, account: account, dispatch: beginSmartWSDispatch(c)}
+	nativeObserver := &smartWSNativeObserver{FrameConn: &smartWSNativeReadBuffer{FrameConn: relayUpstreamFrameConn, ctx: ctx}, s: s, c: c, account: account, dispatch: beginSmartWSDispatch(c)}
 	defer func() { nativeObserver.finish(ctx, returnErr); returnErr = stopSmartWSReplay(c, returnErr) }()
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
@@ -1212,7 +1212,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if (msgType == coderws.MessageText || msgType == coderws.MessageBinary) && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
 				return msgType, payload, nil
 			}
-			if writeErr := upstreamFrameConn.WriteFrame(readCtx, msgType, payload); writeErr != nil {
+			if writeErr := nativeObserver.WriteFrame(readCtx, msgType, payload); writeErr != nil {
 				return msgType, payload, writeErr
 			}
 		}
@@ -1359,7 +1359,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				// retry. Later turns and partially executed requests retain errors.
 				if account.Platform == PlatformOpenAI && (eventType == "error" || eventType == "response.failed") {
 					if completedTurns.Load() == 0 && !wroteDownstream {
-						if retry := s.smartWSRateLimitRejection(c, account, openAIHTTPWSEventErrorStatus(payload), handshakeHeaders, payload, false, capturedSessionModel); retry != nil {
+						if retry := s.smartWSRetryableRejection(c, account, openAIHTTPWSEventErrorStatus(payload), handshakeHeaders, payload, false, capturedSessionModel); retry != nil {
 							return retry
 						}
 					}

@@ -247,6 +247,45 @@ func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, t
 	return conn.readMessageWithContextTimeout(ctx, timeout)
 }
 
+// A rejection-tail probe is not a generation timeout. Its short deadline must
+// leave the session reader alive so a confirmed rejected turn can be retried.
+func (l *openAIWSConnLease) readRejectionTail(ctx context.Context, timeout time.Duration) ([]byte, error) {
+	conn, err := l.activeConn()
+	if err != nil {
+		return nil, err
+	}
+	if conn.readerLoopResults == nil {
+		return conn.readMessageWithContextTimeout(ctx, timeout)
+	}
+	readCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn.readMu.Lock()
+	defer conn.readMu.Unlock()
+	select {
+	case payload, ok := <-conn.readerLoopResults:
+		if !ok {
+			return nil, conn.readerLoopError()
+		}
+		conn.touch()
+		return payload, nil
+	case <-readCtx.Done():
+		return nil, readCtx.Err()
+	}
+}
+
+func (l *openAIWSConnLease) canRetryRejectedTurn() bool {
+	conn, err := l.activeConn()
+	if err != nil || conn.readerLoopResults == nil || conn.readerLoopPeerClosed.Load() {
+		return false
+	}
+	select {
+	case <-conn.closedCh:
+		return false
+	default:
+		return true
+	}
+}
+
 func (l *openAIWSConnLease) PingWithTimeout(timeout time.Duration) error {
 	conn, err := l.activeConn()
 	if err != nil {

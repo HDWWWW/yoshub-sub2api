@@ -1802,3 +1802,21 @@ func (s *OpenAIGatewayService) schedulingConfig() config.GatewaySchedulingConfig
 		SlotCleanupInterval:      30 * time.Second,
 	}
 }
+
+// Keep the selected account while spending its retry budget. Re-entering the
+// scheduler here could select another account after a 429 cooldown or load
+// change. Concurrency and profit admission are still checked on every attempt.
+func (s *OpenAIGatewayService) SameAccountRetrySelection(previous *AccountSelectionResult) *AccountSelectionResult {
+	selection := *previous
+	if s.concurrencyService == nil {
+		return &selection // concurrency accounting is disabled for this selection
+	}
+	selection.Acquired, selection.ReleaseFunc = false, nil
+	if selection.WaitPlan == nil {
+		cfg := s.schedulingConfig()
+		wait, maxWaiting := cfg.FallbackWaitTimeout, cfg.FallbackMaxWaiting
+		selection.WaitPlan = &AccountWaitPlan{AccountID: selection.Account.ID,
+			MaxConcurrency: selection.Account.Concurrency, Timeout: wait, MaxWaiting: maxWaiting}
+	}
+	return &selection
+}

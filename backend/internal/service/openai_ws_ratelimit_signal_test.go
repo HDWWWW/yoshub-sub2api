@@ -579,7 +579,7 @@ func TestOpenAIWSRateLimitFailoverError_OAuthKeepsSameAccountDeadline(t *testing
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
 	}, headers, body, "limited")
-	require.False(t, apiKeyErr.RetryableOnSameAccount)
+	require.True(t, apiKeyErr.RetryableOnSameAccount)
 	require.True(t, apiKeyErr.SameAccountRetryDeadline.IsZero())
 	require.Zero(t, apiKeyErr.SameAccountRetryDelay)
 }

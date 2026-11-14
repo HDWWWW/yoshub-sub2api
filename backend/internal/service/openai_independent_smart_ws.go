@@ -73,12 +73,14 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		},
 		OnDispatch: func() {
 			observation.dispatched = true
-			// Only complete streaming HTTP Responses requests can recover here.
-			// Native WS, converters, HTTP fallback and continuations keep their
-			// existing no-replay rules even if nothing reached the client.
+			// HTTP requests carry their full input, including Chat conversion.
+			// Usage, tool execution, visible output and continuations still close
+			// the recovery window before a retry can reach the account handler.
 			dispatch.httpPreOutputRecovery = c.Request.Method == http.MethodPost &&
-				strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses") &&
-				gjson.GetBytes(raw, "stream").Bool() && gjson.GetBytes(raw, "previous_response_id").String() == ""
+				(strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses") ||
+					strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/chat/completions") ||
+					strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/messages")) &&
+				gjson.GetBytes(raw, "previous_response_id").String() == ""
 			dispatch.state.Store(smartWSMayBeSent)
 		},
 		OnEvent: func(payload []byte) {

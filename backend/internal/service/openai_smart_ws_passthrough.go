@@ -13,6 +13,40 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Keep an outstanding socket read across a short rejection-tail timeout. The
+// session context and FrameConn.Close still terminate the actual upstream read.
+type smartWSNativeReadBuffer struct {
+	openaiwsv2.FrameConn
+	ctx     context.Context
+	pending chan smartWSNativeReadResult
+	closed  bool // owned by the sole relay reader
+}
+
+type smartWSNativeReadResult struct {
+	typ     coderws.MessageType
+	payload []byte
+	err     error
+}
+
+func (b *smartWSNativeReadBuffer) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	if b.pending == nil {
+		b.pending = make(chan smartWSNativeReadResult, 1)
+		pending := b.pending
+		go func() {
+			typ, payload, err := b.FrameConn.ReadFrame(b.ctx)
+			pending <- smartWSNativeReadResult{typ, payload, err}
+		}()
+	}
+	select {
+	case result := <-b.pending:
+		b.pending = nil
+		b.closed = result.err != nil
+		return result.typ, result.payload, result.err
+	case <-ctx.Done():
+		return coderws.MessageText, nil, ctx.Err()
+	}
+}
+
 // Observes each serial native turn at the actual write boundary. Delivery to
 // the client, not upstream completion alone, determines the final outcome.
 type smartWSNativeObserver struct {
@@ -23,10 +57,13 @@ type smartWSNativeObserver struct {
 	riskModel *upstreamResponseModelObserver
 	dispatch  *smartWSDispatch
 	mu        sync.Mutex
+	writeMu   sync.Mutex // serialize client writes and internal retries
 	current   *smartWSObservation
 	turns     int
 	openedAt  time.Time
 	pending   []smartWSNativeFrame // owned by the sole relay reader
+	payload   []byte
+	retry     *smartWSNativeRetryBudget
 }
 
 type smartWSNativeFrame struct {
@@ -35,6 +72,8 @@ type smartWSNativeFrame struct {
 }
 
 func (w *smartWSNativeObserver) WriteFrame(ctx context.Context, typ coderws.MessageType, payload []byte) error {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
 	if gjson.GetBytes(payload, "type").String() == "response.create" {
 		w.mu.Lock()
 		if w.openedAt.IsZero() {
@@ -56,6 +95,8 @@ func (w *smartWSNativeObserver) WriteFrame(ctx context.Context, typ coderws.Mess
 		w.current.reused = w.turns > 0
 		w.current.dispatched = true
 		w.turns++
+		w.payload = append([]byte(nil), payload...)
+		w.retry = &smartWSNativeRetryBudget{}
 		if w.c != nil {
 			w.c.Set(smartWSFailureDeliveredKey, false)
 		}
@@ -63,6 +104,8 @@ func (w *smartWSNativeObserver) WriteFrame(ctx context.Context, typ coderws.Mess
 		w.dispatch.accepted.Store(false)
 		w.dispatch.policy.Store(nil)
 		w.mu.Unlock()
+	} else if gjson.GetBytes(payload, "type").String() == "response.cancel" {
+		w.dispatch.accepted.Store(true)
 	}
 	return w.FrameConn.WriteFrame(ctx, typ, payload)
 }
@@ -80,6 +123,7 @@ func (w *smartWSNativeObserver) ReadFrame(ctx context.Context) (coderws.MessageT
 		w.mu.Lock()
 		w.current.event(payload)
 		riskModel := w.riskModel
+		turn, currentPayload, retryBudget := w.turns, w.payload, w.retry
 		if w.current != nil {
 			w.dispatch.state.Store(smartWSReceived)
 			w.dispatch.observe(w.c, payload)
@@ -91,33 +135,38 @@ func (w *smartWSNativeObserver) ReadFrame(ctx context.Context) (coderws.MessageT
 		// An immediate bare rejection can still be followed by authoritative
 		// failed usage. Inspect a bounded tail before allowing account failover,
 		// retaining every received frame for the normal relay/accounting path.
-		if gjson.GetBytes(payload, "type").String() == "error" && smartWSIsExplicitRateLimit(payload) {
-			tailCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-			for i := 0; i < 8; i++ {
-				tailType, tail, tailErr := w.FrameConn.ReadFrame(tailCtx)
-				if tailErr != nil {
-					break
-				}
-				w.pending = append(w.pending, smartWSNativeFrame{tailType, tail})
-				w.dispatch.observe(w.c, tail)
-				if isOpenAIContentPolicyRejection(tail) || smartWSPayloadHasWork(tail) || isOpenAIWSTerminalEvent(gjson.GetBytes(tail, "type").String()) {
-					break
-				}
-			}
-			cancel()
-			preferred := w.dispatch.failurePayload(payload)
-			if !bytes.Equal(preferred, payload) {
-				payload = preferred
-				// The selected refusal is delivered now; don't deliver it twice.
-				for i, frame := range w.pending {
-					if bytes.Equal(openAIPolicyRejectionPayload(frame.payload), preferred) {
-						w.pending = append(w.pending[:i], w.pending[i+1:]...)
-						break
-					}
-				}
-			}
+		if gjson.GetBytes(payload, "type").String() == "error" && (smartWSIsExplicitRateLimit(payload) || smartWSIsExplicitTemporaryRejection(payload)) {
+			payload = w.readRejectionTail(ctx, payload)
 		}
 		payload = openAIPolicyRejectionPayload(payload)
+		buffer, buffered := w.FrameConn.(*smartWSNativeReadBuffer)
+		if turn > 1 && retryBudget != nil && retryBudget.attempts < w.account.GetPoolModeRetryCount() && buffered && !buffer.closed && !w.dispatch.accepted.Load() {
+			failure := w.s.smartWSRetryableRejection(w.c, w.account, openAIHTTPWSEventErrorStatus(payload), nil, payload, false, gjson.GetBytes(currentPayload, "model").String())
+			if failure != nil && retryBudget.wait(ctx, w.account, failure, turn) {
+				payload = w.readRejectionTail(ctx, payload)
+				w.writeMu.Lock()
+				w.mu.Lock()
+				canRetry := w.retry == retryBudget && w.current != nil && !w.dispatch.accepted.Load() && !buffer.closed && ctx.Err() == nil
+				if canRetry {
+					w.current.finish(ctx, nil, failure)
+					w.current = w.s.beginSmartWSObservation(nil)
+					w.current.reused, w.current.dispatched = true, true
+					w.dispatch.state.Store(smartWSMayBeSent)
+					w.mu.Unlock()
+					w.pending = nil // only unaccepted, non-usage metadata can remain
+					writeCtx, cancel := context.WithTimeout(ctx, w.s.openAIWSWriteTimeout())
+					writeErr := w.FrameConn.WriteFrame(writeCtx, coderws.MessageText, currentPayload)
+					cancel()
+					w.writeMu.Unlock()
+					if writeErr != nil {
+						return coderws.MessageText, nil, writeErr
+					}
+					return w.ReadFrame(ctx)
+				}
+				w.mu.Unlock()
+				w.writeMu.Unlock()
+			}
+		}
 	}
 	return typ, payload, err
 }
@@ -135,6 +184,7 @@ func (w *smartWSNativeObserver) delivered(ctx context.Context, payload []byte, e
 		}
 		w.current.finish(ctx, &OpenAIForwardResult{}, err)
 		w.current = nil
+		w.payload = nil
 	}
 }
 func (w *smartWSNativeObserver) finish(ctx context.Context, err error) {
@@ -146,4 +196,32 @@ func (w *smartWSNativeObserver) finish(ctx context.Context, err error) {
 		}
 		w.current.finish(ctx, nil, err)
 	}
+}
+
+func (w *smartWSNativeObserver) readRejectionTail(ctx context.Context, payload []byte) []byte {
+	tailCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	for i := 0; i < 8; i++ {
+		tailType, tail, tailErr := w.FrameConn.ReadFrame(tailCtx)
+		if tailErr != nil {
+			break
+		}
+		w.pending = append(w.pending, smartWSNativeFrame{tailType, tail})
+		w.dispatch.observe(w.c, tail)
+		if isOpenAIContentPolicyRejection(tail) || smartWSPayloadHasWork(tail) || isOpenAIWSTerminalEvent(gjson.GetBytes(tail, "type").String()) {
+			break
+		}
+	}
+	cancel()
+	preferred := w.dispatch.failurePayload(payload)
+	if !bytes.Equal(preferred, payload) {
+		payload = preferred
+		// The selected refusal is delivered now; don't deliver it twice.
+		for i, frame := range w.pending {
+			if bytes.Equal(openAIPolicyRejectionPayload(frame.payload), preferred) {
+				w.pending = append(w.pending[:i], w.pending[i+1:]...)
+				break
+			}
+		}
+	}
+	return payload
 }

@@ -92,7 +92,7 @@ func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T)
 		`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"partial"}`,
 		"",
 		`event: error`,
-		`data: {"type":"error","error":{"type":"server_error","code":"upstream_error","message":"mixed tools failed"}}`,
+		`data: {"type":"error","status":503,"error":{"type":"server_error","code":"provider_busy","message":"mixed tools failed"}}`,
 		"",
 		`data: [DONE]`,
 		"",
@@ -113,6 +113,8 @@ func TestForwardAsAnthropic_StreamingBareErrorAfterOutputIsVisible(t *testing.T)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "upstream response failed: mixed tools failed")
 	clientStream := rec.Body.String()
+	require.Contains(t, clientStream, `"code":"provider_busy"`)
+	require.Contains(t, clientStream, `"status_code":503`)
 	require.Contains(t, clientStream, `"text":"partial"`)
 	require.Contains(t, clientStream, "event: error")
 	require.Contains(t, clientStream, "mixed tools failed")
@@ -131,7 +133,7 @@ func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T
 
 	ssePayload := strings.Join([]string{
 		`event: error`,
-		`data: {"type":"error","error":{"type":"server_error","code":"upstream_error","message":"temporary upstream failure"}}`,
+		`data: {"type":"error","status":503,"error":{"type":"server_error","code":"provider_busy","message":"temporary upstream failure"}}`,
 		"",
 		`data: [DONE]`,
 		"",
@@ -152,6 +154,10 @@ func TestForwardAsAnthropic_StreamingBareErrorBeforeOutputFailsOver(t *testing.T
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.True(t, errors.As(err, &failoverErr), "pre-output retryable error must remain failover-safe: %T: %v", err, err)
+	require.Equal(t, 503, failoverErr.StatusCode)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, failoverErr.PreserveUpstreamError)
+	require.Contains(t, string(failoverErr.ResponseBody), `"code":"provider_busy"`)
 	require.Empty(t, rec.Body.String(), "failover path must not commit downstream output")
 }
 

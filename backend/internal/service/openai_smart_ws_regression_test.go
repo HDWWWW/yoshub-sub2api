@@ -210,8 +210,9 @@ func TestSmartWS_BareErrorAndTailRetainUsageAndResponseIdentity(t *testing.T) {
 	}
 }
 
-// Converted chat and buffered Responses retain their no-replay contract.
-func TestSmartWS_ProtectedDisconnectNeverReplays(t *testing.T) {
+// Converted chat and buffered Responses hand pre-output failures to the same
+// bounded handler retry owner as streaming Responses.
+func TestSmartWSConvertedPreOutputDisconnectAllowsHandlerRetry(t *testing.T) {
 	for _, chat := range []bool{false, true} {
 		name := "responses"
 		if chat {
@@ -246,11 +247,12 @@ func TestSmartWS_ProtectedDisconnectNeverReplays(t *testing.T) {
 			require.EqualValues(t, 1, received.Load())
 			var failover *UpstreamFailoverError
 			require.True(t, errors.As(err, &failover))
-			require.False(t, failover.ShouldRetryNextAccount())
-			require.Equal(t, http.StatusBadGateway, rec.Code)
-			require.Equal(t, smartWSUncertainCode, gjson.Get(rec.Body.String(), "error.code").String())
-			require.Contains(t, rec.Body.String(), "may have been executed")
-			require.True(t, SmartWSFailureDelivered(c))
+			require.True(t, failover.ShouldRetryNextAccount())
+			require.True(t, failover.RetryableOnSameAccount)
+			require.Equal(t, http.StatusBadGateway, failover.StatusCode)
+			require.Equal(t, "upstream_stream_disconnected", gjson.GetBytes(failover.ResponseBody, "error.code").String())
+			require.Empty(t, rec.Body.String())
+			require.False(t, SmartWSFailureDelivered(c))
 		})
 	}
 }

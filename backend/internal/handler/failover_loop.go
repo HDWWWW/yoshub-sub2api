@@ -118,6 +118,23 @@ func effectiveSameAccountRetryLimit(failoverErr *service.UpstreamFailoverError, 
 	return limit
 }
 
+// Waiting for a native WS account slot has not dispatched a model request.
+// Use the account's bounded retry budget before returning a busy close frame.
+func (h *OpenAIGatewayHandler) acquireOpenAIWSAccountSlot(ctx context.Context, account *service.Account, maxConcurrency int) (func(), bool, error) {
+	limit := account.GetPoolModeRetryCount()
+	for attempt := 0; ; attempt++ {
+		release, acquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, maxConcurrency)
+		if err != nil || acquired || attempt >= limit {
+			return release, acquired, err
+		}
+		logger.FromContext(ctx).Warn("openai.websocket.account_slot_retry",
+			zap.Int64("account_id", account.ID), zap.Int("retry_count", attempt+1), zap.Int("retry_limit", limit))
+		if !sleepWithContext(ctx, sameAccountRetryDelay) {
+			return nil, false, ctx.Err()
+		}
+	}
+}
+
 // FailoverState 跨循环迭代共享的 failover 状态
 type FailoverState struct {
 	SwitchCount           int

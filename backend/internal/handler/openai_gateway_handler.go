@@ -661,6 +661,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	var retrySelection *service.AccountSelectionResult
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	var passthroughFailoverState openAIPassthroughFailoverState
@@ -698,22 +699,30 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if h.endExpiredOpenAI429Recovery(c, streamStarted) {
 			return
 		}
-		selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(c.Request.Context())
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			selectionCtx,
-			apiKey.GroupID,
-			previousResponseID,
-			sessionHash,
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			requiredCapability,
-			requireCompact,
-			false,
-			!imageIntent,
-			requestPlatform,
-		)
-		cancelSelection()
+		selection := retrySelection
+		retrySelection = nil
+		var scheduleDecision service.OpenAIAccountScheduleDecision
+		var err error
+		if selection == nil {
+			selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(c.Request.Context())
+			selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForCapability(
+				selectionCtx,
+				apiKey.GroupID,
+				previousResponseID,
+				sessionHash,
+				forwardModel,
+				failedAccountIDs,
+				service.OpenAIUpstreamTransportAny,
+				requiredCapability,
+				requireCompact,
+				false,
+				!imageIntent,
+				requestPlatform,
+			)
+			cancelSelection()
+		} else {
+			scheduleDecision.Layer = "same_account_retry"
+		}
 		if err != nil && h.endExpiredOpenAI429Recovery(c, streamStarted) {
 			return
 		}
@@ -991,6 +1000,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 								return
 							case <-time.After(retryDelay):
 							}
+							retrySelection = h.gatewayService.SameAccountRetrySelection(selection)
 							continue
 						}
 					}
@@ -1350,6 +1360,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	var retrySelection *service.AccountSelectionResult
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	effectiveMappedModel := preferredMappedModel
@@ -1370,22 +1381,30 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if h.endExpiredOpenAI429Recovery(c, streamStarted) {
 			return
 		}
-		selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(c.Request.Context())
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			selectionCtx,
-			apiKey.GroupID,
-			"", // no previous_response_id
-			sessionHash,
-			currentRoutingModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			false,
-			true,
-			requestPlatform,
-		)
-		cancelSelection()
+		selection := retrySelection
+		retrySelection = nil
+		var scheduleDecision service.OpenAIAccountScheduleDecision
+		var err error
+		if selection == nil {
+			selectionCtx, cancelSelection := openAI429RecoveryFor(c).selectionContext(c.Request.Context())
+			selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForCapability(
+				selectionCtx,
+				apiKey.GroupID,
+				"", // no previous_response_id
+				sessionHash,
+				currentRoutingModel,
+				failedAccountIDs,
+				service.OpenAIUpstreamTransportAny,
+				service.OpenAIEndpointCapabilityChatCompletions,
+				false,
+				false,
+				true,
+				requestPlatform,
+			)
+			cancelSelection()
+		} else {
+			scheduleDecision.Layer = "same_account_retry"
+		}
 		if err != nil && h.endExpiredOpenAI429Recovery(c, streamStarted) {
 			return
 		}
@@ -1578,6 +1597,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 								return
 							case <-time.After(retryDelay):
 							}
+							retrySelection = h.gatewayService.SameAccountRetrySelection(selection)
 							continue
 						}
 					}
@@ -1673,23 +1693,24 @@ func (h *OpenAIGatewayHandler) anthropicErrorResponse(c *gin.Context, status int
 
 // anthropicStreamingAwareError handles errors that may occur during streaming,
 // using Anthropic SSE error format.
-func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
+func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool, codes ...string) {
+	errorObject := gin.H{"type": errType, "message": message, "status_code": status}
+	if len(codes) > 0 && codes[0] != "" {
+		errorObject["code"] = codes[0]
+	}
 	if streamStarted {
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
 			errPayload, _ := json.Marshal(gin.H{
-				"type": "error",
-				"error": gin.H{
-					"type":    errType,
-					"message": message,
-				},
+				"type":  "error",
+				"error": errorObject,
 			})
 			fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", errPayload) //nolint:errcheck
 			flusher.Flush()
 		}
 		return
 	}
-	h.anthropicErrorResponse(c, status, errType, message)
+	c.JSON(status, gin.H{"type": "error", "error": errorObject})
 }
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
@@ -1705,6 +1726,12 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil && failoverErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(failoverErr)
 		h.anthropicStreamingAwareError(c, status, "api_error", message, streamStarted)
+		return
+	}
+	if failoverErr != nil && failoverErr.PreserveUpstreamError {
+		errType, code, message := service.OpenAIUpstreamErrorFields(failoverErr.StatusCode, failoverErr.ResponseBody)
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, message, "")
+		h.anthropicStreamingAwareError(c, failoverErr.StatusCode, errType, message, streamStarted, code)
 		return
 	}
 	if failoverErr != nil && failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
@@ -2791,7 +2818,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
-		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
+		if account == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
 			return false
 		}
 		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
@@ -2948,15 +2975,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			selection.Account = latest
 		}
 		if !selection.Acquired {
-			if selection.WaitPlan == nil {
-				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
-				return
-			}
-			fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
-				ctx,
-				account.ID,
-				selection.WaitPlan.MaxConcurrency,
-			)
+			fastReleaseFunc, fastAcquired, err := h.acquireOpenAIWSAccountSlot(ctx, account, accountMaxConcurrency)
 			if err != nil {
 				reqLog.Warn("openai.websocket_account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 				closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire account concurrency slot")
@@ -3186,7 +3205,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if !userAcquired {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
 				}
-				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
+				accountReleaseFunc, accountAcquired, err := h.acquireOpenAIWSAccountSlot(ctx, account, accountMaxConcurrency)
 				if err != nil {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
@@ -3391,7 +3410,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						return
 					}
 					if currentAccountRelease == nil {
-						accountRelease, acquired, acquireErr := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
+						accountRelease, acquired, acquireErr := h.acquireOpenAIWSAccountSlot(ctx, account, accountMaxConcurrency)
 						if acquireErr != nil || !acquired {
 							reqLog.Warn("openai.websocket_same_account_retry_slot_unavailable",
 								zap.Int64("account_id", account.ID),
@@ -3725,6 +3744,15 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleStreamingAwareError(c, status, "upstream_error", message, streamStarted)
 		return
 	}
+	if failoverErr.PreserveUpstreamError {
+		if h.applyOpenAIFailoverPassthroughRule(c, failoverErr.StatusCode, failoverErr.ResponseBody, streamStarted) {
+			return
+		}
+		errType, code, message := service.OpenAIUpstreamErrorFields(failoverErr.StatusCode, failoverErr.ResponseBody)
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, message, "")
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.StatusCode, errType, code, message, streamStarted, false)
+		return
+	}
 	if failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
 		status := failoverErr.ClientStatusCode
 		if status <= 0 {
@@ -3918,14 +3946,14 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		// 通用 `event: error` 帧不被识别为终止事件，会导致
 		// "stream closed before response.completed"。
 		if inboundIsResponses(c) {
-			if writeResponsesFailedSSE(c, errType, code, message) {
+			if writeResponsesFailedSSE(c, errType, code, message, status) {
 				return
 			}
 		}
 		// Stream already started, send error as SSE event then close
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
-			errorObject := gin.H{"type": errType, "message": message}
+			errorObject := gin.H{"type": errType, "message": message, "status_code": status}
 			if code != "" {
 				errorObject["code"] = code
 			}
@@ -3948,7 +3976,7 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		return
 	}
 	c.JSON(status, gin.H{"error": gin.H{
-		"type": errType, "code": code, "message": message,
+		"type": errType, "code": code, "message": message, "status_code": status,
 	}})
 }
 
@@ -4221,7 +4249,20 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 		}
 	}
 
+	if failoverErr != nil && failoverErr.PreserveUpstreamError {
+		intendedStatus = failoverErr.StatusCode
+		errorType, errorCode, message = service.OpenAIUpstreamErrorFields(intendedStatus, failoverErr.ResponseBody)
+	}
 	service.MarkOpsStreamFailure(c, errorType, errorCode, message, intendedStatus)
+	if conn != nil {
+		payload, err := json.Marshal(gin.H{"type": "error", "status": intendedStatus,
+			"error": gin.H{"type": errorType, "code": errorCode, "message": message}})
+		if err == nil {
+			writeCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			_ = conn.Write(writeCtx, coderws.MessageText, payload)
+			cancel()
+		}
+	}
 	closeOpenAIClientWS(conn, closeStatus, message)
 }
 

@@ -211,12 +211,13 @@ func startPassthroughLifecycleServerWithHooks(
 	return server, serverErr
 }
 
-func TestPassthroughLifecycle_LaterTurnRateLimitPreservesErrorWithoutReplay(t *testing.T) {
+func TestPassthroughLifecycle_LaterTurnRateLimitPreservesErrorWithRetriesDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	defer cancelControl(context.Canceled)
 	upstream := newStagedPassthroughConn()
 	account := passthroughLifecycleAccount()
+	account.Extra["same_account_retry_count"] = 0
 	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}}}
 	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
 	svc.accountRepo = repo

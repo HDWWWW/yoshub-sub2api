@@ -263,6 +263,9 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 		message = "upstream websocket request failed"
 	}
 	MarkOpsStreamFailure(c, errType, code, message, status)
+	if c != nil {
+		c.Set(smartWSFailureDeliveredKey, true)
+	}
 }
 
 func openAIWSPayloadTransientStatus(payload []byte) int {
@@ -716,15 +719,17 @@ func openAIWSSemantic429Headers(account *Account, model string, headers http.Hea
 }
 
 func (s *OpenAIGatewayService) newOpenAIWSRateLimitFailoverError(account *Account, headers http.Header, responseBody []byte, message string) *UpstreamFailoverError {
-	return s.newOpenAIAccountFailoverError(
+	failure := s.newOpenAIAccountFailoverError(
 		account,
 		http.StatusTooManyRequests,
 		headers,
 		responseBody,
 		strings.TrimSpace(message),
 		false,
-		false,
+		true,
 	)
+	failure.PreserveUpstreamError = true
+	return failure
 }
 
 func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (string, bool) {

@@ -1180,6 +1180,11 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				}
 				message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
 				errStatus, errType, errMsg := http.StatusBadGateway, "api_error", message
+				errCode := ""
+				if account != nil && account.Platform == PlatformOpenAI {
+					errStatus = openAIHTTPWSEventErrorStatus(payloadBytes)
+					errType, errCode, errMsg = OpenAIUpstreamErrorFields(errStatus, payloadBytes)
+				}
 				// 统一走语义状态推断 + body 归一化（与 /v1/responses 路径一致），
 				// 使按错误码配置的透传规则可命中。
 				if status, et, em, matched := applyOpenAIStreamFailedErrorPassthroughRule(
@@ -1189,10 +1194,22 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 						em = errMsg
 					}
 					errStatus, errType, errMsg = status, et, em
+					errCode = "" // configured passthrough rules retain precedence
 					MarkResponseCommitted(c)
 				}
 				if !clientDisconnected {
-					if !clientOutputStarted {
+					if errCode != "" {
+						errorPayload := gin.H{"type": "error", "error": gin.H{"type": errType, "code": errCode, "message": errMsg, "status_code": errStatus}}
+						if !clientOutputStarted {
+							c.JSON(errStatus, errorPayload)
+							clientOutputStarted = true
+						} else {
+							encoded, _ := json.Marshal(errorPayload)
+							if _, err := fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", encoded); err == nil {
+								c.Writer.Flush()
+							}
+						}
+					} else if !clientOutputStarted {
 						writeAnthropicError(c, errStatus, errType, errMsg)
 						clientOutputStarted = true
 					} else {

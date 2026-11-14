@@ -2481,7 +2481,9 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 	require.Equal(t, http.StatusTooManyRequests, rec.Code)
 	require.Equal(t, "1", rec.Header().Get("Retry-After"))
 	require.Equal(t, "rate_limit_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
-	require.Equal(t, "Upstream rate limit exceeded, please retry later", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
+	require.Equal(t, "Concurrency limit exceeded for account, please retry later", gjson.GetBytes(rec.Body.Bytes(), "error.message").String())
+	require.Equal(t, "rate_limit_exceeded", gjson.GetBytes(rec.Body.Bytes(), "error.code").String())
+	require.EqualValues(t, 429, gjson.GetBytes(rec.Body.Bytes(), "error.status_code").Int())
 }
 
 func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T) {
@@ -2515,7 +2517,7 @@ func runOpenAIResponsesWebSocketUsageLimitCase(t *testing.T, mode string, follow
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	firstHitCh := make(chan []byte, len(followups)+1)
+	firstHitCh := make(chan []byte, len(followups)+2)
 	secondHitCh := make(chan []byte, 1)
 	var firstConnections atomic.Int32
 	var secondConnections atomic.Int32
@@ -2609,6 +2611,7 @@ func runOpenAIResponsesWebSocketUsageLimitCase(t *testing.T, mode string, follow
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
 				"openai_apikey_responses_websockets_v2_mode":    mode,
+				"same_account_retry_count":                      1,
 			},
 		},
 		{
@@ -2627,6 +2630,7 @@ func runOpenAIResponsesWebSocketUsageLimitCase(t *testing.T, mode string, follow
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
 				"openai_apikey_responses_websockets_v2_mode":    mode,
+				"same_account_retry_count":                      1,
 			},
 		},
 	}
@@ -2798,6 +2802,10 @@ func runOpenAIResponsesWebSocketUsageLimitCase(t *testing.T, mode string, follow
 		require.Empty(t, accountRepo.rateLimitedIDs, "policy refusal is not an account quota signal")
 	}
 	expectedFrames := len(followups) + 1
+	if len(followups) == 0 && len(policyFrames) == 0 {
+		expectedFrames++ // Retry the rejected first turn on this account before switching.
+		require.EqualValues(t, 2, firstConnections.Load())
+	}
 	if handshakeLimit {
 		expectedFrames--
 		require.Equal(t, int32(1), firstConnections.Load(), "uncertain dispatch must stop before a replacement handshake")
@@ -2814,7 +2822,11 @@ func runOpenAIResponsesWebSocketUsageLimitCase(t *testing.T, mode string, follow
 		}
 	}
 	if !handshakeLimit && len(policyFrames) == 0 {
-		require.Equal(t, []int64{int64(9902)}, accountRepo.rateLimitedIDs)
+		expectedRateLimits := []int64{9902}
+		if len(followups) == 0 {
+			expectedRateLimits = append(expectedRateLimits, 9902)
+		}
+		require.Equal(t, expectedRateLimits, accountRepo.rateLimitedIDs)
 	}
 }
 

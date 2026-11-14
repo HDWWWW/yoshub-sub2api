@@ -1857,6 +1857,15 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 		},
 	})
 	retryableOnSameAccount := openAIStreamFailedEventRetryableOnSameAccount(account, payload, message)
+	preserveError := account != nil && account.Platform == PlatformOpenAI &&
+		(gjson.GetBytes(payload, "error").IsObject() || gjson.GetBytes(payload, "response.error").IsObject())
+	if preserveError {
+		statusCode = openAIHTTPWSEventErrorStatus(payload)
+		if !shouldDisable && !smartWSPayloadHasWork(payload) && !isOpenAIContentPolicyRejection(payload) &&
+			(statusCode == http.StatusTooManyRequests || (statusCode >= 500 && statusCode <= 599)) {
+			retryableOnSameAccount = true
+		}
+	}
 	// 流终止事件承载在 HTTP 200 内，外层响应头描述的是成功流状态，而不是语义上的
 	// 429 事件。仅在配额分类时忽略这些头；故障转移错误仍保留它们，使 Retry-After
 	// 和请求 ID 能继续传递给后续处理。
@@ -1865,7 +1874,10 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 		classificationHeaders = nil
 	}
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
-	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
+	if preserveError {
+		failoverErr.PreserveUpstreamError = true
+	}
+	if preserveError || failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
 		return failoverErr
 	}
 	// Preserve the existing generic envelope for unclassified stream failures;

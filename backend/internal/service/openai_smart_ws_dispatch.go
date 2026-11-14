@@ -118,7 +118,7 @@ func smartWSResponseID(payload []byte) string {
 
 // A bare error may be followed by the authoritative failed usage. Read only a
 // bounded tail on the already failed lease; never dispatch or wait a full turn.
-func readSmartWSFailedTail(ctx context.Context, lease *openAIWSConnLease, first []byte, responseID string, observe func([]byte)) (lastError []byte) {
+func readSmartWSFailedTail(ctx context.Context, lease *openAIWSConnLease, first []byte, responseID string, observe func([]byte), tailReaders ...func(context.Context, time.Duration) ([]byte, error)) (lastError []byte) {
 	if gjson.GetBytes(first, "type").String() != "error" {
 		return nil
 	}
@@ -127,8 +127,12 @@ func readSmartWSFailedTail(ctx context.Context, lease *openAIWSConnLease, first 
 	}
 	tailCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
+	read := lease.ReadMessageWithContextTimeout
+	if len(tailReaders) > 0 {
+		read = tailReaders[0]
+	}
 	for i := 0; i < 8; i++ {
-		payload, err := lease.ReadMessageWithContextTimeout(tailCtx, 200*time.Millisecond)
+		payload, err := read(tailCtx, 200*time.Millisecond)
 		if err != nil || !gjson.ValidBytes(payload) {
 			return lastError
 		}
@@ -215,7 +219,7 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 		return finalizeSmartWSUncertainFailure(c, result, err)
 	}
 	if !failure.httpFallback && !openAIStreamClientOutputStarted(c, false) {
-		if retry := s.smartWSRateLimitRejection(c, account, openAIHTTPWSEventErrorStatus(failure.payload), failure.headers, failure.payload, false,
+		if retry := s.smartWSRetryableRejection(c, account, openAIHTTPWSEventErrorStatus(failure.payload), failure.headers, failure.payload, false,
 			gjson.GetBytes(failure.request, "model").String()); retry != nil {
 			return nil, retry
 		}
@@ -448,6 +452,7 @@ func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult
 		}
 		failure.StatusCode, failure.ResponseBody = http.StatusBadGateway, payload
 		failure.NextAccountAction, failure.RetryableOnSameAccount = NextAccountRetry, true
+		failure.PreserveUpstreamError = true
 		v, _ := c.Get(smartWSDispatchKey)
 		v.(*smartWSDispatch).state.Store(smartWSHTTPRetryable)
 		return result, failure
@@ -538,9 +543,37 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 		if len(upstreamModel) > 0 {
 			model = upstreamModel[0]
 		}
-		if retry := s.smartWSRateLimitRejection(c, account, resp.StatusCode, resp.Header, payload, isHandshake, model); retry != nil {
+		if retry := s.smartWSRetryableRejection(c, account, resp.StatusCode, resp.Header, payload, isHandshake, model); retry != nil {
+			retry.PreserveUpstreamError = true
 			return retry
 		}
+	}
+	// A non-successful HTTP fallback or handshake is an explicit rejection.
+	// Return it to the account retry owner before committing the downstream
+	// response; the transport's dispatch guard must not consume that budget.
+	if (!isOpenAIHTTPWSResponse(resp) || isHandshake) &&
+		(resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && !openAIStreamClientOutputStarted(c, false) &&
+		!SmartWSFailureDelivered(c) && c.Request.Context().Err() == nil &&
+		!smartWSPayloadHasWork(payload) && smartWSResponseID(payload) == "" &&
+		s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, message, payload) {
+		appendOpsUpstreamError(c, event)
+		shouldDisable := false
+		if !isHandshake || handshake.accountFailure {
+			shouldDisable = s.handleOpenAIAccountUpstreamError(c.Request.Context(), account, resp.StatusCode, resp.Header, payload, upstreamModel...)
+		}
+		retrySameAccount := !shouldDisable && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 ||
+			(account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)))
+		failure := s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, payload, message, shouldDisable, retrySameAccount)
+		failure.PreserveUpstreamError = true
+		if isHandshake {
+			handshake.annotate(failure)
+		}
+		if value, ok := c.Get(smartWSDispatchKey); ok {
+			if dispatch, ok := value.(*smartWSDispatch); ok {
+				dispatch.state.Store(smartWSRejected)
+			}
+		}
+		return failure
 	}
 	if isHandshake {
 		event.Stage, event.Scope, event.Reason = "ws_handshake", "upstream_transport", handshake.category

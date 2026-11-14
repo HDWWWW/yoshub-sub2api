@@ -147,15 +147,20 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	if account.Platform != PlatformGrok && !tempUnscheduled {
 		shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 	}
-	return s.newOpenAIAccountFailoverError(
+	// Plain HTTP Messages/Chat errors share the same account budget as SmartWS.
+	openAITemporary := account.Platform == PlatformOpenAI &&
+		(resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode >= 500 && resp.StatusCode <= 599))
+	failure := s.newOpenAIAccountFailoverError(
 		account,
 		resp.StatusCode,
 		resp.Header,
 		respBody,
 		upstreamMsg,
 		shouldDisable,
-		!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+		!shouldDisable && (openAITemporary || (account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)))),
 	)
+	failure.PreserveUpstreamError = account.Platform == PlatformOpenAI
+	return failure
 }
 
 // openAIChatCompletionsTargetURL 解析账号的（非 Grok）Chat Completions 上游端点。
