@@ -29,6 +29,10 @@ type SentError struct {
 	// TransportFailure distinguishes a dropped connection from a protocol,
 	// policy or frame-limit failure. It does not authorize replay by itself.
 	TransportFailure bool
+	// Diagnostic fields contain fixed categories and numeric close codes only.
+	// Never retain upstream close text, payloads, or credential-bearing URLs.
+	Reason    string
+	CloseCode int
 }
 
 func (e *SentError) Error() string     { return "smart WS request possibly dispatched: " + e.Err.Error() }

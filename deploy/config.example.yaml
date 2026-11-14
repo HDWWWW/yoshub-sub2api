@@ -431,6 +431,8 @@ gateway:
     apikey_max_conns_factor: 5.0
     dial_timeout_seconds: 10
     read_timeout_seconds: 900
+    # HTTP SmartWS: maximum wait for the next generation frame, not socket idle lifetime.
+    smart_ws_read_timeout_seconds: 120
     write_timeout_seconds: 120
     pool_target_utilization: 0.7
     queue_limit_per_conn: 64

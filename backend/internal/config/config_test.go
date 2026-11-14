@@ -40,6 +40,28 @@ func TestAutoRequestBodyMemoryBudget(t *testing.T) {
 	require.Equal(t, int64(math.MaxUint64/4), autoRequestBodyMemoryBudget(math.MaxUint64))
 }
 
+func TestSmartWSReadTimeoutConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  int
+	}{
+		{"", 120}, {"7", 7}, {"0", 0}, {"3601", 0},
+	} {
+		t.Run("seconds="+tc.value, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			t.Setenv("GATEWAY_OPENAI_WS_SMART_WS_READ_TIMEOUT_SECONDS", tc.value)
+			cfg, err := Load()
+			if tc.want == 0 {
+				require.ErrorContains(t, err, "smart_ws_read_timeout_seconds")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds)
+			require.Equal(t, 900, cfg.Gateway.OpenAIWS.ReadTimeoutSeconds)
+		})
+	}
+}
+
 func TestLoadRequestBodyMemoryBudget(t *testing.T) {
 	t.Run("auto-sized from memory limit when unset", func(t *testing.T) {
 		resetViperWithJWTSecret(t)

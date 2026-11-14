@@ -14,10 +14,77 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+func TestSmartWSGenerationTimeoutAndCloseDiagnostics(t *testing.T) {
+	for _, mode := range []string{"before_output", "after_output", "close_1008"} {
+		t.Run(mode, func(t *testing.T) {
+			s, account, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+				ws, err := forcedWSUpgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer ws.Close()
+				if _, _, err = ws.ReadMessage(); err != nil {
+					return
+				}
+				_ = ws.WriteMessage(websocket.TextMessage, []byte(forcedWSCreated))
+				if mode == "after_output" {
+					_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_text.delta","delta":"partial answer"}`))
+				}
+				if mode == "close_1008" {
+					_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(1008, "private-upstream-close-text"), time.Now().Add(time.Second))
+				}
+				_, _, _ = ws.ReadMessage()
+			})
+			s.cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 900
+			s.cfg.Gateway.OpenAIWS.IdleTimeoutSeconds = 300
+			s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds = 1
+			core, logs := observer.New(zap.InfoLevel)
+			c, rec := forcedWSContext(t, "/v1/responses", 1, "timeout-diagnostic")
+			c.Request = c.Request.WithContext(logger.IntoContext(c.Request.Context(), zap.New(core)))
+			started := time.Now()
+			_, err := s.Forward(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"private-request-input"}`))
+			require.Error(t, err)
+			require.Less(t, time.Since(started), 5*time.Second)
+			require.Zero(t, upstream.callCount)
+			entries := logs.FilterMessage("smart_ws.stream_failure").All()
+			require.Len(t, entries, 1)
+			fields := entries[0].ContextMap()
+			require.Equal(t, float64(1), fields["read_timeout_seconds"])
+			require.Equal(t, mode == "before_output", fields["retry_before_output"])
+			detail := c.GetString(OpsUpstreamErrorDetailKey)
+			require.True(t, gjson.Valid(detail))
+			if mode == "close_1008" {
+				require.EqualValues(t, 1008, fields["close_code"])
+				require.Equal(t, "connection_interrupted", fields["reason"])
+			} else {
+				require.Equal(t, "read_timeout", fields["reason"])
+				require.Equal(t, "read_timeout", gjson.Get(detail, "reason").String())
+			}
+			if mode == "before_output" {
+				var retry *UpstreamFailoverError
+				require.ErrorAs(t, err, &retry)
+				require.True(t, retry.RetryableOnSameAccount)
+				require.Empty(t, rec.Body.String())
+			} else {
+				require.Contains(t, rec.Body.String(), smartWSUncertainCode)
+			}
+			encoded, marshalErr := json.Marshal(fields)
+			require.NoError(t, marshalErr)
+			for _, secret := range []string{"private-upstream-close-text", "private-request-input"} {
+				require.NotContains(t, detail, secret)
+				require.NotContains(t, string(encoded), secret)
+				require.NotContains(t, rec.Body.String(), secret)
+			}
+		})
+	}
+}
 
 func TestSmartWSHandshakeDiagnosticsHTTPFailurePreservesResponseAndSecrets(t *testing.T) {
 	const upstreamBody = `{"error":{"code":"forbidden","type":"permission_error","message":"private-customer-input"}}`

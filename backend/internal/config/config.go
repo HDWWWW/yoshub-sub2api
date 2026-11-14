@@ -1346,6 +1346,9 @@ func (c *UserMessageQueueConfig) GetEffectiveMode() string {
 // DefaultOpenAIWSClientFirstMessageTimeoutSeconds preserves the legacy ingress deadline.
 const DefaultOpenAIWSClientFirstMessageTimeoutSeconds = 30
 
+// HTTP SmartWS generation reads have a separate budget from idle native sockets.
+const DefaultSmartWSReadTimeoutSeconds = 120
+
 // GatewayOpenAIWSConfig OpenAI Responses WebSocket 配置。
 // 注意：默认全局开启；如需回滚可使用 force_http 或关闭 enabled。
 type GatewayOpenAIWSConfig struct {
@@ -1361,6 +1364,7 @@ type GatewayOpenAIWSConfig struct {
 	HandshakesPerSecond                int `mapstructure:"handshakes_per_second"`
 	HandshakesPerSecondPerIdentity     int `mapstructure:"handshakes_per_second_per_identity"`
 	IdleTimeoutSeconds                 int `mapstructure:"idle_timeout_seconds"`
+	SmartWSReadTimeoutSeconds          int `mapstructure:"smart_ws_read_timeout_seconds"`
 	MaxConnAgeSeconds                  int `mapstructure:"max_conn_age_seconds"`
 	// HTTP SmartWS endpoint rejection cache; does not change account health.
 	HandshakeRejectionCooldownSeconds int `mapstructure:"handshake_rejection_cooldown_seconds"`
@@ -2606,6 +2610,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.apikey_max_conns_factor", 5.0)
 	viper.SetDefault("gateway.openai_ws.dial_timeout_seconds", 10)
 	viper.SetDefault("gateway.openai_ws.read_timeout_seconds", 900)
+	viper.SetDefault("gateway.openai_ws.smart_ws_read_timeout_seconds", DefaultSmartWSReadTimeoutSeconds)
 	viper.SetDefault("gateway.openai_ws.write_timeout_seconds", 120)
 	viper.SetDefault("gateway.openai_ws.pool_target_utilization", 0.7)
 	viper.SetDefault("gateway.openai_ws.queue_limit_per_conn", 64)
@@ -3712,6 +3717,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIWS.ReadTimeoutSeconds <= 0 {
 		return fmt.Errorf("gateway.openai_ws.read_timeout_seconds must be positive")
+	}
+	if c.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds <= 0 || c.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds > 3600 {
+		return fmt.Errorf("gateway.openai_ws.smart_ws_read_timeout_seconds must be within [1,3600]")
 	}
 	if c.Gateway.OpenAIWS.WriteTimeoutSeconds <= 0 {
 		return fmt.Errorf("gateway.openai_ws.write_timeout_seconds must be positive")

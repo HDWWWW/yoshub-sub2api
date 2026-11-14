@@ -3,7 +3,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -415,6 +417,38 @@ func TestSmartWS_EncryptedReasoningErrorPreservedWithoutResend(t *testing.T) {
 	require.Contains(t, string(first), "audit-opaque")
 	require.Equal(t, 400, rec.Code)
 	require.Contains(t, rec.Body.String(), "invalid_encrypted_content")
+}
+
+func TestSmartWS_MultilineErrorAfterControlEvent(t *testing.T) {
+	var calls atomic.Int32
+	s, account, upstream := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+		ws, err := forcedWSUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		if _, _, err = ws.ReadMessage(); err != nil {
+			return
+		}
+		calls.Add(1)
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"type":"codex.rate_limits","rate_limits":[]}`))
+		var formatted bytes.Buffer
+		_ = json.Indent(&formatted, []byte(`{"type":"error","status":400,"error":{"code":"invalid_encrypted_content","type":"invalid_request_error","message":"The encrypted content could not be verified"}}`), "", "  ")
+		_ = ws.WriteMessage(websocket.TextMessage, formatted.Bytes())
+		_, _, _ = ws.ReadMessage()
+	})
+	c, rec := forcedWSContext(t, "/v1/responses", 1, "multiline-error")
+	_, err := s.Forward(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":[{"type":"reasoning","encrypted_content":"opaque-history"}]}`))
+	require.Error(t, err)
+	require.EqualValues(t, 1, calls.Load())
+	require.Zero(t, upstream.callCount)
+	require.Contains(t, rec.Body.String(), "invalid_encrypted_content")
+	require.NotContains(t, rec.Body.String(), smartWSUncertainCode)
+	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			require.True(t, json.Valid([]byte(data)), "SmartWS must forward one complete JSON document per data line")
+		}
+	}
 }
 
 func TestSmartWS_PoolIsolatesDestinationAndAuth(t *testing.T) {

@@ -46,6 +46,7 @@ func forcedWSService(t *testing.T, handler http.HandlerFunc) (*OpenAIGatewayServ
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 4
 	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 4
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 2
+	cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds = 2
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 2
 	pool := newOpenAIWSConnPool(cfg)
 	pool.setClientDialerForTest(forcedWSTestDialer{url: "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/responses", delegate: newDefaultOpenAIWSClientDialer()})
@@ -273,6 +274,7 @@ func TestForcedWSProgressTimeoutEvictsOnlyStalledLease(t *testing.T) {
 					}
 				})
 				s.cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 1
+				s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds = 1
 				s.settingService = happyTestService(t, 0, true).settingService
 				a.Type = AccountTypeOAuth
 				a.Credentials = map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"}
@@ -294,10 +296,24 @@ func TestForcedWSProgressTimeoutEvictsOnlyStalledLease(t *testing.T) {
 				require.Error(t, err)
 				require.Less(t, time.Since(started), 2*time.Second)
 				var failure *UpstreamFailoverError
-				if errors.As(err, &failure) {
-					require.False(t, failure.ShouldRetryNextAccount())
+				if !chat && phase != "content" {
+					// Responses can retry a transport timeout before model output.
+					// The failed dispatch is cleared before the HTTP handler retries.
+					require.ErrorAs(t, err, &failure)
+					require.True(t, failure.RetryableOnSameAccount)
+					if phase == "headers" {
+						require.Empty(t, rec.Body.String())
+					} else {
+						require.Contains(t, rec.Body.String(), "gateway.status.delta")
+						require.NotContains(t, rec.Body.String(), smartWSUncertainCode)
+					}
+					require.False(t, smartWSHasDispatched(c))
+				} else {
+					if errors.As(err, &failure) {
+						require.False(t, failure.ShouldRetryNextAccount())
+					}
+					require.True(t, smartWSHasDispatched(c))
 				}
-				require.True(t, smartWSHasDispatched(c))
 				if phase == "content" {
 					require.Contains(t, rec.Body.String(), "hello")
 				}

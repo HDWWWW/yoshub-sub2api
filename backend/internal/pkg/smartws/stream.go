@@ -52,7 +52,7 @@ func (b *eventBody) Close() error {
 	})
 	return nil
 }
-func (b *eventBody) failure(reason string, transportFailure bool) (int, error) {
+func (b *eventBody) failure(reason string, transportFailure bool, cause ...error) (int, error) {
 	if err := b.ctx.Err(); err != nil {
 		_ = b.Close()
 		b.pool.count("cancelled")
@@ -76,6 +76,7 @@ func (b *eventBody) failure(reason string, transportFailure bool) (int, error) {
 	}
 
 	codes := map[string]string{
+		"upstream read timeout":                  "read_timeout",
 		"request context cancelled":              "context_cancelled",
 		"upstream stream closed":                 "lease_closed",
 		"invalid upstream JSON event":            "invalid_json",
@@ -94,7 +95,12 @@ func (b *eventBody) failure(reason string, transportFailure bool) (int, error) {
 	b.pool.count("stream_failure_" + code)
 
 	_ = b.Close()
-	return 0, &SentError{Err: errors.New(reason), TransportFailure: transportFailure}
+	failure := &SentError{Err: errors.New(reason), TransportFailure: transportFailure, Reason: code}
+	var closeErr *websocket.CloseError
+	if len(cause) > 0 && errors.As(cause[0], &closeErr) {
+		failure.CloseCode = closeErr.Code
+	}
+	return 0, failure
 }
 func (b *eventBody) Read(destination []byte) (int, error) {
 	if len(destination) == 0 {
@@ -163,7 +169,7 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 			} else if errors.Is(next.err, websocket.ErrReadLimit) {
 				b.pool.count("socket_frame_limit")
 			}
-			return b.failure("upstream connection interrupted or invalid", isTransportFailure(next.err))
+			return b.failure("upstream connection interrupted or invalid", isTransportFailure(next.err), next.err)
 		}
 		if validateJSON(next.data) != nil {
 			return b.failure("invalid upstream JSON event", false)
@@ -256,12 +262,13 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 		_, _ = encoded.WriteString("event: ")
 		_, _ = encoded.WriteString(event.Type)
 		_ = encoded.WriteByte('\n')
-		for _, line := range bytes.Split(next.data, []byte{'\n'}) {
-			_, _ = encoded.WriteString("data: ")
-			_, _ = encoded.Write(line)
-			_ = encoded.WriteByte('\n')
+		_, _ = encoded.WriteString("data: ")
+		// Preserve the complete JSON document and numeric precision while
+		// keeping downstream line-oriented adapters compatible with pretty JSON.
+		if err := json.Compact(&encoded, next.data); err != nil {
+			return b.failure("invalid upstream JSON event", false)
 		}
-		_ = encoded.WriteByte('\n')
+		_, _ = encoded.WriteString("\n\n")
 		b.mu.Lock()
 		if b.closed {
 			b.mu.Unlock()

@@ -10,9 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/smartws"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
 )
 
 // Some failures carry billable partial usage even as the first event. Keep it
@@ -334,12 +336,17 @@ type smartWSDispatch struct {
 	httpPreOutputRecovery bool
 	transportFailure      atomic.Bool
 	replayUnsafe          atomic.Bool
+	readTimeout           time.Duration
+	readFailure           atomic.Pointer[smartws.SentError]
 }
 
 func (d *smartWSDispatch) observeReadError(err error) {
 	var sent *smartws.SentError
-	if d != nil && errors.As(err, &sent) && sent.TransportFailure {
-		d.transportFailure.Store(true)
+	if d != nil && errors.As(err, &sent) {
+		d.readFailure.CompareAndSwap(nil, sent)
+		if sent.TransportFailure {
+			d.transportFailure.Store(true)
+		}
 	}
 }
 
@@ -406,14 +413,34 @@ func smartWSCanRetryHTTPBeforeOutput(c *gin.Context) bool {
 // Recover eligible pre-output transport failures without writing to the client.
 // Other uncertain outcomes remain explicit and retain any observed usage.
 func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult, err error) (*OpenAIForwardResult, error) {
-	if err == nil || !smartWSOutcomeUncertain(c) || SmartWSFailureDelivered(c) ||
-		c.Request.Context().Err() != nil || (result != nil && result.ClientDisconnect) {
+	if err == nil || !smartWSOutcomeUncertain(c) {
 		return result, err
 	}
-	if smartWSCanRetryHTTPBeforeOutput(c) && (result == nil || (!openAIUsageHasTokens(&result.Usage) && result.ImageCount == 0)) {
+	retry := smartWSCanRetryHTTPBeforeOutput(c) && (result == nil || (!openAIUsageHasTokens(&result.Usage) && result.ImageCount == 0))
+	v, _ := c.Get(smartWSDispatchKey)
+	d := v.(*smartWSDispatch)
+	detail := ""
+	if failure := d.readFailure.Load(); failure != nil {
+		fields := gin.H{"reason": failure.Reason, "close_code": failure.CloseCode,
+			"read_timeout_seconds": d.readTimeout.Seconds(), "retry_before_output": retry,
+			"dispatch_state": d.state.Load(), "replay_unsafe": d.replayUnsafe.Load()}
+		encoded, _ := json.Marshal(fields)
+		detail = string(encoded)
+		// A streaming formatter may already have delivered the public error.
+		// Persist its cause before the no-second-error guard below.
+		c.Set(OpsUpstreamErrorDetailKey, detail)
+		logger.FromContext(c.Request.Context()).Warn("smart_ws.stream_failure",
+			zap.String("reason", failure.Reason), zap.Int("close_code", failure.CloseCode),
+			zap.Float64("read_timeout_seconds", d.readTimeout.Seconds()), zap.Bool("retry_before_output", retry),
+			zap.Int32("dispatch_state", d.state.Load()), zap.Bool("replay_unsafe", d.replayUnsafe.Load()))
+	}
+	if SmartWSFailureDelivered(c) || c.Request.Context().Err() != nil || (result != nil && result.ClientDisconnect) {
+		return result, err
+	}
+	if retry {
 		const message = "Upstream connection ended before model output"
 		payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "code": "upstream_stream_disconnected", "message": message}})
-		setOpsUpstreamError(c, http.StatusBadGateway, message, "")
+		setOpsUpstreamError(c, http.StatusBadGateway, message, detail)
 		failure := &UpstreamFailoverError{}
 		var previous *UpstreamFailoverError
 		if errors.As(err, &previous) {
@@ -426,7 +453,7 @@ func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult
 		return result, failure
 	}
 	payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "code": smartWSUncertainCode, "message": smartWSUncertainMessage}})
-	setOpsUpstreamError(c, http.StatusBadGateway, smartWSUncertainMessage, "")
+	setOpsUpstreamError(c, http.StatusBadGateway, smartWSUncertainMessage, detail)
 	if !c.Writer.Written() {
 		c.Data(http.StatusBadGateway, "application/json", payload)
 	} else {

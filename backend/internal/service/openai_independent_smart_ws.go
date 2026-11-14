@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/smartws"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -45,6 +46,11 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		frameLimit = s.cfg.Gateway.OpenAIWS.MaxUpstreamFrameBytes
 	}
 	var response *http.Response
+	readTimeout := time.Duration(config.DefaultSmartWSReadTimeoutSeconds) * time.Second
+	if s.cfg != nil && s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds > 0 {
+		readTimeout = time.Duration(s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds) * time.Second
+	}
+	dispatch.readTimeout = readTimeout
 	response, handled, err := s.getIndependentSmartWSPool().TryWithOptions(copyReq, proxyURL, scope, smartws.Options{
 		OnHandshake: func(status int, h http.Header, body []byte, dialErr error, elapsed time.Duration) {
 			observation.m.handshakes.Add(1)
@@ -56,7 +62,7 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		},
 		AllowTarget:      true,
 		WireMessage:      encoded,
-		ReadTimeout:      s.openAIWSReadTimeout(),
+		ReadTimeout:      readTimeout,
 		MaxFrameBytes:    frameLimit,
 		RequireWebSearch: account.IsOpenAIOAuthLike() && openAIWSWebSearchDeclared(encoded),
 		OnFailure: func(first, tail []byte) []byte {

@@ -79,6 +79,7 @@ func TestSmartWSHTTPHandlerRetriesBeforeOutput(t *testing.T) {
 			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 			cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
 			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 2
+			cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds = 2
 			accounts := make([]service.Account, 0, 2)
 			for i, key := range []string{"local-first", "local-second"} {
 				accounts = append(accounts, service.Account{ID: 99910 + int64(i), Platform: service.PlatformOpenAI,
@@ -188,6 +189,7 @@ func testSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T, co
 						cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 						cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
 						cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 2
+						cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds = 2
 						accounts := []service.Account{{ID: 99901, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
 							Status: service.StatusActive, Schedulable: true, Concurrency: 1,
 							Credentials: map[string]any{"api_key": "local-test", "base_url": server.URL},
