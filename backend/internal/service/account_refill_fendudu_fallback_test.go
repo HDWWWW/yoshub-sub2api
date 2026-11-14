@@ -100,6 +100,7 @@ func TestFenduduFallbackTimeoutBoundaryAndOnePurchaseAcrossRestart(t *testing.T)
 	require.Equal(t, state.Jobs[0].ID, state.Jobs[1].FenduduFallbackJobID)
 	require.Equal(t, "processing", state.Jobs[1].Status, "original is retained for reconciliation")
 	require.True(t, refillJobTimedOut(state.Config, state.Jobs[1], now))
+	require.Nil(t, captureRefillTimeoutNotice(&state, now), "a 5-minute backup must not announce the independent 10-minute primary timeout")
 	for i := 0; i < 4; i++ {
 		// A new service instance has no in-memory deduplication state.
 		restarted := *s
