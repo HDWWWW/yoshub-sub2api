@@ -559,6 +559,7 @@ function persistManualRequests(requests: ManualRefillRequest[]) {
   manualRequests.value = requests
 }
 function clearManualRequest(request: ManualRefillRequest) {
+  if (manualPending.value?.request_id === request.request_id) manualPlan.value = request.plan
   const remaining = manualRequests.value.filter(item => item.request_id !== request.request_id)
   try { persistManualRequests(remaining) }
   catch { manualStorageFailed.value = true; error.value = t('accountRefill.manualStorageError') }

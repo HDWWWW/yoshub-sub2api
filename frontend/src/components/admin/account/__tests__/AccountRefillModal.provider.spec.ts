@@ -108,7 +108,7 @@ describe('Manual refill supplier isolation', () => {
     expect(saved()).toEqual([fendudu])
     expect(w.get('nav button[aria-pressed="true"]').text()).toBe(zh.manual)
     await w.get('[data-testid="manual-refill-force"]').trigger('click'); await flushPromises()
-    expect(manual.mock.calls[1]![0]).toMatchObject({ force: true })
+    expect(manual.mock.calls[1]![0]).toMatchObject({ force: true, plan: primary.plan })
     expect(manual.mock.calls[1]![0].provider).toBeUndefined()
     expect(saved()).toEqual([fendudu])
     w.unmount()
