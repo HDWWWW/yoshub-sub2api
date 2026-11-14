@@ -18,7 +18,7 @@
       <p v-if="!isFendudu" class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
       <div class="rounded-lg bg-gray-50 px-4 py-3 text-sm dark:bg-dark-800" aria-live="polite">{{ view.message || t('accountRefill.unconfigured') }}</div>
       <nav ref="tabsNav" class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
-        <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="!!manualPending && ['manual', 'fendudu'].includes(tab) && (tab === 'fendudu') !== (manualPending.provider === 'fendudu')" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
+        <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="busy" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
       </nav>
       <form v-admin-read-only-form id="refill-settings" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="busy" class="space-y-5">
@@ -163,6 +163,9 @@
         </fieldset>
       </form>
       <div v-if="activeTab === 'manual' || isFendudu" class="space-y-4">
+        <p class="font-medium" data-testid="manual-refill-provider">{{ t('accountRefill.manualProvider', { provider: manualProviderName }) }}</p>
+        <p v-if="manualStorageFailed" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.manualStorageError') }}</p>
+        <p v-if="otherProviderPending" class="text-sm text-amber-700" data-testid="manual-other-provider-pending">{{ t('accountRefill.otherProviderPending', { provider: t(isFendudu ? 'accountRefill.primaryName' : 'accountRefill.fenduduName') }) }}</p>
         <details v-if="isFendudu" :open="!view.fendudu?.token_configured || fenduduDirty" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="fendudu-connection">
           <summary class="cursor-pointer text-sm font-medium">{{ t('accountRefill.fenduduConnectionSettings') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</summary>
           <label class="block"><span class="input-label">{{ t('accountRefill.fenduduToken') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span><input v-model="fenduduToken" type="password" autocomplete="new-password" class="input" placeholder="rvak_…" :disabled="busy" data-testid="fendudu-token" /><span class="input-hint">{{ t('accountRefill.tokenHint') }}</span></label>
@@ -193,10 +196,10 @@
         </div>
         <p v-if="dirty || conflict || (isFendudu && fenduduDirty)" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
         <p v-if="!manualTokenConfigured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
-        <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain') }}</p>
+        <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain', { provider: manualProviderName }) }}</p>
         <div class="flex flex-wrap gap-3">
-          <button v-admin-write type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : isFendudu ? 'accountRefill.fenduduSubmit' : 'accountRefill.manualSubmit') }}</button>
-          <button v-admin-write type="button" class="btn btn-secondary" :disabled="manualForceDisabled" data-testid="manual-refill-force" @click="submitManual(true)">{{ t('accountRefill.manualForce') }}</button>
+          <button v-admin-write type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : isFendudu ? 'accountRefill.fenduduSubmit' : 'accountRefill.manualSubmit', { provider: manualProviderName }) }}</button>
+          <button v-admin-write type="button" class="btn btn-secondary" :disabled="manualForceDisabled" data-testid="manual-refill-force" @click="submitManual(true)">{{ t('accountRefill.manualForce', { provider: manualProviderName }) }}</button>
         </div>
         <p class="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{{ t(isFendudu ? 'accountRefill.fenduduForceHint' : 'accountRefill.manualForceHint') }}</p>
       </div>
@@ -343,9 +346,18 @@ const isFendudu = computed(() => activeTab.value === 'fendudu')
 const fenduduDirty = computed(() => fenduduToken.value !== '' || fenduduConnectionID.value !== (view.value?.fendudu?.connection_id || ''))
 const manualTokenConfigured = computed(() => isFendudu.value ? view.value?.fendudu?.token_configured : view.value?.token_configured)
 const fenduduProduct = computed(() => view.value?.fendudu?.products?.find(p => p.product === manualPlan.value))
-const pendingProviderMismatch = computed(() => !!manualPending.value && (manualPending.value.provider === 'fendudu') !== isFendudu.value)
-const manualPlan = ref('pro5x'), manualPending = ref<ManualRefillRequest | null>(null)
-const manualStorageKey = 'yoshub:manual-refill:pending'
+const manualProviderName = computed(() => t(isFendudu.value ? 'accountRefill.fenduduName' : 'accountRefill.primaryName'))
+const manualRequests = ref<ManualRefillRequest[]>([])
+const manualPending = computed(() => manualRequests.value.find(request => request.group_id === selectedGroup.value && (request.provider === 'fendudu') === isFendudu.value))
+const otherProviderPending = computed(() => manualRequests.value.some(request => request.group_id === selectedGroup.value && (request.provider === 'fendudu') !== isFendudu.value))
+const manualPlans = ref({ primary: 'pro5x', fendudu: 'pro5x' })
+const manualPlan = computed({
+  get: () => manualPending.value?.plan || manualPlans.value[isFendudu.value ? 'fendudu' : 'primary'],
+  set: value => { manualPlans.value[isFendudu.value ? 'fendudu' : 'primary'] = value }
+})
+const legacyManualStorageKey = 'yoshub:manual-refill:pending'
+const manualStorageKey = 'yoshub:manual-refill:pending:v2'
+const manualStorageFailed = ref(false)
 const notifiedManualImports = new Set<string>()
 const loading = ref(false), busy = ref(false), conflict = ref(false), now = ref(Date.now())
 let revision = 0, generation = 0, fetching = false
@@ -362,8 +374,8 @@ const usageItems = computed(() => {
 const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === (form.value?.rotation_enabled ? (dirty.value ? form.value.rotation[0]?.plan : view.value?.next_plan) : form.value?.plan) && q.enabled))
 const manualQuote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && q.enabled))
 const manualGroups = computed(() => view.value?.config.delivery_group_ids.map(id => groups.value.find(g => g.id === id)?.name || `#${id}`).join('、'))
-const manualDisabled = computed(() => busy.value || !view.value || pendingProviderMismatch.value || (!manualPending.value && (dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)))
-const manualForceDisabled = computed(() => busy.value || !view.value || pendingProviderMismatch.value || dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)
+const manualDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || (!manualPending.value && (dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)))
+const manualForceDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)
 const keyDays = computed(() => { const at = view.value?.key?.expires_at; return at && !at.startsWith('0001') ? (Date.parse(at) - now.value) / 86400000 : null })
 const keyRemaining = computed(() => keyDays.value === null ? '' : keyDays.value <= 0 ? t('accountRefill.expired') : t('accountRefill.keyRemaining', { days: Math.floor(keyDays.value * 10) / 10 }))
 const fixedExpiry = computed({ get: () => form.value?.delivery.fixed_expires_at ? new Date(form.value.delivery.fixed_expires_at * 1000 + 8 * 3600000).toISOString().slice(0, 16) : '', set: v => { if (form.value) form.value.delivery.fixed_expires_at = v ? Math.floor(Date.parse(`${v}:00+08:00`) / 1000) : null } })
@@ -448,7 +460,7 @@ function accept(data: RefillView, reset: boolean) {
     if (notifiedManualImports.has(key)) continue
     notifiedManualImports.add(key)
     const previous = previousJobs?.get(job.id)
-    const pendingRequest = manualPending.value?.request_id === job.manual_request_id && !!job.manual_request_id
+    const pendingRequest = manualRequests.value.some(request => request.group_id === data.config.group_id && request.request_id === job.manual_request_id)
     if ((previous && (previous.status !== 'imported' || !previous.account_id)) || pendingRequest) {
       app.showSuccess(t('accountRefill.manualImported', { plan: job.plan, account: job.account_id }))
     }
@@ -474,8 +486,11 @@ function accept(data: RefillView, reset: boolean) {
   if (reset && isFendudu.value && !manualPending.value && !data.fendudu?.products?.some(p => p.product === manualPlan.value && p.available_now > 0 && !p.expired && !p.blocked_reason)) {
     manualPlan.value = data.fendudu?.products?.find(p => ['pro5x', 'pro20x'].includes(p.product) && p.available_now > 0 && !p.expired && !p.blocked_reason)?.product || manualPlan.value
   }
-  if (manualPending.value && data.jobs.some(j => j.manual_request_id === manualPending.value?.request_id)) {
-    clearManualRequest(); activeTab.value = 'progress'; jobsPage.value = 1
+  const currentPending = manualPending.value
+  const confirmed = manualRequests.value.filter(request => request.group_id === data.config.group_id && data.jobs.some(job => job.manual_request_id === request.request_id && job.provider === request.provider))
+  for (const request of confirmed) clearManualRequest(request)
+  if (!reset && currentPending && confirmed.includes(currentPending) && ['manual', 'fendudu'].includes(activeTab.value)) {
+    activeTab.value = 'progress'; jobsPage.value = 1
   }
   now.value = Date.now()
 }
@@ -536,37 +551,49 @@ async function reconcileFendudu(job: RefillJob) {
 async function check() { if (busy.value || dirty.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.check(selectedGroup.value), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
 async function retry(id: string) { if (busy.value) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.retry(id, selectedGroup.value), false) } catch (e) { error.value = message(e) } finally { busy.value = false } }
 async function dismiss(id: string) { if (busy.value || !confirmedJobs.value.includes(id)) return; busy.value = true; error.value = ''; try { accept(await accountRefillAPI.dismiss(id, selectedGroup.value), false); confirmedJobs.value = confirmedJobs.value.filter(v => v !== id) } catch (e) { error.value = message(e) } finally { busy.value = false } }
-function clearManualRequest() {
-  manualPending.value = null
-  try { sessionStorage.removeItem(manualStorageKey) } catch { /* Already acknowledged in memory. */ }
+function persistManualRequests(requests: ManualRefillRequest[]) {
+  // Write all suppliers before removing the legacy slot. A failed write must
+  // never discard an uncertain request or allow a new purchase without a receipt.
+  sessionStorage.setItem(manualStorageKey, JSON.stringify(requests))
+  sessionStorage.removeItem(legacyManualStorageKey)
+  manualRequests.value = requests
 }
-function restoreManualRequest() {
+function clearManualRequest(request: ManualRefillRequest) {
+  const remaining = manualRequests.value.filter(item => item.request_id !== request.request_id)
+  try { persistManualRequests(remaining) }
+  catch { manualStorageFailed.value = true; error.value = t('accountRefill.manualStorageError') }
+}
+function restoreManualRequests() {
+  manualRequests.value = []; manualStorageFailed.value = false
   try {
     const raw = sessionStorage.getItem(manualStorageKey)
-    if (raw) {
-      const request = JSON.parse(raw) as ManualRefillRequest
-      if (typeof request.request_id === 'string' && ['pro5x', 'pro20x'].includes(request.plan) && Number.isInteger(request.revision) && (request.provider == null || request.provider === 'fendudu')) {
-        manualPending.value = request; manualPlan.value = request.plan; activeTab.value = request.provider === 'fendudu' ? 'fendudu' : 'manual'
-      }
+    const requests: unknown = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(requests)) throw new Error('Invalid manual request storage')
+    const legacy = sessionStorage.getItem(legacyManualStorageKey)
+    if (legacy) requests.push(JSON.parse(legacy))
+    for (const request of requests) {
+      if (!request || typeof request !== 'object' || typeof request.request_id !== 'string' || !['pro5x', 'pro20x'].includes(request.plan) || !Number.isInteger(request.revision) || (request.group_id != null && (!Number.isInteger(request.group_id) || request.group_id <= 0)) || (request.provider != null && request.provider !== 'fendudu') || (request.force != null && typeof request.force !== 'boolean')) throw new Error('Invalid manual request storage')
+      if (!manualRequests.value.some(item => item.request_id === request.request_id)) manualRequests.value.push(request as ManualRefillRequest)
     }
-  } catch { /* Invalid session data cannot initiate a purchase. */ }
+  } catch { manualStorageFailed.value = true; error.value = t('accountRefill.manualStorageError') }
 }
 async function submitManual(force = false) {
-  if (force ? manualForceDisabled.value : manualDisabled.value) return
+  if (!['manual', 'fendudu'].includes(activeTab.value) || (force ? manualForceDisabled.value : manualDisabled.value)) return
   const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(isFendudu.value ? { provider: 'fendudu' as const } : {}), ...(force ? { force: true } : {}) }
-  try { sessionStorage.setItem(manualStorageKey, JSON.stringify(request)) }
+  const remaining = manualRequests.value.filter(item => item.group_id !== request.group_id || item.provider !== request.provider)
+  try { persistManualRequests([...remaining, request]) }
   catch { error.value = t('accountRefill.manualStorageError'); return }
-  manualPending.value = request; busy.value = true; error.value = ''; generation++
+  busy.value = true; error.value = ''; generation++
   try {
     const data = await accountRefillAPI.manual(request)
-    accept(data, false); clearManualRequest(); activeTab.value = 'progress'; jobsPage.value = 1
+    accept(data, false); clearManualRequest(request); activeTab.value = 'progress'; jobsPage.value = 1
     if (!data.jobs.some(job => job.manual_request_id === request.request_id && job.status === 'imported' && job.account_id)) {
       app.showSuccess(t('accountRefill.manualAccepted'))
     }
   } catch (e) {
     const failure = e as { status?: number; response?: { status?: number } }
     const status = failure.status ?? failure.response?.status
-    if (status === 400 || status === 401 || status === 403) clearManualRequest()
+    if (status === 400 || status === 401 || status === 403) clearManualRequest(request)
     error.value = message(e)
   } finally { busy.value = false }
 }
@@ -583,11 +610,16 @@ watch(() => props.show, async show => {
   downloadStepUp.onCancel()
   if (!show) return
   loading.value = true; error.value = ''; form.value = null; view.value = null; activeTab.value = props.initialTab || 'connection'
-  restoreManualRequest()
+  restoreManualRequests()
   try {
-    const [initial, allGroups] = await Promise.all([accountRefillAPI.get(manualPending.value?.group_id), getAllIncludingInactive()])
+    const [initial, allGroups] = await Promise.all([accountRefillAPI.get(), getAllIncludingInactive()])
     const firstGroup = initial.rules?.[0]?.group_id || allGroups.find(g => g.platform === 'openai' && g.status === 'active')?.id
-    const data = !initial.config.group_id && firstGroup ? await accountRefillAPI.get(firstGroup) : initial
+    let data = !initial.config.group_id && firstGroup ? await accountRefillAPI.get(firstGroup) : initial
+    // Pre-group legacy requests belong to the default rule, not whichever
+    // supplier/group the administrator happens to view next.
+    for (const request of manualRequests.value) request.group_id ??= data.config.group_id
+    const pending = manualRequests.value.find(request => (request.provider === 'fendudu') === isFendudu.value)
+    if (['manual', 'fendudu'].includes(activeTab.value) && pending?.group_id && pending.group_id !== data.config.group_id) data = await accountRefillAPI.get(pending.group_id)
     if (current === generation) { groups.value = allGroups; accept(data, true) }
   }
   catch { if (current === generation) error.value = t('accountRefill.loadError') }

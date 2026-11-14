@@ -809,14 +809,17 @@ describe('Fendudu manual refill', () => {
   expect(configureFendudu).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled()
   w.unmount()
  })
- it('reuses an uncertain request after reopening and prevents switching its supplier', async () => {
+ it('reuses an uncertain request after reopening and keeps it separate when switching suppliers', async () => {
   manual.mockRejectedValue({ status: 503 })
   let w = await openFendudu()
   await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
   const first = structuredClone(manual.mock.calls[0]![0])
   w.unmount(); w = await openFendudu()
   const oldTab = w.findAll('nav button').find(b => b.text() === 'accountRefill.manual')!
-  expect(oldTab.attributes('disabled')).toBeDefined()
+  expect(oldTab.attributes('disabled')).toBeUndefined()
+  await oldTab.trigger('click')
+  expect(w.get('[data-testid="manual-refill-submit"]').text()).toBe('accountRefill.manualSubmit')
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.fendudu')!.trigger('click')
   await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
   expect(manual).toHaveBeenLastCalledWith(first)
   w.unmount()
