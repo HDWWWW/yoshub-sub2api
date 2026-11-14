@@ -413,7 +413,7 @@ func smartWSCanRetryHTTPBeforeOutput(c *gin.Context) bool {
 // Recover eligible pre-output transport failures without writing to the client.
 // Other uncertain outcomes remain explicit and retain any observed usage.
 func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult, err error) (*OpenAIForwardResult, error) {
-	if err == nil || !smartWSOutcomeUncertain(c) {
+	if err == nil || !smartWSOutcomeUncertain(c) || c.Request.Context().Err() != nil || (result != nil && result.ClientDisconnect) {
 		return result, err
 	}
 	retry := smartWSCanRetryHTTPBeforeOutput(c) && (result == nil || (!openAIUsageHasTokens(&result.Usage) && result.ImageCount == 0))
@@ -434,7 +434,7 @@ func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult
 			zap.Float64("read_timeout_seconds", d.readTimeout.Seconds()), zap.Bool("retry_before_output", retry),
 			zap.Int32("dispatch_state", d.state.Load()), zap.Bool("replay_unsafe", d.replayUnsafe.Load()))
 	}
-	if SmartWSFailureDelivered(c) || c.Request.Context().Err() != nil || (result != nil && result.ClientDisconnect) {
+	if SmartWSFailureDelivered(c) {
 		return result, err
 	}
 	if retry {

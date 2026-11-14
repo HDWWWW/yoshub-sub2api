@@ -21,6 +21,47 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
+func TestSmartWSClientCancellationDoesNotRecordUpstreamFailure(t *testing.T) {
+	started := make(chan struct{})
+	s, account, _ := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+		ws, err := forcedWSUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		if _, _, err = ws.ReadMessage(); err != nil {
+			return
+		}
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(forcedWSCreated))
+		close(started)
+		_, _, _ = ws.ReadMessage()
+	})
+	core, logs := observer.New(zap.InfoLevel)
+	c, _ := forcedWSContext(t, "/v1/responses", 1, "cancel-diagnostic")
+	ctx, cancel := context.WithCancel(logger.IntoContext(c.Request.Context(), zap.New(core)))
+	defer cancel()
+	c.Request = c.Request.WithContext(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Forward(ctx, c, account, []byte(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream did not receive request")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled request did not finish")
+	}
+	require.Empty(t, logs.FilterMessage("smart_ws.stream_failure").All())
+	require.Empty(t, c.GetString(OpsUpstreamErrorDetailKey))
+}
+
 func TestSmartWSGenerationTimeoutAndCloseDiagnostics(t *testing.T) {
 	for _, mode := range []string{"before_output", "after_output", "close_1008"} {
 		t.Run(mode, func(t *testing.T) {
