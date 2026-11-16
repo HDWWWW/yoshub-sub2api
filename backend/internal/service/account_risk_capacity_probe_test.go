@@ -17,7 +17,7 @@ func riskCapacityDueJob(t *testing.T, s *AccountRiskService, now time.Time) *acc
 	require.NoError(t, err)
 	var job *accountRiskJob
 	for sec := 0; sec <= state.Rules[7].Config.SustainSeconds; sec++ {
-		job, err = s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+		job, err = riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 		require.NoError(t, err)
 		if sec < state.Rules[7].Config.SustainSeconds {
 			require.Nil(t, job)
@@ -59,7 +59,7 @@ func TestAccountRiskCapacityProbeUsesConfiguredMessageAndGuards(t *testing.T) {
 				r.Revision++
 			}
 			s.runProbe(context.Background(), job)
-			require.Nil(t, store.state.Pending)
+			require.Empty(t, store.state.ActiveProbes)
 			if scenario == "pass" || scenario == "mismatch" || scenario == "network" || scenario == "incomplete" || scenario == "pair changed" {
 				require.Equal(t, 1, probe.calls)
 				require.Equal(t, int64(1), probe.lastAccountID)
@@ -147,11 +147,11 @@ func TestAccountRiskCapacityProbeCooldownSurvivesRecovery(t *testing.T) {
 		if sec == 4 {
 			loads.first = 100
 		}
-		next, err := s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+		next, err := riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 		require.NoError(t, err)
 		require.Nil(t, next, "must not test every second or reset the interval after a recovered sample")
 	}
-	next, err := s.tick(context.Background(), now.Add(13*time.Second))
+	next, err := riskSingleTick(t, s, context.Background(), now.Add(13*time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, next)
 	require.Empty(t, store.stopped)
@@ -174,7 +174,7 @@ func TestAccountRiskCapacityProbeReservationAndStaleResults(t *testing.T) {
 			s, store, accounts, _, now := riskHarness()
 			job := riskCapacityDueJob(t, s, now)
 			s2 := &AccountRiskService{store: store, accounts: s.accounts, groups: s.groups, loads: s.loads, cfg: s.cfg, worker: "second"}
-			next, err := s2.tick(context.Background(), now.Add(11*time.Second))
+			next, err := riskSingleTick(t, s2, context.Background(), now.Add(11*time.Second))
 			require.NoError(t, err)
 			require.Nil(t, next, "global reservation covers both probe kinds across instances")
 			switch change {
@@ -192,7 +192,7 @@ func TestAccountRiskCapacityProbeReservationAndStaleResults(t *testing.T) {
 			require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(12*time.Second)))
 			require.Equal(t, []int64{1}, store.stopped)
 			require.Empty(t, store.resumed)
-			require.Nil(t, store.state.Pending)
+			require.Empty(t, store.state.ActiveProbes)
 		})
 	}
 }

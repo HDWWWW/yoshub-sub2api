@@ -70,9 +70,7 @@ func riskCapacityEvent(r *AccountRiskRule, a *Account, now time.Time, reason, ac
 		event.Notification = "pending"
 	}
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
-	if len(r.Events) > 50 {
-		r.Events = r.Events[:50]
-	}
+	trimAccountRiskEvents(r)
 }
 
 func (s *AccountRiskService) pausedProbeAccount(ctx context.Context, groupID, accountID int64, token, signature string, now time.Time) (*Account, error) {
@@ -116,7 +114,7 @@ func (s *AccountRiskService) tickCapacityPauses(ctx context.Context, state *Acco
 			pauses = append(pauses, p)
 		}
 	}
-	if state.Pending != nil {
+	if riskSerialProbeBusy(state) {
 		return nil
 	}
 	sort.Slice(pauses, func(i, j int) bool {
@@ -136,6 +134,9 @@ func (s *AccountRiskService) tickCapacityPauses(ctx context.Context, state *Acco
 		return a.AccountID < b.AccountID
 	})
 	for _, p := range pauses {
+		if riskAccountProbeBusy(state, p.AccountID) {
+			continue
+		}
 		r := state.Rules[p.GroupID]
 		a, err := s.manualProbeAccount(ctx, p.GroupID, p.AccountID)
 		if fresh, ok := newlyPaused[p.AccountID]; ok {

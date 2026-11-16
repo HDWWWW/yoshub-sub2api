@@ -45,6 +45,7 @@ func readAccountRiskPauses(ctx context.Context, query func(context.Context, stri
 func encodeLegacyAccountRiskState(state *service.AccountRiskState) ([]byte, error) {
 	copy := *state
 	copy.CapacityPauses = nil
+	copy.ActiveProbes = nil
 	return json.Marshal(&copy)
 }
 
@@ -90,6 +91,9 @@ func (s *accountRiskStore) Read(ctx context.Context) (*service.AccountRiskState,
 	if err = readAccountRiskPauses(ctx, s.db.QueryRowContext, state); err != nil {
 		return nil, err
 	}
+	if err = readAccountRiskActiveProbes(ctx, s.db.QueryRowContext, state); err != nil {
+		return nil, err
+	}
 	return state, nil
 }
 
@@ -118,7 +122,11 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 	if err = readAccountRiskPauses(ctx, tx.QueryRowContext, state); err != nil {
 		return err
 	}
+	if err = readAccountRiskActiveProbes(ctx, tx.QueryRowContext, state); err != nil {
+		return err
+	}
 	before, _ := encodeLegacyAccountRiskState(state)
+	probesBefore, _ := json.Marshal(state.ActiveProbes)
 	pausesBefore, _ := json.Marshal(state.CapacityPauses)
 	changed := []int64{}
 	stop := func(groupID int64, a *service.Account) (bool, error) {
@@ -186,6 +194,7 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 	if err = fn(state, service.AccountRiskScheduling{Stop: stop, Pause: pause, Resume: resume}); err != nil {
 		return err
 	}
+	syncAccountRiskLegacyGuard(state)
 	after, err := encodeLegacyAccountRiskState(state)
 	if err != nil {
 		return err
@@ -204,6 +213,17 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 	if string(pausesBefore) != string(pausesAfter) {
 		_, err = tx.ExecContext(ctx, `INSERT INTO settings (key,value,updated_at) VALUES ($1,$2,NOW())
 		 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, accountRiskCapacityPausesSettingKey, string(pausesAfter))
+		if err != nil {
+			return err
+		}
+	}
+	probesAfter, err := json.Marshal(state.ActiveProbes)
+	if err != nil {
+		return err
+	}
+	if string(probesBefore) != string(probesAfter) {
+		_, err = tx.ExecContext(ctx, `INSERT INTO settings (key,value,updated_at) VALUES ($1,$2,NOW())
+		 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`, accountRiskActiveProbesSettingKey, string(probesAfter))
 		if err != nil {
 			return err
 		}

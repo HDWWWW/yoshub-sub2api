@@ -26,13 +26,13 @@ func TestAccountRiskCapacityPausesAllTargetsBeforeFirstProbe(t *testing.T) {
 	require.Len(t, pool, 1, "paused targets must disappear from ordinary admission")
 	other := *s
 	other.worker = "other-instance"
-	job, err := other.tick(context.Background(), now.Add(3*time.Second))
+	job, err := riskSingleTick(t, &other, context.Background(), now.Add(3*time.Second))
 	require.NoError(t, err)
 	require.Nil(t, job)
 	require.NoError(t, s.finishProbe(context.Background(), first, AccountRiskProbeResult{Completed: true, Text: "21"}, nil, now.Add(4*time.Second)))
 	require.Equal(t, []int64{1}, store.resumed)
 	require.False(t, accounts.pool[1].Schedulable)
-	second, err := other.tick(context.Background(), now.Add(5*time.Second))
+	second, err := riskSingleTick(t, &other, context.Background(), now.Add(5*time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	require.Equal(t, int64(2), second.account.ID)
@@ -55,7 +55,7 @@ func TestAccountRiskCapacityRetriesWhilePausedAfterRestart(t *testing.T) {
 			at := now.Add(11 * time.Second)
 			if outcome == "expired" {
 				at = job.pending.ExpiresAt
-				_, err := s.tick(context.Background(), at)
+				_, err := riskSingleTick(t, s, context.Background(), at)
 				require.NoError(t, err)
 			} else {
 				require.NoError(t, s.finishProbe(context.Background(), job, result, failure, at))
@@ -69,12 +69,12 @@ func TestAccountRiskCapacityRetriesWhilePausedAfterRestart(t *testing.T) {
 			other := *s
 			other.worker = "restarted"
 			for i := 1; i < 10; i++ {
-				next, err := other.tick(context.Background(), at.Add(time.Duration(i)*time.Second))
+				next, err := riskSingleTick(t, &other, context.Background(), at.Add(time.Duration(i)*time.Second))
 				require.NoError(t, err)
 				require.Nil(t, next)
 				require.Equal(t, store.state.CapacityPauses[1].NextProbeAt, store.state.Rules[7].Observation.NextProbeAt)
 			}
-			next, err := other.tick(context.Background(), at.Add(10*time.Second))
+			next, err := riskSingleTick(t, &other, context.Background(), at.Add(10*time.Second))
 			require.NoError(t, err)
 			require.NotNil(t, next)
 			require.Equal(t, int64(1), next.account.ID)

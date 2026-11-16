@@ -49,7 +49,7 @@ func TestAccountRiskProbe429StopsAfterConfiguredImmediateRetries(t *testing.T) {
 			require.Equal(t, started, time.Now(), "429 retries must not sleep or back off")
 			require.Equal(t, []int64{1}, store.stopped)
 			require.False(t, accounts.pool[0].Schedulable)
-			require.Nil(t, store.state.Pending)
+			require.Empty(t, store.state.ActiveProbes)
 			require.Zero(t, loads.slots)
 			require.Equal(t, "single_probe_429", r.Events[0].Kind)
 			require.Equal(t, "stop", r.Events[0].Action)
@@ -105,7 +105,7 @@ func TestAccountRiskProbe429DoesNotStopOnOtherOutcomes(t *testing.T) {
 			require.Equal(t, wantCalls, probe.calls)
 			require.Empty(t, store.stopped)
 			require.Empty(t, r.Events)
-			require.Nil(t, store.state.Pending)
+			require.Empty(t, store.state.ActiveProbes)
 		})
 	}
 }

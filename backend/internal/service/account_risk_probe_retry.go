@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 )
@@ -22,14 +21,10 @@ func (s *AccountRiskService) runProbeAttempts(ctx context.Context, job *accountR
 			// The operator explicitly chooses immediate retries for this probe.
 			// Do not add a backoff or carry the count into another scheduled run.
 			// A retry must still belong to the same enabled rule and account.
-			r, readErr := s.View(ctx, job.pending.GroupID)
-			if readErr != nil {
+			if readErr := s.validateProbeReservation(ctx, job); readErr != nil {
 				return result, readErr
 			}
-			if !r.Config.Enabled || r.Revision != job.pending.Revision {
-				return result, errors.New("configuration changed")
-			}
-			if _, readErr = s.probeAccount(ctx, job, time.Now()); readErr != nil {
+			if _, readErr := s.probeAccount(ctx, job, time.Now()); readErr != nil {
 				return result, readErr
 			}
 		}

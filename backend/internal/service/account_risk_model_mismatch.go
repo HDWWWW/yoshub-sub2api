@@ -102,9 +102,7 @@ func (s *AccountRiskService) HandleModelMismatch(ctx context.Context, groupID in
 		}
 		event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: current.ID, AccountName: riskNotificationName(current.Name), Reason: reason, Kind: "model_mismatch", Action: action, Occurrences: 1, Notification: "pending"}
 		r.Events = append([]AccountRiskEvent{event}, r.Events...)
-		if len(r.Events) > 50 {
-			r.Events = r.Events[:50]
-		}
+		trimAccountRiskEvents(r)
 		recorded = true
 		return nil
 	})

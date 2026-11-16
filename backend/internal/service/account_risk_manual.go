@@ -50,7 +50,7 @@ func (s *AccountRiskService) manualProbeAccount(ctx context.Context, groupID, ac
 }
 
 // TestNow uses the current form's probe parameters without saving its settings
-// or changing scheduling. The shared reservation also excludes automatic tests.
+// or changing scheduling. Its reservation excludes other tests of the same account.
 func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID, revision int64, config AccountRiskConfig) (*AccountRiskManualResult, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -67,10 +67,14 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 		if (r == nil && revision != 0) || (r != nil && r.Revision != revision) {
 			return ErrAccountRiskConflict
 		}
-		if state.Pending != nil && state.Pending.ExpiresAt.After(now) {
+		expireRiskProbes(state, now)
+		if riskSerialProbeBusy(state) || riskAccountProbeBusy(state, accountID) {
 			return ErrAccountRiskBusy
 		}
-		state.Pending = &AccountRiskPending{ID: id, GroupID: groupID, AccountID: accountID, Revision: revision, ExpiresAt: now.Add(120 * time.Second), Kind: "manual_probe"}
+		if state.ActiveProbes == nil {
+			state.ActiveProbes = make(map[int64]*AccountRiskPending)
+		}
+		state.ActiveProbes[accountID] = &AccountRiskPending{ID: id, GroupID: groupID, AccountID: accountID, Revision: revision, ExpiresAt: now.Add(120 * time.Second), Kind: "manual_probe"}
 		return nil
 	})
 	if err != nil {
@@ -81,9 +85,7 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 		defer stop()
 		for attempt := 0; attempt < 5; attempt++ {
 			err := s.store.Update(cleanup, func(state *AccountRiskState, _ AccountRiskScheduling) error {
-				if state.Pending != nil && state.Pending.ID == id {
-					state.Pending = nil
-				}
+				releaseRiskProbe(state, AccountRiskPending{ID: id, AccountID: accountID})
 				return nil
 			})
 			if !errors.Is(err, ErrAccountRiskBusy) {

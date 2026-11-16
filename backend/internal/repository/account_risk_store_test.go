@@ -43,6 +43,7 @@ func TestAccountRiskStoreStopAndHistoryAreAtomic(t *testing.T) {
 		mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 		mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
 		mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
+		mock.ExpectQuery("SELECT value FROM settings").WithArgs(accountRiskActiveProbesSettingKey).WillReturnRows(sqlmock.NewRows([]string{"value"}))
 		mock.ExpectExec("UPDATE accounts SET schedulable=false").WithArgs(int64(19), sqlmock.AnyArg(), int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec("INSERT INTO scheduler_outbox").WillReturnResult(sqlmock.NewResult(1, 1))
 		if saveFailed {
@@ -79,6 +80,7 @@ func TestAccountRiskStoreStaleAccountDoesNotPublishStop(t *testing.T) {
 	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
+	mock.ExpectQuery("SELECT value FROM settings").WithArgs(accountRiskActiveProbesSettingKey).WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	mock.ExpectExec("UPDATE accounts SET schedulable=false").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	err = NewAccountRiskStore(db, nil).Update(context.Background(), func(_ *service.AccountRiskState, stop service.AccountRiskScheduling) error {
@@ -169,6 +171,7 @@ func TestAccountRiskStorePauseAndResumeAreAtomic(t *testing.T) {
 				mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 				mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
 				mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
+				mock.ExpectQuery("SELECT value FROM settings").WithArgs(accountRiskActiveProbesSettingKey).WillReturnRows(sqlmock.NewRows([]string{"value"}))
 				query := "UPDATE accounts SET schedulable=false,.*jsonb_set.*WHERE id=\\$1 AND updated_at=\\$2.*schedulable=true"
 				if action == "resume" {
 					query = "UPDATE accounts SET schedulable=true,.*extra=.*WHERE id=\\$1 AND updated_at=\\$2.*schedulable=false.*extra->>'yoshub_risk_capacity_pause'=\\$4"
@@ -231,6 +234,7 @@ func TestAccountRiskStoreQueueSurvivesLegacyStateRewrite(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(string(legacy)))
 	mock.ExpectQuery("SELECT value FROM settings").WithArgs(accountRiskCapacityPausesSettingKey).
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(`{"19":{"account_id":19,"group_id":7,"token":"owned-pause"}}`))
+	mock.ExpectQuery("SELECT value FROM settings").WithArgs(accountRiskActiveProbesSettingKey).WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	state, err := NewAccountRiskStore(db, nil).Read(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "owned-pause", state.CapacityPauses[19].Token)
@@ -245,6 +249,7 @@ func TestAccountRiskStoreQueueWriteFailureRollsBackAccountPause(t *testing.T) {
 	mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}))
+	mock.ExpectQuery("SELECT value FROM settings").WithArgs(accountRiskActiveProbesSettingKey).WillReturnRows(sqlmock.NewRows([]string{"value"}))
 	mock.ExpectExec("UPDATE accounts SET schedulable=false").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO scheduler_outbox").WillReturnResult(sqlmock.NewResult(1, 1))
 	pause := &service.AccountRiskCapacityPause{AccountID: 19, GroupID: 7, Token: "owned-pause"}

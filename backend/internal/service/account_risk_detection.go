@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"slices"
 	"sort"
 	"strings"
@@ -186,9 +187,11 @@ type AccountRiskPending struct {
 	Revision  int64     `json:"revision"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Kind      string    `json:"kind,omitempty"`
+	Signature string    `json:"signature,omitempty"`
 }
 
 type AccountRiskState struct {
+	ActiveProbes       map[int64]*AccountRiskPending       `json:"active_probes,omitempty"`
 	CapacityPauses     map[int64]*AccountRiskCapacityPause `json:"capacity_pauses,omitempty"`
 	Rules              map[int64]*AccountRiskRule          `json:"rules"`
 	Pending            *AccountRiskPending                 `json:"pending,omitempty"`
@@ -268,11 +271,10 @@ func (s *AccountRiskService) Start() {
 					return
 				case <-ticker.C:
 					tickCtx, stop := context.WithTimeout(ctx, 4*time.Second)
-					job, err := s.tick(tickCtx, time.Now().UTC())
+					jobs, err := s.tick(tickCtx, time.Now().UTC())
 					stop()
-					if err == nil && job != nil {
-						s.wg.Add(1)
-						go func() { defer s.wg.Done(); s.runProbe(ctx, job) }()
+					if err == nil {
+						s.dispatchProbes(ctx, jobs)
 					}
 				}
 			}
@@ -298,6 +300,9 @@ func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountR
 	r := state.Rules[groupID]
 	if r == nil {
 		r = &AccountRiskRule{GroupID: groupID, Config: DefaultAccountRiskConfig(), Events: []AccountRiskEvent{}, Observation: AccountRiskObservation{Mode: "disabled", Message: "检测未启用"}}
+	}
+	if len(r.Events) > 50 {
+		r.Events = r.Events[:50]
 	}
 	v := &AccountRiskView{AccountRiskRule: r, WebhookStatus: "unavailable", TestAccounts: []AccountRiskTestAccount{}}
 	accounts, err := s.accounts.ListByGroup(ctx, groupID)
@@ -421,29 +426,12 @@ func riskReset(o *AccountRiskObservation, mode, message string) {
 	}
 }
 
-func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountRiskJob, error) {
-	var job *accountRiskJob
+func (s *AccountRiskService) tick(ctx context.Context, now time.Time) ([]*accountRiskJob, error) {
+	var jobs []*accountRiskJob
 	var scheduled []accountRiskScheduledCandidate
 	newlyPaused := map[int64]Account{}
 	err := s.store.Update(ctx, func(state *AccountRiskState, scheduling AccountRiskScheduling) error {
-		if state.Pending != nil && !state.Pending.ExpiresAt.After(now) {
-			if r := state.Rules[state.Pending.GroupID]; r != nil && state.Pending.Kind != "manual_probe" {
-				r.Observation.LastProbeResult = "检测中断，未据此停调度"
-				if pause := state.CapacityPauses[state.Pending.AccountID]; pause != nil {
-					r.Observation.LastProbeResult = "检测中断，保持暂停，等待下次复测"
-					pause.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
-				}
-				r.Observation.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
-				if check := r.Observation.CapacityChecks[state.Pending.AccountID]; state.Pending.Kind == accountRiskProbeCapacity && check != nil {
-					check.NextProbeAt = r.Observation.NextProbeAt
-				}
-				if check := r.Observation.ScheduledChecks[state.Pending.AccountID]; state.Pending.Kind == accountRiskProbeAll && check != nil {
-					check.NextProbeAt = *riskAfter(now, r.Config.ProbeIntervalSeconds)
-					check.LastProbeAt, check.LastProbeResult = &now, r.Observation.LastProbeResult
-				}
-			}
-			state.Pending = nil
-		}
+		expireRiskProbes(state, now)
 		ids := make([]int64, 0, len(state.Rules))
 		for id := range state.Rules {
 			ids = append(ids, id)
@@ -499,10 +487,10 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 				o.Signature = sig
 				o.ProbeSignature = sig
 				o.First = &AccountRiskLoad{AccountID: a.ID, Name: a.Name, Priority: a.SchedulingPriority(), Capacity: a.Concurrency}
-				if state.Pending != nil || o.NextProbeAt == nil || o.NextProbeAt.After(now) {
+				if riskSerialProbeBusy(state) || riskAccountProbeBusy(state, a.ID) || o.NextProbeAt == nil || o.NextProbeAt.After(now) {
 					continue
 				}
-				job = reserveAccountRiskProbe(state, r, a, sig, accountRiskProbeSingle, "", now)
+				jobs = append(jobs, reserveAccountRiskProbe(state, r, a, sig, accountRiskProbeSingle, "", now))
 				o.Message = "正在发送单账号测试"
 				continue
 			}
@@ -511,7 +499,7 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 				return err
 			}
 			if next != nil {
-				job = next
+				jobs = append(jobs, next)
 			}
 			for _, a := range pool {
 				if AccountHasRiskCapacityPause(&a) {
@@ -521,23 +509,31 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 			scheduled = append(scheduled, refreshAllAccountRiskProbes(r, pool, now)...)
 		}
 		if next := s.tickCapacityPauses(ctx, state, newlyPaused, now); next != nil {
-			job = next
+			jobs = append(jobs, next)
 		}
-		if next := reserveAllAccountRiskProbe(state, scheduled, now); next != nil {
-			job = next
-		}
+		jobs = append(jobs, reserveAllAccountRiskProbes(state, scheduled, now)...)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	s.wakeNotifications()
-	return job, nil
+	return jobs, nil
+}
+
+func (s *AccountRiskService) dispatchProbes(ctx context.Context, jobs []*accountRiskJob) {
+	for _, job := range jobs {
+		s.wg.Add(1)
+		go func() { defer s.wg.Done(); s.runProbe(ctx, job) }()
+	}
 }
 
 func reserveAccountRiskProbe(state *AccountRiskState, r *AccountRiskRule, account Account, signature, kind, reason string, now time.Time) *accountRiskJob {
-	pending := AccountRiskPending{ID: uuid.NewString(), GroupID: r.GroupID, AccountID: account.ID, Revision: r.Revision, ExpiresAt: now.Add(120 * time.Second), Kind: kind}
-	state.Pending = &pending
+	pending := AccountRiskPending{ID: uuid.NewString(), GroupID: r.GroupID, AccountID: account.ID, Revision: r.Revision, ExpiresAt: now.Add(120 * time.Second), Kind: kind, Signature: signature}
+	if state.ActiveProbes == nil {
+		state.ActiveProbes = make(map[int64]*AccountRiskPending)
+	}
+	state.ActiveProbes[account.ID] = &pending
 	r.Observation.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
 	return &accountRiskJob{pending: pending, account: account, config: r.Config, signature: signature, reason: reason}
 }
@@ -592,9 +588,7 @@ func riskRecordStop(r *AccountRiskRule, account *Account, now time.Time, reason 
 		event.Notification = "pending"
 	}
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
-	if len(r.Events) > 50 {
-		r.Events = r.Events[:50]
-	}
+	trimAccountRiskEvents(r)
 }
 
 func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJob) {
@@ -602,10 +596,7 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 	defer cancel()
 	var result AccountRiskProbeResult
 	// Check the persisted rule and current membership immediately before dispatch.
-	r, err := s.View(ctx, job.pending.GroupID)
-	if err == nil && (!r.Config.Enabled || r.Revision != job.pending.Revision) {
-		err = errors.New("configuration changed")
-	}
+	err := s.validateProbeReservation(ctx, job)
 	if err == nil {
 		_, err = s.probeAccount(ctx, job, time.Now())
 	}
@@ -619,23 +610,23 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 			err = errors.New("account busy")
 		}
 	}
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
 	defer finishCancel()
 	// A busy transaction has not saved anything. Retry only saving the result,
 	// never the upstream generation (including an uncertain transport failure).
-	for attempt := 0; attempt < 5; attempt++ {
+	for {
 		finishErr := s.finishProbe(finishCtx, job, result, err, time.Now().UTC())
 		if finishErr == nil {
 			return
 		}
-		if !errors.Is(finishErr, ErrAccountRiskBusy) || attempt == 4 {
+		if !errors.Is(finishErr, ErrAccountRiskBusy) || finishCtx.Err() != nil {
 			slog.Warn("account risk result could not be saved", "group_id", job.pending.GroupID, "account_id", job.account.ID)
 			return
 		}
 		select {
 		case <-finishCtx.Done():
 			return
-		case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+		case <-time.After(time.Duration(25+rand.IntN(50)) * time.Millisecond):
 		}
 	}
 }
@@ -643,10 +634,9 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJob, result AccountRiskProbeResult, probeErr error, now time.Time) error {
 	recorded := false
 	err := s.store.Update(ctx, func(state *AccountRiskState, stop AccountRiskScheduling) error {
-		if state.Pending == nil || state.Pending.ID != job.pending.ID {
+		if !releaseRiskProbe(state, job.pending) {
 			return nil
 		}
-		state.Pending = nil
 		if job.pauseToken != "" {
 			return s.finishCapacityPause(ctx, state, stop, job, result, probeErr, now)
 		}
@@ -701,9 +691,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 			o.LastProbeResult = reason + "，仅提醒，未停止调度"
 			event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: account.ID, AccountName: riskNotificationName(account.Name), Reason: o.LastProbeResult, Kind: kind, Action: "notify_only", Notification: "pending"}
 			r.Events = append([]AccountRiskEvent{event}, r.Events...)
-			if len(r.Events) > 50 {
-				r.Events = r.Events[:50]
-			}
+			trimAccountRiskEvents(r)
 			recorded = true
 			return nil
 		}

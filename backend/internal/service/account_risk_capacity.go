@@ -123,6 +123,9 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 			}
 			continue
 		}
+		if riskAccountProbeBusy(state, pool[i].ID) {
+			continue
+		}
 		// Never-tested accounts first, then the oldest completed probe. Priority
 		// order breaks ties; a healthy first account cannot monopolize retests.
 		if due == nil || (check.LastProbeAt == nil && due.LastProbeAt != nil) ||
@@ -150,7 +153,7 @@ func (s *AccountRiskService) tickCapacity(ctx context.Context, state *AccountRis
 	if due == nil {
 		return nil, nil
 	}
-	if state.Pending != nil {
+	if riskSerialProbeBusy(state) {
 		o.Message = "容量异常已确认，等待当前消息复测完成"
 		return nil, nil
 	}

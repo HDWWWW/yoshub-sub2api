@@ -36,7 +36,7 @@ func TestAccountRiskManualTestStoppedAccount(t *testing.T) {
 			out, err := s.TestNow(context.Background(), 7, 1, 1, config)
 			require.NoError(t, err)
 			require.Empty(t, store.stopped)
-			require.Nil(t, store.state.Pending)
+			require.Empty(t, store.state.ActiveProbes)
 			require.False(t, accounts.pool[0].Schedulable)
 			require.NotEqual(t, config.ProbePrompt, store.state.Rules[7].Config.ProbePrompt)
 			if scenario == "upstream 429" || scenario == "incomplete" || scenario == "busy" {

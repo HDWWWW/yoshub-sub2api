@@ -49,6 +49,8 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 		return errors.New("database unavailable")
 	}
 	stop := func(_ int64, a *Account) (bool, error) {
+		s.accounts.mu.Lock()
+		defer s.accounts.mu.Unlock()
 		if !s.cas {
 			return false, nil
 		}
@@ -63,6 +65,8 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 		return true, nil
 	}
 	pause := func(_ int64, a *Account, token string) (bool, error) {
+		s.accounts.mu.Lock()
+		defer s.accounts.mu.Unlock()
 		if !s.cas {
 			return false, nil
 		}
@@ -82,6 +86,8 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 		return false, nil
 	}
 	resume := func(_ int64, a *Account, token string) (bool, error) {
+		s.accounts.mu.Lock()
+		defer s.accounts.mu.Unlock()
 		if !s.cas {
 			return false, nil
 		}
@@ -100,15 +106,20 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 }
 
 type riskTestAccounts struct {
+	mu   sync.RWMutex
 	pool []Account
 	err  error
 }
 
 func (a *riskTestAccounts) ListByGroup(context.Context, int64) ([]Account, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return append([]Account(nil), a.pool...), a.err
 }
 
 func (a *riskTestAccounts) GetByID(_ context.Context, id int64) (*Account, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	for _, account := range a.pool {
 		if account.ID == id {
 			return &account, a.err
@@ -194,12 +205,12 @@ func riskHarness() (*AccountRiskService, *riskTestStore, *riskTestAccounts, *ris
 func TestAccountRiskContinuousCapacity(t *testing.T) {
 	s, store, _, _, now := riskHarness()
 	for second := 0; second < 10; second++ {
-		job, err := s.tick(context.Background(), now.Add(time.Duration(second)*time.Second))
+		job, err := riskSingleTick(t, s, context.Background(), now.Add(time.Duration(second)*time.Second))
 		require.NoError(t, err)
 		require.Nil(t, job)
 		require.Empty(t, store.stopped)
 	}
-	job, err := s.tick(context.Background(), now.Add(10*time.Second))
+	job, err := riskSingleTick(t, s, context.Background(), now.Add(10*time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	require.Equal(t, []int64{1}, store.stopped, "pause before dispatching the verification")
@@ -214,7 +225,7 @@ func TestAccountRiskResetsAndNeverStopsOnUnknown(t *testing.T) {
 			s, store, accounts, loads, now := riskHarness()
 			ctx := context.Background()
 			for i := 0; i < 10; i++ {
-				_, err := s.tick(ctx, now.Add(time.Duration(i)*time.Second))
+				_, err := riskSingleTick(t, s, ctx, now.Add(time.Duration(i)*time.Second))
 				require.NoError(t, err)
 			}
 			tick := now.Add(10 * time.Second)
@@ -254,7 +265,7 @@ func TestAccountRiskResetsAndNeverStopsOnUnknown(t *testing.T) {
 			case "unlimited":
 				accounts.pool[0].Concurrency = 0
 			}
-			job, err := s.tick(ctx, tick)
+			job, err := riskSingleTick(t, s, ctx, tick)
 			require.NoError(t, err)
 			require.Nil(t, job)
 			require.Empty(t, store.stopped)
@@ -277,7 +288,7 @@ func TestAccountRiskPriorityAndAccountIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), pool[0].ID)
 	store.state.Rules[7].Config.Enabled = false
-	_, err = s.tick(context.Background(), now)
+	_, err = riskSingleTick(t, s, context.Background(), now)
 	require.NoError(t, err)
 	require.Empty(t, store.stopped)
 }
@@ -285,10 +296,10 @@ func TestAccountRiskPriorityAndAccountIsolation(t *testing.T) {
 func riskDueJob(t *testing.T, s *AccountRiskService, accounts *riskTestAccounts, now time.Time) *accountRiskJob {
 	t.Helper()
 	accounts.pool = accounts.pool[:1]
-	job, err := s.tick(context.Background(), now)
+	job, err := riskSingleTick(t, s, context.Background(), now)
 	require.NoError(t, err)
 	require.Nil(t, job, "wait one full interval before first test")
-	job, err = s.tick(context.Background(), now.Add(300*time.Second))
+	job, err = riskSingleTick(t, s, context.Background(), now.Add(300*time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	return job
@@ -323,7 +334,7 @@ func TestAccountRiskSingleResultGuards(t *testing.T) {
 				store.cas = false
 			}
 			require.NoError(t, s.finishProbe(context.Background(), job, result, probeErr, now.Add(301*time.Second)))
-			require.Nil(t, store.state.Pending)
+			require.Empty(t, store.state.ActiveProbes)
 			if kind == "missing text" || kind == "case sensitive" {
 				require.Equal(t, []int64{1}, store.stopped)
 			} else {
@@ -338,17 +349,17 @@ func TestAccountRiskProbeReservedAcrossInstancesAndConfigChanges(t *testing.T) {
 	job := riskDueJob(t, s, accounts, now)
 	s2 := *s
 	s2.worker = "second"
-	other, err := s2.tick(context.Background(), now.Add(301*time.Second))
+	other, err := riskSingleTick(t, &s2, context.Background(), now.Add(301*time.Second))
 	require.NoError(t, err)
 	require.Nil(t, other)
 	c := store.state.Rules[7].Config
 	c.ProbePrompt = "another question"
 	require.NoError(t, s.Configure(context.Background(), 7, 1, c))
-	require.NotNil(t, store.state.Pending)
+	require.NotEmpty(t, store.state.ActiveProbes)
 	require.ErrorIs(t, s.Configure(context.Background(), 7, 1, c), ErrAccountRiskConflict)
 	require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "bad"}, nil, now.Add(302*time.Second)))
 	require.Empty(t, store.stopped)
-	job, err = s.tick(context.Background(), now.Add(303*time.Second))
+	job, err = riskSingleTick(t, s, context.Background(), now.Add(303*time.Second))
 	require.NoError(t, err)
 	require.Nil(t, job)
 }
@@ -380,7 +391,7 @@ func TestAccountRiskProbeResultSaveBusyDoesNotRedispatch(t *testing.T) {
 	s.runProbe(context.Background(), job)
 	require.Equal(t, 1, probe.calls)
 	require.Equal(t, []int64{1}, store.stopped)
-	require.Nil(t, store.state.Pending)
+	require.Empty(t, store.state.ActiveProbes)
 }
 
 func TestAccountRiskProbeUsesCustomPayloadWithoutSideEffects(t *testing.T) {
@@ -457,4 +468,14 @@ func TestAccountRiskConfigValidation(t *testing.T) {
 		mutate(&c)
 		require.Error(t, c.Validate())
 	}
+}
+
+func riskSingleTick(t *testing.T, s *AccountRiskService, ctx context.Context, now time.Time) (*accountRiskJob, error) {
+	t.Helper()
+	jobs, err := s.tick(ctx, now)
+	require.LessOrEqual(t, len(jobs), 1)
+	if len(jobs) == 0 {
+		return nil, err
+	}
+	return jobs[0], err
 }

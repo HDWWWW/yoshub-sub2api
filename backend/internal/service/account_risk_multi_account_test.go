@@ -53,7 +53,7 @@ func TestAccountRiskThirdAccountTriggersAllEarlierLowAccounts(t *testing.T) {
 			raw, err := json.Marshal(store.state)
 			require.NoError(t, err)
 			require.NoError(t, json.Unmarshal(raw, &store.state))
-			next, err := s.tick(context.Background(), now.Add(4*time.Second))
+			next, err := riskSingleTick(t, s, context.Background(), now.Add(4*time.Second))
 			require.NoError(t, err)
 			require.NotNil(t, next)
 			require.Equal(t, int64(2), next.account.ID)
@@ -106,7 +106,7 @@ func TestAccountRiskLaterTargetsAndPriorityTiers(t *testing.T) {
 			var job *accountRiskJob
 			for sec := 0; sec <= 2; sec++ {
 				var err error
-				job, err = s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+				job, err = riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 				require.NoError(t, err)
 			}
 			if want == 0 {
@@ -127,7 +127,7 @@ func TestAccountRiskMultiAccountContinuityAndIndependentCooldown(t *testing.T) {
 	// Complete the first, then second target with the same result. Both retain
 	// cooldowns across recovery and neither creates a per-second probe loop.
 	require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "21"}, nil, now.Add(3*time.Second)))
-	second, err := s.tick(context.Background(), now.Add(4*time.Second))
+	second, err := riskSingleTick(t, s, context.Background(), now.Add(4*time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	require.Equal(t, int64(2), second.account.ID)
@@ -137,7 +137,7 @@ func TestAccountRiskMultiAccountContinuityAndIndependentCooldown(t *testing.T) {
 		if sec == 6 {
 			loads.byID[1] = 100
 		}
-		next, err := s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+		next, err := riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 		require.NoError(t, err)
 		require.Nil(t, next)
 	}
@@ -150,7 +150,7 @@ func TestAccountRiskMultiAccountRejectsUnknownAndStalePairs(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			s, store, accounts, loads, now := riskThreeAccounts(t)
 			for sec := 0; sec < 2; sec++ {
-				_, err := s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+				_, err := riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 				require.NoError(t, err)
 			}
 			at := now.Add(2 * time.Second)
@@ -173,7 +173,7 @@ func TestAccountRiskMultiAccountRejectsUnknownAndStalePairs(t *testing.T) {
 			case "new worker":
 				s.worker = "new"
 			}
-			job, err := s.tick(context.Background(), at)
+			job, err := riskSingleTick(t, s, context.Background(), at)
 			require.NoError(t, err)
 			require.Nil(t, job)
 			require.Empty(t, store.stopped)
@@ -206,16 +206,16 @@ func TestAccountRiskMultiAccountReservationAndFairRetests(t *testing.T) {
 	job := riskCapacityDueJob(t, s, now)
 	other := *s
 	other.worker = "second"
-	next, err := other.tick(context.Background(), now.Add(3*time.Second))
+	next, err := riskSingleTick(t, &other, context.Background(), now.Add(3*time.Second))
 	require.NoError(t, err)
 	require.Nil(t, next)
-	require.Equal(t, job.pending.ID, store.state.Pending.ID)
+	require.Equal(t, job.pending.ID, store.state.ActiveProbes[job.account.ID].ID)
 	require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{Completed: true, Text: "21"}, nil, now.Add(4*time.Second)))
 	// Even if the first target's cooldown expires before a new one is tested,
 	// the never-tested second target is selected first.
 	store.state.Rules[7].Observation.CapacityChecks[1].NextProbeAt = nil
 	for sec := 5; sec <= 7; sec++ {
-		next, err = s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+		next, err = riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 		require.NoError(t, err)
 	}
 	require.NotNil(t, next)
@@ -241,7 +241,7 @@ func TestAccountRiskStableThirdReferenceSurvivesMiddleLoadChanges(t *testing.T) 
 		if sec == 1 {
 			loads.byID[2] = 80
 		}
-		job, err := s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+		job, err := riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 		require.NoError(t, err)
 		if sec < 2 {
 			require.Nil(t, job)
@@ -270,7 +270,7 @@ func TestAccountRiskInterruptedMultiAccountProbeDoesNotBlockNextTarget(t *testin
 	var next *accountRiskJob
 	for sec := 3; sec <= 122; sec++ {
 		var err error
-		next, err = s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+		next, err = riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 		require.NoError(t, err)
 		if sec < 122 {
 			require.Nil(t, next)
@@ -282,6 +282,6 @@ func TestAccountRiskInterruptedMultiAccountProbeDoesNotBlockNextTarget(t *testin
 	require.Empty(t, store.stopped)
 	// An expired first result cannot finish or stop the second reservation.
 	require.NoError(t, s.finishProbe(context.Background(), first, AccountRiskProbeResult{Completed: true, Text: "wrong"}, nil, now.Add(123*time.Second)))
-	require.Equal(t, next.pending.ID, store.state.Pending.ID)
+	require.Equal(t, next.pending.ID, store.state.ActiveProbes[next.account.ID].ID)
 	require.Empty(t, store.stopped)
 }

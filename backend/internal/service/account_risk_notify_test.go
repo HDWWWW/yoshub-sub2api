@@ -48,7 +48,7 @@ func TestAccountRiskNotificationCapacityAndDefaultOff(t *testing.T) {
 		accounts.pool[0].Name = "priority account"
 		var job *accountRiskJob
 		for sec := 0; sec <= 10; sec++ {
-			current, err := s.tick(context.Background(), now.Add(time.Duration(sec)*time.Second))
+			current, err := riskSingleTick(t, s, context.Background(), now.Add(time.Duration(sec)*time.Second))
 			require.NoError(t, err)
 			if current != nil {
 				job = current
@@ -177,14 +177,18 @@ func TestAccountRiskNotificationClaimDisableFailureAndRestart(t *testing.T) {
 	}
 }
 
-func TestAccountRiskNotificationConcurrentInstancesAndBoundedQueue(t *testing.T) {
+func TestAccountRiskNotificationConcurrentInstancesAndBoundedHistory(t *testing.T) {
 	s, store, accounts, _, now := riskHarness()
 	r := store.state.Rules[7]
 	r.Config.NotifyEnabled = true
 	for i := 0; i < 70; i++ {
 		riskRecordStop(r, &accounts.pool[0], now.Add(time.Duration(i)*time.Millisecond), "confirmed")
 	}
-	require.Len(t, r.Events, 50)
+	require.Len(t, r.Events, 70, "pending notifications survive the visible history limit")
+	view, err := s.View(context.Background(), 7)
+	require.NoError(t, err)
+	require.Len(t, view.Events, 50)
+	require.Len(t, r.Events, 70, "reading the view must not truncate the queue")
 	n := &riskNoticeStub{}
 	s.notifier = n
 	s2 := &AccountRiskService{store: store, groups: s.groups, notifier: n}

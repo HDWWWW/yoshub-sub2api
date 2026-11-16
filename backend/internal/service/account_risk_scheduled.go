@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -67,34 +68,30 @@ func refreshAllAccountRiskProbes(r *AccountRiskRule, pool []Account, now time.Ti
 		o.First = nil
 	}
 	if o.Mode == "scheduled" || (o.Mode == "capacity" && o.AnomalySince == nil) {
-		o.Message = fmt.Sprintf("全部账号定时检测：%d 个可调度账号独立计时，依次检测", len(checks))
+		o.Message = fmt.Sprintf("全部账号定时检测：%d 个可调度账号独立计时，到期并发检测", len(checks))
 	}
 	return due
 }
 
-func reserveAllAccountRiskProbe(state *AccountRiskState, candidates []accountRiskScheduledCandidate, now time.Time) *accountRiskJob {
-	// Preserve capacity verification and the global one-probe reservation.
-	if state.Pending != nil {
+func reserveAllAccountRiskProbes(state *AccountRiskState, candidates []accountRiskScheduledCandidate, now time.Time) []*accountRiskJob {
+	// Wait for a genuine old-version reservation to finish before installing
+	// the compatibility guard. New reservations coordinate per account.
+	if legacyRiskProbeActive(state) {
 		return nil
 	}
-	var selected *accountRiskScheduledCandidate
-	for i := range candidates {
-		candidate := &candidates[i]
-		if state.CapacityPauses[candidate.account.ID] != nil {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].check.NextProbeAt.Before(candidates[j].check.NextProbeAt)
+	})
+	var jobs []*accountRiskJob
+	for _, candidate := range candidates {
+		if state.CapacityPauses[candidate.account.ID] != nil || riskAccountProbeBusy(state, candidate.account.ID) {
 			continue
 		}
-		// Earliest due first across all groups. A slow or repeatedly failing
-		// account cannot monopolize the queue when others are already due.
-		if selected == nil || candidate.check.NextProbeAt.Before(selected.check.NextProbeAt) {
-			selected = candidate
-		}
+		r, check := candidate.rule, candidate.check
+		job := reserveAccountRiskProbe(state, r, candidate.account, check.Signature, accountRiskProbeAll, "", now)
+		check.NextProbeAt = *r.Observation.NextProbeAt
+		r.Observation.Message = "到期账号正在并发检测，每个账号独立计时并处理结果"
+		jobs = append(jobs, job)
 	}
-	if selected == nil {
-		return nil
-	}
-	r, check := selected.rule, selected.check
-	job := reserveAccountRiskProbe(state, r, selected.account, check.Signature, accountRiskProbeAll, "", now)
-	check.NextProbeAt = *r.Observation.NextProbeAt
-	r.Observation.Message = fmt.Sprintf("正在定时检测账号 #%d；其他账号按各自间隔继续检测", selected.account.ID)
-	return job
+	return jobs
 }

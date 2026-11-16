@@ -122,6 +122,7 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 					e.Notification = "cancelled"
 				}
 			}
+			trimAccountRiskEvents(r)
 		}
 		if inFlight || now.Before(state.NextNotificationAt) {
 			return nil
@@ -180,6 +181,7 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 						break
 					}
 				}
+				trimAccountRiskEvents(r)
 			}
 			return nil
 		})
@@ -193,4 +195,19 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 		}
 	}
 	return err
+}
+
+// A simultaneous batch can exceed the visible history limit. Retain every
+// unsent/claimed notification until its outcome is saved; the UI shows 50 rows.
+func trimAccountRiskEvents(r *AccountRiskRule) {
+	if len(r.Events) <= 50 {
+		return
+	}
+	kept := r.Events[:50]
+	for _, event := range r.Events[50:] {
+		if event.Notification == "pending" || event.Notification == "sending" {
+			kept = append(kept, event)
+		}
+	}
+	r.Events = kept
 }
