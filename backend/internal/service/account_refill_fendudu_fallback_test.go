@@ -81,6 +81,99 @@ func TestFenduduFallbackFailureThresholdAndSuccessReset(t *testing.T) {
 	}
 }
 
+func TestFenduduFallbackAnySuccessfulRefillRestartsFailureCount(t *testing.T) {
+	for _, scenario := range []string{"manual-primary", "manual-fendudu", "forced-fendudu", "daily-primary", "daily-fendudu"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, store, p, _ := fallbackHarness(t)
+			now := time.Now()
+			store.mutate(t, func(state *accountRefillState) {
+				state.Config.FenduduFallback.FailureThreshold = 2
+				state.Jobs = []AccountRefillJob{
+					fallbackPrimaryJob("old-first", "failed", now.Add(-10*time.Minute)),
+					fallbackPrimaryJob("old-second", "failed", now.Add(-9*time.Minute)),
+				}
+				success := fallbackPrimaryJob("success", "imported", now.Add(-8*time.Minute))
+				// Manual and scheduled orders do not carry the automatic rule's mode.
+				success.Mode = ""
+				switch scenario {
+				case "manual-primary":
+					success.ManualRequestID = "manual"
+				case "manual-fendudu", "forced-fendudu":
+					success.Provider, success.ManualRequestID = refillProviderFendudu, "manual"
+					success.Force = scenario == "forced-fendudu"
+				case "daily-primary", "daily-fendudu":
+					success.DailyBatchID = "daily"
+					if scenario == "daily-fendudu" {
+						success.Provider = refillProviderFendudu
+					}
+				}
+				state.Jobs = append(state.Jobs, success)
+			})
+			// Load persisted history through a fresh service instance, as after a restart.
+			restarted := *s
+			view, err := restarted.View(context.Background())
+			require.NoError(t, err)
+			require.Zero(t, view.FenduduFallbackStatus.ConsecutiveFailures)
+			require.NoError(t, restarted.run(context.Background(), false))
+			require.Zero(t, p.orders, "old failures must not buy a backup after a successful manual or scheduled import")
+
+			store.mutate(t, func(state *accountRefillState) {
+				state.Jobs = append(state.Jobs, fallbackPrimaryJob("new-first", "failed", now.Add(-4*time.Minute)))
+			})
+			view, err = restarted.View(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, 1, view.FenduduFallbackStatus.ConsecutiveFailures)
+			require.NoError(t, restarted.run(context.Background(), false))
+			require.Zero(t, p.orders, "one failure after success is below the configured threshold")
+
+			store.mutate(t, func(state *accountRefillState) {
+				state.Jobs = append(state.Jobs, fallbackPrimaryJob("new-second", "failed", now.Add(-time.Minute)))
+			})
+			require.NoError(t, restarted.run(context.Background(), false))
+			require.Equal(t, 1, p.orders, "two new failures permit one backup")
+			state, err := decodeAccountRefillState(store.raw)
+			require.NoError(t, err)
+			require.Equal(t, "new-second", state.Jobs[0].FallbackForJobID)
+			require.Empty(t, refillFenduduFailures(&state))
+		})
+	}
+}
+
+func TestFenduduFallbackSuccessResetRequiresImportedAccountInSameGroup(t *testing.T) {
+	for _, scenario := range []string{"other-group", "awaiting-delivery", "no-account", "unfinished", "success-before-failures"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, store, _, _ := fallbackHarness(t)
+			now := time.Now()
+			store.mutate(t, func(state *accountRefillState) {
+				state.Config.FenduduFallback.FailureThreshold = 2
+				state.Jobs = []AccountRefillJob{
+					fallbackPrimaryJob("first", "failed", now.Add(-3*time.Minute)),
+					fallbackPrimaryJob("second", "failed", now.Add(-2*time.Minute)),
+				}
+				success := fallbackPrimaryJob("success", "imported", now.Add(-time.Minute))
+				success.Provider, success.ManualRequestID = refillProviderFendudu, "manual"
+				switch scenario {
+				case "other-group":
+					success.GroupID = 3
+				case "awaiting-delivery":
+					success.Status, success.AccountID = "awaiting_delivery", 0
+				case "no-account":
+					success.AccountID = 0
+				case "unfinished":
+					success.FinishedAt = nil
+				case "success-before-failures":
+					finished := now.Add(-4 * time.Minute)
+					success.FinishedAt = &finished
+				}
+				state.Jobs = append(state.Jobs, success)
+			})
+			view, err := s.View(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, 2, view.FenduduFallbackStatus.ConsecutiveFailures)
+		})
+	}
+}
+
 func TestFenduduFallbackTimeoutBoundaryAndOnePurchaseAcrossRestart(t *testing.T) {
 	s, store, p, _ := fallbackHarness(t)
 	now := time.Now()
@@ -328,8 +421,7 @@ func TestFenduduFallbackAdoptsDeliveryAndPreservesOriginalReconciliation(t *test
 	require.Equal(t, 1, p.orders)
 	markRefillFailureReplacement(&state, &state.Jobs[1])
 	require.False(t, state.Jobs[1].ReplacementPending)
-	// A completed automatic backup also resets failures that occurred while
-	// that backup was in flight. Manual supplier orders do not reset them.
+	// A completed backup also resets failures that occurred while it was in flight.
 	failure := fallbackPrimaryJob("new-failure", "failed", state.Jobs[0].FinishedAt.Add(-time.Second))
 	state.FenduduFallback.LastAt = nil
 	state.Jobs = append(state.Jobs, failure)

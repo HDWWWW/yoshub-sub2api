@@ -2,7 +2,7 @@ export default {
   "fallbackEnabled": "Enable automatic Fendudu backup (Pro20x)",
   "fallbackFailures": "Consecutive failures",
   "fallbackMinutes": "Wait for import (minutes)",
-  "fallbackHint": "Defaults to 3 confirmed failures OR 5 minutes without import for an automatic order. If demand remains, buy one Pro20x from Fendudu using one prepaid quota. A successful import or backup reservation resets the count. Each batch of failed or stalled orders triggers once; manual purchases and daily schedules are excluded. Uses this group's delivery settings and daily count limit. Original orders remain under reconciliation and may still deliver and charge. Requires automatic refill, monitoring and delivery to be enabled.",
+  "fallbackHint": "Defaults to 3 confirmed failures OR 5 minutes without import for an automatic order. If demand remains, buy one Pro20x from Fendudu using one prepaid quota. Any successful import for this group, including manual purchases and daily schedules, or a backup reservation resets the failure count. Each batch of failed or stalled orders triggers once; failed or stalled manual and daily orders do not trigger backup. Uses this group's delivery settings and daily count limit. Original orders remain under reconciliation and may still deliver and charge. Requires automatic refill, monitoring and delivery to be enabled.",
   "fallbackConnectionRequired": "Save this group's connection on the Fendudu manual refill tab before enabling backup.",
   "fallbackStatus": "Current consecutive failures: {count}",
   "fallbackInvalid": "Failures must be an integer from 1 to 100; wait time must be an integer from 1 to 1440 minutes.",

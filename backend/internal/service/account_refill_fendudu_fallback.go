@@ -57,8 +57,9 @@ func refillFenduduFailures(state *accountRefillState) []AccountRefillJob {
 		cutoff = *state.FenduduFallback.LastAt
 	}
 	for _, j := range state.Jobs {
-		automatic := refillPrimaryAutomaticJob(state, j) || j.Provider == refillProviderFendudu && j.FallbackForJobID != ""
-		if automatic && j.Status == "imported" && j.AccountID != 0 && j.FinishedAt != nil && j.FinishedAt.After(cutoff) {
+		// Any completed delivery for this rule breaks the failure streak,
+		// including manual and daily orders from either supplier.
+		if j.GroupID == state.Config.GroupID && j.Status == "imported" && j.AccountID != 0 && j.FinishedAt != nil && j.FinishedAt.After(cutoff) {
 			cutoff = *j.FinishedAt
 		}
 	}
