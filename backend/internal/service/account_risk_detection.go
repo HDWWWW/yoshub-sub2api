@@ -22,6 +22,7 @@ const AccountRiskSettingKey = "account_risk_detection_v1"
 const (
 	accountRiskProbeCapacity = "capacity_probe"
 	accountRiskProbeSingle   = "single_probe"
+	accountRiskProbeAll      = "all_probe"
 )
 
 var ErrAccountRiskBusy = errors.New("风控检测正在更新，请稍后重试")
@@ -34,6 +35,8 @@ type AccountRiskConfig struct {
 	Enabled                   bool   `json:"enabled"`
 	NotifyEnabled             bool   `json:"notify_enabled"`
 	CapacityNotifyOnly        bool   `json:"capacity_notify_only"`
+	ProbeEnabled              bool   `json:"probe_enabled"`
+	ProbeScope                string `json:"probe_scope"`
 	ProbeNotifyOnly           bool   `json:"probe_notify_only"`
 	Probe429StopEnabled       bool   `json:"probe_429_stop_enabled"`
 	Probe429MaxRetries        int    `json:"probe_429_max_retries"`
@@ -49,11 +52,26 @@ type AccountRiskConfig struct {
 }
 
 func DefaultAccountRiskConfig() AccountRiskConfig {
-	return AccountRiskConfig{RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, Probe429MaxRetries: 3, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
+	return AccountRiskConfig{RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, ProbeEnabled: true, ProbeScope: "single", Probe429MaxRetries: 3, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
 		ProbePrompt: "请只回复数字 21，不要输出其他内容。", ExpectedText: "21", Model: "gpt-6.1-sol", ReasoningEffort: "high"}
 }
 
+// Missing fields in persisted rules and older API clients retain the existing
+// single-account schedule. An explicit false must survive a save/reload.
+func (c *AccountRiskConfig) UnmarshalJSON(data []byte) error {
+	type configAlias AccountRiskConfig
+	decoded := configAlias{ProbeEnabled: true, ProbeScope: "single"}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*c = AccountRiskConfig(decoded)
+	return nil
+}
+
 func (c *AccountRiskConfig) Normalize429() {
+	if c.ProbeScope == "" {
+		c.ProbeScope = "single"
+	}
 	if c.RateLimit429WindowSeconds == 0 {
 		c.RateLimit429WindowSeconds = 60
 	}
@@ -66,8 +84,11 @@ func (c *AccountRiskConfig) Normalize429() {
 }
 
 func (c AccountRiskConfig) Validate() error {
+	if !slices.Contains([]string{"", "single", "all"}, c.ProbeScope) {
+		return errors.New("定时检测范围须为单账号或全部账号")
+	}
 	if (c.Probe429StopEnabled && c.Probe429MaxRetries < 1) || c.Probe429MaxRetries < 0 || c.Probe429MaxRetries > 20 {
-		return errors.New("单账号测试 429 最大重试次数须为 1–20")
+		return errors.New("定时测试 429 最大重试次数须为 1–20")
 	}
 	if c.RateLimit429Enabled && (c.RateLimit429WindowSeconds < 1 || c.RateLimit429Threshold < 1) || c.RateLimit429WindowSeconds < 0 || c.RateLimit429WindowSeconds > 3600 || c.RateLimit429Threshold < 0 || c.RateLimit429Threshold > 10000 {
 		return errors.New("429 时间窗口须为 1–3600 秒，次数须为 1–10000")
@@ -119,8 +140,9 @@ type AccountRiskObservation struct {
 	Signature string `json:"signature,omitempty"`
 	Worker    string `json:"worker,omitempty"`
 	// Keep the probe cooldown across interruptions in the capacity anomaly.
-	ProbeSignature string                              `json:"probe_signature,omitempty"`
-	CapacityChecks map[int64]*AccountRiskCapacityCheck `json:"capacity_checks,omitempty"`
+	ProbeSignature  string                               `json:"probe_signature,omitempty"`
+	CapacityChecks  map[int64]*AccountRiskCapacityCheck  `json:"capacity_checks,omitempty"`
+	ScheduledChecks map[int64]*AccountRiskScheduledCheck `json:"scheduled_checks,omitempty"`
 }
 
 // Each target has its own continuous sample window and probe cooldown. Keeping
@@ -401,6 +423,7 @@ func riskReset(o *AccountRiskObservation, mode, message string) {
 
 func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountRiskJob, error) {
 	var job *accountRiskJob
+	var scheduled []accountRiskScheduledCandidate
 	newlyPaused := map[int64]Account{}
 	err := s.store.Update(ctx, func(state *AccountRiskState, scheduling AccountRiskScheduling) error {
 		if state.Pending != nil && !state.Pending.ExpiresAt.After(now) {
@@ -411,8 +434,12 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 					pause.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
 				}
 				r.Observation.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
-				if check := r.Observation.CapacityChecks[state.Pending.AccountID]; check != nil {
+				if check := r.Observation.CapacityChecks[state.Pending.AccountID]; state.Pending.Kind == accountRiskProbeCapacity && check != nil {
 					check.NextProbeAt = r.Observation.NextProbeAt
+				}
+				if check := r.Observation.ScheduledChecks[state.Pending.AccountID]; state.Pending.Kind == accountRiskProbeAll && check != nil {
+					check.NextProbeAt = *riskAfter(now, r.Config.ProbeIntervalSeconds)
+					check.LastProbeAt, check.LastProbeResult = &now, r.Observation.LastProbeResult
 				}
 			}
 			state.Pending = nil
@@ -439,9 +466,13 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 				continue
 			}
 			o.EligibleAccounts = len(pool)
+			if !r.Config.ProbeEnabled || r.Config.ProbeScope != "all" {
+				o.ScheduledChecks = nil
+			}
 			if len(pool) == 0 {
 				o.First, o.Second = nil, nil
 				o.CapacityChecks = nil
+				o.ScheduledChecks = nil
 				riskReset(o, "waiting", "没有可调度账号")
 				o.NextProbeAt = nil
 				continue
@@ -449,6 +480,16 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 			if len(pool) == 1 {
 				o.Second = nil
 				o.CapacityChecks = nil
+				if !r.Config.ProbeEnabled {
+					riskReset(o, "waiting", "定时检测已关闭")
+					o.First, o.NextProbeAt = nil, nil
+					continue
+				}
+				if r.Config.ProbeScope == "all" {
+					riskReset(o, "scheduled", "全部账号定时检测")
+					scheduled = append(scheduled, refreshAllAccountRiskProbes(r, pool, now)...)
+					continue
+				}
 				a := pool[0]
 				sig := riskAccountSignature(&a)
 				if o.Mode != "single" || o.Signature != sig {
@@ -477,8 +518,12 @@ func (s *AccountRiskService) tick(ctx context.Context, now time.Time) (*accountR
 					newlyPaused[a.ID] = a
 				}
 			}
+			scheduled = append(scheduled, refreshAllAccountRiskProbes(r, pool, now)...)
 		}
 		if next := s.tickCapacityPauses(ctx, state, newlyPaused, now); next != nil {
+			job = next
+		}
+		if next := reserveAllAccountRiskProbe(state, scheduled, now); next != nil {
 			job = next
 		}
 		return nil
@@ -499,6 +544,7 @@ func reserveAccountRiskProbe(state *AccountRiskState, r *AccountRiskRule, accoun
 
 // A capacity probe belongs to the same ordered pair that triggered it. A
 // single-account probe remains valid only while that account is the sole target.
+// An all-account probe depends only on its own account, never on a peer's result.
 func (s *AccountRiskService) probeAccount(ctx context.Context, job *accountRiskJob, now time.Time) (*Account, error) {
 	if job.pauseToken != "" {
 		return s.pausedProbeAccount(ctx, job.pending.GroupID, job.account.ID, job.pauseToken, job.signature, now)
@@ -520,6 +566,14 @@ func (s *AccountRiskService) probeAccount(ctx context.Context, job *accountRiskJ
 			}
 		}
 		return nil, errors.New("capacity pair changed")
+	}
+	if job.pending.Kind == accountRiskProbeAll {
+		for i := range pool {
+			if pool[i].ID == job.account.ID && riskScheduledAccountSignature(&pool[i]) == job.signature {
+				return &pool[i], nil
+			}
+		}
+		return nil, errors.New("scheduled account changed")
 	}
 	if len(pool) != 1 || pool[0].ID != job.account.ID || riskAccountSignature(&pool[0]) != job.signature {
 		return nil, errors.New("account identity or priority changed")
@@ -601,6 +655,9 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 			return nil
 		}
 		o := &r.Observation
+		if isScheduledRiskProbe(job.pending.Kind) && !r.Config.ProbeEnabled {
+			return nil
+		}
 		o.LastProbeAt = &now
 		if o.ProbeSignature == job.signature {
 			o.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
@@ -609,9 +666,14 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 			check.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
 			check.LastProbeAt = &now
 		}
+		if check := o.ScheduledChecks[job.account.ID]; job.pending.Kind == accountRiskProbeAll && check != nil && check.Signature == job.signature {
+			check.NextProbeAt = *riskAfter(now, r.Config.ProbeIntervalSeconds)
+			check.LastProbeAt = &now
+			defer func() { check.LastProbeResult = o.LastProbeResult }()
+		}
 		o.InputTokens = result.InputTokens
 		o.OutputTokens = result.OutputTokens
-		exhausted429 := job.pending.Kind == accountRiskProbeSingle && r.Config.Probe429StopEnabled &&
+		exhausted429 := isScheduledRiskProbe(job.pending.Kind) && r.Config.Probe429StopEnabled &&
 			r.Config.Probe429MaxRetries > 0 && result.Consecutive429 > r.Config.Probe429MaxRetries && result.UpstreamStatus == 429 && probeErr != nil
 		if !exhausted429 && (probeErr != nil || !result.Completed) {
 			o.LastProbeResult = "检测未完成（网络、上游错误或账号繁忙），未据此停调度"
@@ -626,11 +688,11 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 			o.LastProbeResult = "回复包含期望内容，检测通过"
 			return nil
 		}
-		kind, notifyOnly := accountRiskProbeSingle, r.Config.ProbeNotifyOnly
+		kind, notifyOnly := job.pending.Kind, r.Config.ProbeNotifyOnly
 		reason := "完整回复不含期望内容"
 		if exhausted429 {
-			kind, notifyOnly = "single_probe_429", false
-			reason = fmt.Sprintf("单账号定时测试消息首次收到上游 429 后立即重试 %d 次，仍连续收到 429，无法完成检测", r.Config.Probe429MaxRetries)
+			kind, notifyOnly = job.pending.Kind+"_429", false
+			reason = fmt.Sprintf("定时测试消息首次收到上游 429 后立即重试 %d 次，仍连续收到 429，无法完成检测", r.Config.Probe429MaxRetries)
 		} else if job.pending.Kind == accountRiskProbeCapacity {
 			kind, notifyOnly = accountRiskProbeCapacity, r.Config.CapacityNotifyOnly
 			reason = job.reason + "；消息复测完整回复不含期望内容"

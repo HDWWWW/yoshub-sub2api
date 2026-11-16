@@ -7,6 +7,8 @@ export interface AccountRiskConfig {
   enabled: boolean
   notify_enabled: boolean
   capacity_notify_only: boolean
+  probe_enabled: boolean
+  probe_scope: 'single' | 'all'
   probe_notify_only: boolean
   probe_429_stop_enabled: boolean
   probe_429_max_retries: number
@@ -49,6 +51,13 @@ export interface AccountRiskRule {
     first?: AccountRiskLoad
     second?: AccountRiskLoad
     capacity_checks?: Record<string, AccountRiskCapacityCheck>
+    scheduled_checks?: Record<string, {
+      account_id: number
+      account_name: string
+      next_probe_at: string
+      last_probe_at?: string
+      last_probe_result?: string
+    }>
     anomaly_since?: string
     next_probe_at?: string
     last_probe_at?: string

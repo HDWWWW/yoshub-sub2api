@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// Only single-account scheduled probes opt into retrying explicit upstream
+// Only scheduled probes opt into retrying explicit upstream
 // rejections. Capacity verification and manual diagnostics keep their semantics.
 // One slot and the existing 90-second deadline bound the whole detection cycle.
 func (s *AccountRiskService) runProbeAttempts(ctx context.Context, job *accountRiskJob) (AccountRiskProbeResult, error) {
 	attempts := 1
-	if job.pending.Kind == accountRiskProbeSingle && job.config.Probe429StopEnabled {
+	if isScheduledRiskProbe(job.pending.Kind) && job.config.Probe429StopEnabled {
 		attempts += job.config.Probe429MaxRetries
 	}
 	var result AccountRiskProbeResult

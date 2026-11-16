@@ -31,8 +31,8 @@ func riskEventNotificationEnabled(c AccountRiskConfig, event AccountRiskEvent) b
 		switch event.Kind {
 		case accountRiskProbeCapacity:
 			return c.Enabled && c.CapacityNotifyOnly
-		case accountRiskProbeSingle:
-			return c.Enabled && c.ProbeNotifyOnly
+		case accountRiskProbeSingle, accountRiskProbeAll:
+			return c.Enabled && c.ProbeEnabled && c.ProbeNotifyOnly
 		}
 	}
 	return c.Enabled && c.NotifyEnabled

@@ -94,8 +94,8 @@ func TestRefillImmediateRetrySwitchWorkerTiming(t *testing.T) {
 		check, cooldown int
 		secondAt        time.Duration
 	}{
-		{"enabled bypasses both", "fixed", true, 60, 300, 20 * time.Second},
-		{"disabled five seconds", "fixed", false, 5, 5, 20 * time.Second},
+		{"enabled bypasses both", "fixed", true, 60, 300, 25 * time.Second},
+		{"disabled five seconds", "fixed", false, 5, 5, 25 * time.Second},
 		{"disabled waits check", "fixed", false, 60, 5, 65 * time.Second},
 		{"disabled waits cooldown", "fixed", false, 5, 30, 35 * time.Second},
 		{"disabled waits both", "fixed", false, 60, 300, 305 * time.Second},
@@ -122,16 +122,16 @@ func TestRefillImmediateRetrySwitchWorkerTiming(t *testing.T) {
 				orders := provider.submittedOrders()
 				require.Len(t, orders, 1)
 				first := orders[0]
-				time.Sleep(15*time.Second - time.Nanosecond)
+				time.Sleep(20*time.Second - time.Nanosecond)
 				synctest.Wait()
 				require.Zero(t, provider.queries(), "five-second demand checks must not poll supplier orders early")
 				require.Len(t, provider.submittedOrders(), 1)
 				time.Sleep(time.Nanosecond)
 				synctest.Wait()
-				require.Equal(t, 1, provider.queries(), "query the accepted order 15 seconds after submission")
-				if tc.secondAt > 20*time.Second {
+				require.Equal(t, 1, provider.queries(), "query the accepted order 20 seconds after submission")
+				if tc.secondAt > 25*time.Second {
 					require.Len(t, provider.submittedOrders(), 1)
-					time.Sleep(tc.secondAt - 20*time.Second - time.Nanosecond)
+					time.Sleep(tc.secondAt - 25*time.Second - time.Nanosecond)
 					synctest.Wait()
 					require.Len(t, provider.submittedOrders(), 1, "disabled shortcut must honor both normal deadlines")
 					time.Sleep(time.Nanosecond)

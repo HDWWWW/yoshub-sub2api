@@ -219,7 +219,7 @@ func TestFenduduPendingDeliveryPublishesSupplierExpiryAndPollsPromptly(t *testin
 			view, err := s.View(ctx)
 			require.NoError(t, err)
 			require.Equal(t, lease.Unix(), *view.Jobs[0].SupplierExpiresAt)
-			require.WithinDuration(t, before.Add(15*time.Second), view.Jobs[0].NextAttemptAt, time.Second)
+			require.WithinDuration(t, before.Add(20*time.Second), view.Jobs[0].NextAttemptAt, time.Second)
 			require.Zero(t, accounts.adopt)
 			require.Equal(t, 1, provider.orders)
 			pushFenduduFixture(provider, accounts)

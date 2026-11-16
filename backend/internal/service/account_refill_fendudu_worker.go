@@ -60,13 +60,13 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 			j.Attempts++
 			if err != nil {
 				j.Status, j.Error = "blocked", "粉嘟嘟尚未确认唯一交付，正在只读核对原订单；不会重复下单"
-				j.NextAttemptAt = now.Add(refillMax(time.Minute, refillRetryDelay(err, j.Attempts)))
+				j.NextAttemptAt = nextRefillOrderPoll(err)
 				if j.SupplierStatus == "pending" {
 					j.Status, j.Error = "processing", "粉嘟嘟已受理，等待原订单生成；正在只读核对，不会重复下单"
 				}
 				if errors.Is(err, errFenduduPushPending) {
 					j.Error = errFenduduPushPending.Error()
-					j.NextAttemptAt = now.Add(15 * time.Second)
+					j.NextAttemptAt = nextRefillOrderPoll(nil)
 					if expires := cycle.expiresAt(); expires != nil {
 						j.SupplierExpiresAt = expires
 					}
@@ -107,7 +107,7 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 				j.Status, j.SupplierStatus = "processing", "pending"
 				j.Error = "粉嘟嘟已受理，等待原订单生成；正在只读核对，不会重复下单"
 				j.SupplierError = strings.TrimSpace(strings.Join([]string{order.Error, order.Warning}, " "))
-				j.NextAttemptAt = now.Add(15 * time.Second)
+				j.NextAttemptAt = nextRefillOrderPoll(nil)
 				state.Fendudu.CheckedAt = nil
 				return persist()
 			}
@@ -119,7 +119,7 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 				if order != nil && (order.Error != "" || order.Warning != "") {
 					j.SupplierError = strings.TrimSpace(strings.Join([]string{order.Error, order.Warning}, " "))
 				}
-				j.NextAttemptAt = time.Now().Add(15 * time.Second)
+				j.NextAttemptAt = nextRefillOrderPoll(err)
 				if err != nil {
 					j.SupplierError = "下单连接或响应读取失败"
 				}
@@ -142,17 +142,16 @@ func (s *AccountRefillService) advanceFenduduJobs(ctx context.Context, state *ac
 			}
 			j.SupplierID, j.Status, j.SupplierStatus = order.CycleIDs[0], "processing", "queued"
 			j.SupplierError = strings.TrimSpace(strings.Join([]string{order.Error, order.Warning}, " "))
-			j.Error, j.NextAttemptAt = "", now.Add(15*time.Second)
+			j.Error, j.NextAttemptAt = "", nextRefillOrderPoll(nil)
 			state.Fendudu.CheckedAt = nil // Refresh prepaid quotas on the next worker tick.
 			return persist()
 		}
 	}
 	cycle, err := s.fenduduClient().Cycle(ctx, token, j.SupplierID)
 	j.Attempts++
-	j.NextAttemptAt = now.Add(15 * time.Second)
+	j.NextAttemptAt = nextRefillOrderPoll(err)
 	if err != nil {
 		j.Error = "粉嘟嘟订单查询暂不可用，继续核对原订单"
-		j.NextAttemptAt = now.Add(refillRetryDelay(err, j.Attempts))
 		var remote *refillProviderError
 		if errors.As(err, &remote) && remote.code == 429 {
 			state.Fendudu.RetryAt = j.NextAttemptAt

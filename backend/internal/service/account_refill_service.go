@@ -832,7 +832,7 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 				j.Status = "awaiting_delivery"
 				j.ResultReady = false // Recheck the original task before fetching again.
 				j.Error = "号商交付暂不可用，继续查询原任务"
-				j.NextAttemptAt = now.Add(refillRetryDelay(err, 1))
+				j.NextAttemptAt = nextRefillOrderPoll(err)
 			}
 			if remote != nil {
 				if remote.code == 429 {
@@ -876,6 +876,9 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 	if err != nil {
 		j.Error = err.Error()
 		j.NextAttemptAt = now.Add(refillRetryDelay(err, j.Attempts))
+		if j.SupplierID != "" {
+			j.NextAttemptAt = nextRefillOrderPoll(err)
+		}
 		var e *refillProviderError
 		if errors.As(err, &e) {
 			if e.code == 429 {
@@ -898,17 +901,15 @@ func (s *AccountRefillService) advance(ctx context.Context, token string, state 
 		j.ExpiresAt = remote.ExpiresAt
 	}
 	j.Error = ""
-	j.NextAttemptAt = now.Add(15 * time.Second)
+	j.NextAttemptAt = nextRefillOrderPoll(nil)
 	if !refillProviderStatusKnown(remote.Status) {
 		j.Status = "supplier_unknown"
 		j.ResultReady = false
 		j.Error = "号商返回未知状态，保留原任务继续核对；超过设定时间仍未导入时不再阻塞自动补号"
-		j.NextAttemptAt = now.Add(time.Minute)
 		return persist()
 	}
 	if remote.Status == "review" {
 		j.Error = "号商要求人工核对，保留原任务；超过设定时间仍未导入时不再阻塞自动补号"
-		j.NextAttemptAt = now.Add(time.Minute)
 	}
 	if remote.Status == "failed" {
 		j.Error = "号商确认补号失败，预算预占已释放"

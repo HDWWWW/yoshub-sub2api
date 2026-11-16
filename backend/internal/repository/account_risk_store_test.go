@@ -125,6 +125,39 @@ func TestAccountRiskStoreProbe429SettingsRoundTripAndLegacyDefaults(t *testing.T
 	require.Equal(t, 10, state.Rules[7].Config.Probe429MaxRetries)
 }
 
+func TestAccountRiskStoreScheduledScopeCompatibility(t *testing.T) {
+	c := service.DefaultAccountRiskConfig()
+	raw, err := json.Marshal(&service.AccountRiskState{Rules: map[int64]*service.AccountRiskRule{7: {GroupID: 7, Config: c}}})
+	require.NoError(t, err)
+	var legacy map[string]any
+	require.NoError(t, json.Unmarshal(raw, &legacy))
+	config := legacy["rules"].(map[string]any)["7"].(map[string]any)["config"].(map[string]any)
+	delete(config, "probe_enabled")
+	delete(config, "probe_scope")
+	raw, err = json.Marshal(legacy)
+	require.NoError(t, err)
+	state, err := decodeAccountRiskState(string(raw))
+	require.NoError(t, err)
+	require.True(t, state.Rules[7].Config.ProbeEnabled, "legacy single-account schedules remain enabled")
+	require.Equal(t, "single", state.Rules[7].Config.ProbeScope)
+	for _, enabled := range []bool{false, true} {
+		for _, scope := range []string{"single", "all"} {
+			state.Rules[7].Config.ProbeEnabled, state.Rules[7].Config.ProbeScope = enabled, scope
+			raw, err = encodeLegacyAccountRiskState(state)
+			require.NoError(t, err)
+			state, err = decodeAccountRiskState(string(raw))
+			require.NoError(t, err)
+			require.Equal(t, enabled, state.Rules[7].Config.ProbeEnabled)
+			require.Equal(t, scope, state.Rules[7].Config.ProbeScope)
+		}
+	}
+	state.Rules[7].Config.ProbeScope = "invalid"
+	raw, err = encodeLegacyAccountRiskState(state)
+	require.NoError(t, err)
+	_, err = decodeAccountRiskState(string(raw))
+	require.Error(t, err)
+}
+
 func TestAccountRiskStorePauseAndResumeAreAtomic(t *testing.T) {
 	for _, action := range []string{"pause", "resume"} {
 		for _, outcome := range []string{"commit", "stale", "rollback"} {

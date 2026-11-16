@@ -8,7 +8,7 @@ vi.mock('@/api/admin/accountRisk', () => ({ accountRiskAPI: { get, save, test } 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const baseline: AccountRiskRule = {
   group_id: 7, revision: 3, test_accounts: [{ id: 1, name: 'Stopped account', schedulable: false }],
-  config: { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_notify_only: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
+  config: { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
@@ -47,7 +47,7 @@ describe('account risk detection', () => {
     await w.get('[data-testid="risk-notify-enabled"]').setValue(true)
     for (const [field, value] of Object.entries({ first: 55, second: 95, duration: 17, interval: 420, model: 'gpt-6-astra', effort: 'xhigh', prompt: 'Compute three times seven', expected: '21' })) await w.get(`[data-testid="risk-${field}"]`).setValue(value)
     await w.get('form').trigger('submit'); await flushPromises()
-    expect(save).toHaveBeenCalledWith(7, 3, { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: true, notify_enabled: true, capacity_notify_only: false, probe_notify_only: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
+    expect(save).toHaveBeenCalledWith(7, 3, { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: true, notify_enabled: true, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
     expect(w.get('[role="status"]').text()).toContain('saved'); w.unmount()
   })
   it.each([['first', 0], ['second', 101], ['duration', 0], ['interval', 9], ['prompt', ''], ['expected', ''], ['model', '']])('blocks invalid %s', async (field, value) => {
@@ -149,6 +149,55 @@ describe('account risk detection', () => {
   })
 })
 
+
+describe('scheduled account scope', () => {
+  beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => structuredClone(baseline)); save.mockImplementation(async (group_id, revision, config) => ({ ...structuredClone(baseline), group_id, revision: revision + 1, config })) })
+  it('saves all-account mode, reloads it, and disables only scheduled tests', async () => {
+    const w = await open()
+    await w.get('[data-testid="risk-enabled"]').setValue(true)
+    await w.get('[data-testid="risk-probe-scope"]').setValue('all')
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ enabled: true, probe_enabled: true, probe_scope: 'all', capacity_notify_only: false })
+    get.mockResolvedValueOnce({ ...structuredClone(baseline), config: save.mock.calls[0]?.[2] })
+    await w.get('[data-testid="risk-group"]').setValue(8); await flushPromises()
+    expect((w.get('[data-testid="risk-probe-scope"]').element as HTMLSelectElement).value).toBe('all')
+    await w.get('[data-testid="risk-probe-enabled"]').setValue(false)
+    expect((w.get('[data-testid="risk-probe-scope"]').element as HTMLSelectElement).disabled).toBe(true)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[1]?.[2]).toMatchObject({ enabled: true, probe_enabled: false, probe_scope: 'all', capacity_notify_only: false })
+    get.mockResolvedValueOnce({ ...structuredClone(baseline), config: save.mock.calls[1]?.[2] })
+    await w.get('[data-testid="risk-group"]').setValue(7); await flushPromises()
+    expect((w.get('[data-testid="risk-probe-enabled"]').element as HTMLInputElement).checked).toBe(false)
+    w.unmount()
+  })
+  it('keeps the original single-account behavior for legacy settings', async () => {
+    const legacy = structuredClone(baseline)
+    Reflect.deleteProperty(legacy.config, 'probe_enabled')
+    Reflect.deleteProperty(legacy.config, 'probe_scope')
+    get.mockResolvedValueOnce(legacy)
+    const w = await open()
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ probe_enabled: true, probe_scope: 'single' })
+    w.unmount()
+  })
+  it('shows separate due times and results for all scheduled accounts', async () => {
+    const data = structuredClone(baseline)
+    data.config.probe_scope = 'all'
+    data.observation.scheduled_checks = {
+      1: { account_id: 1, account_name: 'First', next_probe_at: '2026-11-17T00:06:00Z', last_probe_at: '2026-11-17T00:01:00Z', last_probe_result: 'incomplete' },
+      2: { account_id: 2, account_name: 'Second', next_probe_at: '2026-11-17T00:05:00Z' }
+    }
+    get.mockResolvedValueOnce(data)
+    const w = await open()
+    const rows = w.findAll('[data-testid="risk-scheduled-account"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.text()).toContain('#2 Second')
+    expect(rows[1]?.text()).toContain('#1 First')
+    expect(rows[1]?.text()).toContain('incomplete')
+    expect(rows[0]?.text()).not.toContain('incomplete')
+    w.unmount()
+  })
+})
 
 describe('429 controls and manual testing', () => {
   beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => structuredClone(baseline)); save.mockImplementation(async (group_id, revision, config) => ({ ...structuredClone(baseline), group_id, revision: revision + 1, config })) })

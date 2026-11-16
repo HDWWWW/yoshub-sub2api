@@ -61,6 +61,18 @@
             <h3 class="text-sm font-semibold">{{ t('accountRisk.singleTitle') }}</h3>
             <p class="text-xs text-gray-500">{{ t('accountRisk.singleHint') }}</p>
             <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
+              <input v-model="draft.probe_enabled" data-testid="risk-probe-enabled" type="checkbox" class="rounded" />
+              <span class="text-sm font-medium">{{ t('accountRisk.probeEnabled') }}</span>
+            </label>
+            <label class="block sm:max-w-sm">
+              <span class="input-label">{{ t('accountRisk.probeScope') }}</span>
+              <select v-model="draft.probe_scope" class="input" data-testid="risk-probe-scope" :disabled="!draft.probe_enabled">
+                <option value="single">{{ t('accountRisk.probeScopeSingle') }}</option>
+                <option value="all">{{ t('accountRisk.probeScopeAll') }}</option>
+              </select>
+            </label>
+            <p class="text-xs text-gray-500">{{ t('accountRisk.probeScopeHint') }}</p>
+            <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
               <input v-model="draft.probe_notify_only" data-testid="risk-probe-notify-only" type="checkbox" class="rounded" />
               <span class="text-sm">{{ t('accountRisk.probeNotifyOnly') }}</span>
             </label>
@@ -121,6 +133,16 @@
           <p v-if="!capacityAnomalies.length && view.observation.anomaly_since">{{ t('accountRisk.since') }} {{ formatTime(view.observation.anomaly_since) }}</p>
           <p v-if="(view.observation.mode !== 'capacity' || !capacityAnomalies.length) && view.observation.next_probe_at">{{ t('accountRisk.nextProbe') }} {{ formatTime(view.observation.next_probe_at) }}</p>
           <p v-if="view.observation.last_probe_at">{{ formatTime(view.observation.last_probe_at) }} · {{ view.observation.last_probe_result }}</p>
+          <div v-if="scheduledChecks.length" class="space-y-2" data-testid="risk-scheduled-status">
+            <h4 class="font-medium">{{ t('accountRisk.scheduledAccounts') }}</h4>
+            <div class="max-h-72 space-y-2 overflow-y-auto">
+              <div v-for="check in scheduledChecks" :key="check.account_id" class="rounded bg-gray-50 p-3 dark:bg-dark-700" data-testid="risk-scheduled-account">
+                <p>#{{ check.account_id }} {{ check.account_name }}</p>
+                <p class="text-xs text-gray-500">{{ t('accountRisk.nextProbe') }} {{ formatTime(check.next_probe_at) }}</p>
+                <p v-if="check.last_probe_at" class="text-xs text-gray-500">{{ formatTime(check.last_probe_at) }} · {{ check.last_probe_result }}</p>
+              </div>
+            </div>
+          </div>
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">
           <h3 class="font-semibold">{{ t('accountRisk.history') }}</h3>
@@ -147,12 +169,15 @@ const groupID = ref(0), error = ref(''), now = ref(Date.now())
 const view = ref<AccountRiskRule | null>(null), draft = ref<AccountRiskConfig | null>(null)
 const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const openAIGroups = computed(() => props.groups.filter(g => g.platform === 'openai'))
+const scheduledChecks = computed(() => Object.values(view.value?.observation.scheduled_checks ?? {})
+  .sort((a, b) => Date.parse(a.next_probe_at) - Date.parse(b.next_probe_at) || a.account_id - b.account_id))
 const capacityAnomalies = computed(() => Object.values(view.value?.observation.capacity_checks ?? {})
   .filter(check => check.reference && check.anomaly_since)
   .sort((a, b) => Date.parse(a.anomaly_since!) - Date.parse(b.anomaly_since!) || a.target.account_id - b.target.account_id))
 const valid = computed(() => {
   const c = draft.value
   return !!c && Number.isInteger(c.rate_limit_429_window_seconds) && c.rate_limit_429_window_seconds >= 1 && c.rate_limit_429_window_seconds <= 3600 &&
+    ['single', 'all'].includes(c.probe_scope) &&
     (!c.probe_429_stop_enabled || (Number.isInteger(c.probe_429_max_retries) && c.probe_429_max_retries >= 1 && c.probe_429_max_retries <= 20)) &&
     Number.isInteger(c.rate_limit_429_threshold) && c.rate_limit_429_threshold >= 1 && c.rate_limit_429_threshold <= 10000 && Number.isInteger(c.first_below_percent) && c.first_below_percent >= 1 && c.first_below_percent <= c.second_at_least_percent &&
     Number.isInteger(c.second_at_least_percent) && c.second_at_least_percent <= 100 &&
@@ -175,7 +200,7 @@ async function load() {
   view.value = null; draft.value = null; testResult.value = null; testAccountID.value = 0; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_notify_only: data.config.probe_notify_only ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { if (current === generation) loading.value = false }
 }
