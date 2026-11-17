@@ -59,7 +59,7 @@ func TestFrontendServer_ConditionalHTMLNonce(t *testing.T) {
 
 			if !enabled {
 				assert.Equal(t, cached.ETag, first.Header.Get("ETag"))
-				assert.Equal(t, "no-cache", first.Header.Get("Cache-Control"))
+				assertNoStoreHTMLHeaders(t, first.Header)
 				assert.Empty(t, first.Header.Get("Content-Security-Policy"))
 				second, secondBody := get(first.Header.Get("ETag"))
 				assert.Equal(t, http.StatusNotModified, second.StatusCode)
@@ -72,8 +72,8 @@ func TestFrontendServer_ConditionalHTMLNonce(t *testing.T) {
 			checkNonce := func(response *http.Response, body string) string {
 				t.Helper()
 				require.Equal(t, http.StatusOK, response.StatusCode)
-				assert.Equal(t, "no-store", response.Header.Get("Cache-Control"))
-				assert.Empty(t, response.Header.Get("ETag"))
+				assertNoStoreHTMLHeaders(t, response.Header)
+				assert.Equal(t, cached.ETag, response.Header.Get("ETag"))
 				match := noncePattern.FindStringSubmatch(response.Header.Get("Content-Security-Policy"))
 				require.Len(t, match, 2)
 				assert.Contains(t, body, `<script nonce="`+match[1]+`">window.__APP_CONFIG__=`)

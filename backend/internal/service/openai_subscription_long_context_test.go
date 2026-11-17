@@ -211,10 +211,24 @@ func TestOpenAIGatewayServiceRecordUsage_GPT61SolLongContextBoundary(t *testing.
 }
 
 func TestOpenAIGatewayServiceRecordUsage_GPT61SolExemptionSurvivesRepricing(t *testing.T) {
-	for _, tier := range []string{"priority", "ultrafast"} {
-		t.Run(tier, func(t *testing.T) {
-			multiplier := 2.0
-			// This fixture uses fallback prices (2x for both accelerated tiers).
+	const solStandardCost = 220000*2e-6 + 80000*0.1e-6 + 2000*10e-6
+	const oldSolStandardCost = 220000*2e-6 + 80000*0.2e-6 + 2000*10e-6
+	for _, tt := range []struct {
+		name, tier, requestedModel string
+		wantTotal, wantStandard    float64
+		upstreamTierMultiplier     float64
+	}{
+		{name: "priority", tier: "priority", requestedModel: "gpt-6-sol",
+			wantTotal: solStandardCost * 2, wantStandard: solStandardCost, upstreamTierMultiplier: 2},
+		// Both models support Ultra Fast at 6x, so the cheaper response model is adopted.
+		{name: "ultrafast", tier: "ultrafast", requestedModel: "gpt-6-astra",
+			wantTotal: solStandardCost * 6, wantStandard: solStandardCost, upstreamTierMultiplier: 6},
+		// Keep the legacy mapping case: response-model billing may never raise the customer price.
+		// gpt-6-sol still has the generic 2x fallback; the upstream 6.1 Sol costs 6x.
+		{name: "ultrafast_response_price_increase_rejected", tier: "ultrafast", requestedModel: "gpt-6-sol",
+			wantTotal: oldSolStandardCost * 2, wantStandard: oldSolStandardCost, upstreamTierMultiplier: 6},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 			userRepo := &openAIRecordUsageUserRepoStub{}
 			svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
@@ -226,8 +240,8 @@ func TestOpenAIGatewayServiceRecordUsage_GPT61SolExemptionSurvivesRepricing(t *t
 			svc.channelService = newTestChannelServiceForStats(t, &Channel{ID: 1, Status: StatusActive}, 1, PlatformOpenAI)
 			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 				Result: &OpenAIForwardResult{
-					RequestID: "repricing", Model: "gpt-6-sol", UpstreamModel: "gpt-6.1-sol", BillingModel: "gpt-6-sol",
-					UpstreamResponseModel: "gpt-6.1-sol", ServiceTier: &tier, Duration: time.Second,
+					RequestID: "repricing", Model: tt.requestedModel, UpstreamModel: "gpt-6.1-sol", BillingModel: tt.requestedModel,
+					UpstreamResponseModel: "gpt-6.1-sol", ServiceTier: &tt.tier, Duration: time.Second,
 					Usage: OpenAIUsage{InputTokens: 300000, OutputTokens: 2000, CacheReadInputTokens: 80000},
 				},
 				APIKey: apiKey, User: &User{ID: 2},
@@ -236,14 +250,14 @@ func TestOpenAIGatewayServiceRecordUsage_GPT61SolExemptionSurvivesRepricing(t *t
 				ChannelUsageFields: ChannelUsageFields{BillingModelSource: BillingModelSourceResponse},
 			})
 			require.NoError(t, err)
-			// 响应模型改用较低的缓存价；免费 Fast 再按标准档扣款，两次重算均须保留豁免。
-			const standardCost = 220000*2e-6 + 80000*0.1e-6 + 2000*10e-6
-			require.InDelta(t, standardCost*multiplier, usageRepo.lastLog.TotalCost, 1e-12)
-			require.InDelta(t, standardCost*1.1, usageRepo.lastLog.ActualCost, 1e-12)
-			require.InDelta(t, standardCost*1.1, userRepo.lastAmount, 1e-12)
+			// 响应模型准入和免费加速两次重算均须保留订阅长上下文豁免。
+			require.InDelta(t, tt.wantTotal, usageRepo.lastLog.TotalCost, 1e-12)
+			require.InDelta(t, tt.wantStandard*1.1, usageRepo.lastLog.ActualCost, 1e-12)
+			require.Equal(t, 1, userRepo.deductCalls)
+			require.InDelta(t, tt.wantStandard*1.1, userRepo.lastAmount, 1e-12)
 			require.False(t, usageRepo.lastLog.LongContextBillingApplied)
 			require.NotNil(t, usageRepo.lastLog.AccountStatsCost)
-			require.InDelta(t, standardCost*multiplier, *usageRepo.lastLog.AccountStatsCost, 1e-12)
+			require.InDelta(t, solStandardCost*tt.upstreamTierMultiplier, *usageRepo.lastLog.AccountStatsCost, 1e-12)
 		})
 	}
 }

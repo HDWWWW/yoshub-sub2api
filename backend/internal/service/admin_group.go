@@ -653,9 +653,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
-	if (group.ForceOpenAIFast && group.ForceOpenAIUltrafast) ||
-		(group.FilterOpenAIServiceTier && (group.ForceOpenAIFast || group.ForceOpenAIUltrafast)) {
-		return nil, infraerrors.BadRequest("OPENAI_FAST_MODE_CONFLICT", "Force Fast, Force Ultrafast and Filter service_tier are mutually exclusive")
+	if group.FilterOpenAIServiceTier && (group.ForceOpenAIFast || group.ForceOpenAIUltrafast) {
+		return nil, infraerrors.BadRequest("OPENAI_FAST_MODE_CONFLICT", "Filter service_tier and forced Fast/Ultrafast are mutually exclusive")
 	}
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
@@ -1104,9 +1103,8 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
-	if (group.ForceOpenAIFast && group.ForceOpenAIUltrafast) ||
-		(group.FilterOpenAIServiceTier && (group.ForceOpenAIFast || group.ForceOpenAIUltrafast)) {
-		return nil, infraerrors.BadRequest("OPENAI_FAST_MODE_CONFLICT", "Force Fast, Force Ultrafast and Filter service_tier are mutually exclusive")
+	if group.FilterOpenAIServiceTier && (group.ForceOpenAIFast || group.ForceOpenAIUltrafast) {
+		return nil, infraerrors.BadRequest("OPENAI_FAST_MODE_CONFLICT", "Filter service_tier and forced Fast/Ultrafast are mutually exclusive")
 	}
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false

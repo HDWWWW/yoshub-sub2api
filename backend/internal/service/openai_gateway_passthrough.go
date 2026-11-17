@@ -173,7 +173,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			reqStream = false
 		}
 
-		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), codexClientSessionID(c))
 		if scopeErr != nil {
 			return nil, scopeErr
 		}
@@ -1457,6 +1457,12 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	switch {
 	case strings.Contains(combined, "rate_limit"):
 		return http.StatusTooManyRequests
+	case isOpenAIUpstreamCapacityShedEvent(payload):
+		return http.StatusServiceUnavailable
+	case isOpenAITransientProcessingError(http.StatusBadRequest, message, payload):
+		// Some providers label model capacity and transient processing failures
+		// invalid_request_error even though the request itself is valid.
+		return http.StatusBadGateway
 	case strings.Contains(errType, "invalid_request"):
 		return http.StatusBadRequest
 	case strings.Contains(combined, "authentication") || strings.Contains(combined, "unauthorized") || strings.Contains(combined, "invalid_api_key"):
@@ -1465,8 +1471,6 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 		return http.StatusForbidden
 	case isOpenAIUpstreamAccessStateError(message, payload):
 		return http.StatusForbidden
-	case isOpenAIUpstreamCapacityShedEvent(payload):
-		return http.StatusServiceUnavailable
 	default:
 		return http.StatusBadGateway
 	}
@@ -1622,6 +1626,33 @@ func applyOpenAIStreamFailedErrorPassthroughRule(
 		"upstream_error",
 		"Upstream request failed",
 	)
+}
+
+// OpenAIStreamFailedFrame is the in-stream failed or error frame behind a
+// failover, kept so an exhausted failover can still apply the error
+// passthrough rules that would have matched the frame.
+type OpenAIStreamFailedFrame struct {
+	Platform string
+	Payload  []byte
+	Message  string
+}
+
+// ApplyOpenAIStreamFailedFrameRule applies the error passthrough rules to the
+// frame that triggered an exhausted failover, matching it the way
+// applyOpenAIStreamFailedErrorPassthroughRule does for an in-band frame.
+func ApplyOpenAIStreamFailedFrameRule(c *gin.Context, failoverErr *UpstreamFailoverError) (status int, errType string, errMsg string, matched bool) {
+	if failoverErr == nil || failoverErr.StreamFailedFrame == nil {
+		return 0, "", "", false
+	}
+	frame := failoverErr.StreamFailedFrame
+	status, errType, errMsg, matched = applyOpenAIStreamFailedErrorPassthroughRule(c, frame.Platform, frame.Payload, frame.Message)
+	if !matched {
+		return 0, "", "", false
+	}
+	if errMsg == "" {
+		errMsg = frame.Message
+	}
+	return status, errType, errMsg, true
 }
 
 func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool {
@@ -1876,6 +1907,9 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
 	if preserveError {
 		failoverErr.PreserveUpstreamError = true
+	}
+	if len(payload) > 0 && account != nil {
+		failoverErr.StreamFailedFrame = &OpenAIStreamFailedFrame{Platform: account.Platform, Payload: payload, Message: message}
 	}
 	if preserveError || failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
 		return failoverErr
@@ -2139,8 +2173,22 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}}
 
-	for earlyScanner.Scan() {
-		line := earlyScanner.Text()
+	keepaliveScanner := &openAIStreamKeepaliveScanner{
+		source: earlyScanner,
+		enabled: func() bool {
+			return account != nil && account.Platform == PlatformOpenAI && !clientOutputStarted && !failureDelivered && !suppressCurrentEvent
+		},
+		emit: func(frame string) error {
+			err := writeOpenAIEarlyControlFrame(c, frame)
+			if err != nil {
+				clientDisconnected = true
+				closeOpenAIUpstreamOnDisconnect(resp, account)
+			}
+			return err
+		},
+	}
+	for keepaliveScanner.Scan() {
+		line := keepaliveScanner.Text()
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
 			pendingSSEEventType = eventType
 			eventType = strings.TrimSpace(eventType)
@@ -2372,7 +2420,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 	ensureResponseFailedTerminal()
-	if err := documentScanner.Err(); err != nil {
+	if err := keepaliveScanner.Err(); err != nil {
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 			return resultWithUsage(), nil

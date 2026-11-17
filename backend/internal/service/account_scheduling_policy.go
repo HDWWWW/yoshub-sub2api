@@ -142,7 +142,13 @@ func accountPointersWithExpiryPriority(accounts []*Account, cfg *config.Config, 
 	if cfg == nil || !cfg.Gateway.Scheduling.AccountExpiryPriorityEnabled {
 		return accounts
 	}
-	ranked := accountsWithExpiryPriority(derefAccounts(accounts), cfg, now)
+	values := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account != nil {
+			values = append(values, *account)
+		}
+	}
+	ranked := accountsWithExpiryPriority(values, cfg, now)
 	out := make([]*Account, len(ranked))
 	for i := range ranked {
 		out[i] = &ranked[i]

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type openAIWSRateLimitSignalRepo struct {
@@ -87,6 +89,7 @@ func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(
 	gin.SetMode(gin.TestMode)
 
 	resetAt := time.Now().Add(2 * time.Hour).Unix()
+	var dispatches atomic.Int32
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -101,6 +104,7 @@ func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(
 			t.Errorf("read ws request failed: %v", err)
 			return
 		}
+		dispatches.Add(1)
 		_ = conn.WriteJSON(map[string]any{
 			"type": "error",
 			"error": map[string]any{
@@ -165,8 +169,16 @@ func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(
 	var stopped *UpstreamFailoverError
 	require.ErrorAs(t, err, &stopped)
 	require.True(t, stopped.ShouldRetryNextAccount(), "pre-acceptance rate limiting is recoverable")
-	require.False(t, stopped.RetryableOnSameAccount)
+	require.True(t, stopped.RetryableOnSameAccount, "confirmed rejection retains the custom bounded retry policy")
+	require.Equal(t, http.StatusTooManyRequests, stopped.StatusCode)
+	require.True(t, stopped.PreserveUpstreamError)
+	require.Equal(t, "rate_limit_exceeded", gjson.GetBytes(stopped.ResponseBody, "error.code").String())
+	require.Equal(t, "usage_limit_reached", gjson.GetBytes(stopped.ResponseBody, "error.type").String())
+	require.Equal(t, "The usage limit has been reached", gjson.GetBytes(stopped.ResponseBody, "error.message").String())
+	require.Equal(t, resetAt, gjson.GetBytes(stopped.ResponseBody, "error.resets_at").Int())
 	require.False(t, c.Writer.Written(), "the handler must be able to recover before delivering an error")
+	require.EqualValues(t, 1, dispatches.Load(), "the WS transport must not retry independently of the handler")
+	require.False(t, smartWSHasDispatched(c), "a proven pre-acceptance rejection reopens only the bounded recovery window")
 	require.Nil(t, upstream.lastReq, "WS 限流 error event 不应回退到同账号 HTTP")
 	require.Len(t, repo.rateLimitCalls, 1)
 	require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)

@@ -1605,7 +1605,7 @@
               data-testid="create-force-openai-fast"
               :aria-label="t('admin.groups.openaiFast.force')"
               v-model="createForm.force_openai_fast"
-              @update:model-value="(enabled) => { if (enabled) { createForm.force_openai_ultrafast = false; createForm.filter_openai_service_tier = false } }"
+              @update:model-value="(enabled) => { if (enabled) { createForm.filter_openai_service_tier = false } }"
             />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -1632,7 +1632,7 @@
               data-testid="create-force-openai-ultrafast"
               :aria-label="t('admin.groups.openaiFast.forceUltrafast')"
               v-model="createForm.force_openai_ultrafast"
-              @update:model-value="(enabled) => { if (enabled) { createForm.force_openai_fast = false; createForm.filter_openai_service_tier = false } }"
+              @update:model-value="(enabled) => { if (enabled) { createForm.filter_openai_service_tier = false } }"
             />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -3320,7 +3320,7 @@
               data-testid="edit-force-openai-fast"
               :aria-label="t('admin.groups.openaiFast.force')"
               v-model="editForm.force_openai_fast"
-              @update:model-value="(enabled) => { if (enabled) { editForm.force_openai_ultrafast = false; editForm.filter_openai_service_tier = false } }"
+              @update:model-value="(enabled) => { if (enabled) { editForm.filter_openai_service_tier = false } }"
             />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -3347,7 +3347,7 @@
               data-testid="edit-force-openai-ultrafast"
               :aria-label="t('admin.groups.openaiFast.forceUltrafast')"
               v-model="editForm.force_openai_ultrafast"
-              @update:model-value="(enabled) => { if (enabled) { editForm.force_openai_fast = false; editForm.filter_openai_service_tier = false } }"
+              @update:model-value="(enabled) => { if (enabled) { editForm.filter_openai_service_tier = false } }"
             />
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -6259,7 +6259,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.filter_openai_service_tier = group.filter_openai_service_tier ?? false;
   editForm.force_openai_ultrafast = !editForm.filter_openai_service_tier && (group.force_openai_ultrafast ?? false);
   editForm.reverse_account_priority = group.reverse_account_priority ?? false;
-  editForm.force_openai_fast = !editForm.filter_openai_service_tier && !editForm.force_openai_ultrafast && (group.force_openai_fast ?? false);
+  editForm.force_openai_fast = !editForm.filter_openai_service_tier && (group.force_openai_fast ?? false);
   editForm.free_openai_fast = group.free_openai_fast ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;

@@ -365,6 +365,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	needModelReplace := originalModel != mappedModel
 	var createdAtStamper responsesCreatedAtStamper
 	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
+	streamOutputAccumulator.XAIServerSideSearch = account != nil && account.IsGrok()
 	streamDoneItems := newResponsesStreamOutputItems()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
@@ -400,9 +401,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		lastDownstreamWriteAt = time.Now()
 	}
 	var processRawSSELine func(string, bool)
+	var processKeepaliveSSELine func(string, bool)
+	var keepaliveFilter openAIStreamKeepaliveFilter
 	finalizeStream := func() (*openaiStreamingResult, error) {
 		for _, line := range earlyControlFilter.Finish() {
-			processRawSSELine(line, true)
+			processKeepaliveSSELine(line, true)
+		}
+		if len(keepaliveFilter.lines) > 0 {
+			// EOF dispatches the final SSE event even without a trailing blank line.
+			processKeepaliveSSELine("", true)
 		}
 		if streamEarlyErr != nil {
 			return resultWithUsage(), streamEarlyErr
@@ -855,6 +862,25 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 		}
 	}
+	processKeepaliveSSELine = func(line string, queueDrained bool) {
+		if stageFirstOutput && !firstOutputStage.closed && !failureDelivered && !suppressCurrentEvent {
+			ordinary, frame := keepaliveFilter.Push(line)
+			if frame != "" && !clientDisconnected {
+				if err := writeOpenAIEarlyControlFrame(c, frame); err != nil {
+					clientDisconnected = true
+					closeOpenAIUpstreamOnDisconnect(resp, account)
+					streamEarlyErr = err
+				} else {
+					lastDownstreamWriteAt = time.Now()
+				}
+			}
+			for i, pending := range ordinary {
+				processRawSSELine(pending, queueDrained && i == len(ordinary)-1)
+			}
+			return
+		}
+		processRawSSELine(line, queueDrained)
+	}
 	processSSELine := func(line string, queueDrained bool) {
 		ordinary, frame := earlyControlFilter.Push(line)
 		if frame != "" {
@@ -872,7 +898,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 		}
 		for i, pending := range ordinary {
-			processRawSSELine(pending, queueDrained && i == len(ordinary)-1)
+			processKeepaliveSSELine(pending, queueDrained && i == len(ordinary)-1)
 		}
 	}
 
@@ -1052,15 +1078,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if stageFirstOutput {
 				// Bypass attempt-local buffered frames. The stable SSE headers may be
 				// committed here, but account headers remain private until semantic output.
-				n, err := w.Write([]byte(":\n\n"))
-				recordOpenAIStreamKeepaliveBytes(c, n)
-				if err != nil {
+				if err := writeOpenAIEarlyControlFrame(c, ":\n\n"); err != nil {
 					clientDisconnected = true
 					closeOpenAIUpstreamOnDisconnect(resp, account)
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, returning collected usage")
 					continue
 				}
-				flusher.Flush()
 				lastDownstreamWriteAt = time.Now()
 				continue
 			}

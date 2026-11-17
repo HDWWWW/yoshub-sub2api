@@ -805,12 +805,34 @@ func TestResponsesWebSocketCredentialFailoverLoop(t *testing.T) {
 		writeFirst(t, conn)
 
 		readCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_, _, err := conn.Read(readCtx)
-		cancel()
+		defer cancel()
+		messageType, payload, err := conn.Read(readCtx)
+		require.NoError(t, err, "the structured error precedes the closing handshake")
+		require.Equal(t, coderws.MessageText, messageType)
+		var event struct {
+			Type   string `json:"type"`
+			Status int    `json:"status"`
+			Error  struct {
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(payload, &event))
+		require.Equal(t, "error", event.Type)
+		require.Equal(t, http.StatusServiceUnavailable, event.Status)
+		require.Equal(t, "api_error", event.Error.Type)
+		require.Equal(t, string(service.GrokCredentialReasonProviderConfig), event.Error.Code)
+		require.Equal(t, service.GrokCredentialUnavailableClientMessage, event.Error.Message)
+		require.NotContains(t, string(payload), "invalid_client", "provider credential details must stay private")
+
+		_, _, err = conn.Read(readCtx)
 		var closeErr coderws.CloseError
 		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, coderws.StatusTryAgainLater, closeErr.Code)
 		require.Contains(t, closeErr.Reason, service.GrokCredentialUnavailableClientMessage)
 		require.Equal(t, 1, repo.selectorCalls())
+		require.Empty(t, repo.errorIDs(), "provider configuration failures must not quarantine the selected account")
 		require.Empty(t, upstream.accountHits())
 	})
 

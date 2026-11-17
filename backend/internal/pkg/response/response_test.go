@@ -19,6 +19,12 @@ import (
 
 // ---------- 辅助函数 ----------
 
+func responseTestContext(w *httptest.ResponseRecorder) *gin.Context {
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	return c
+}
+
 // parseResponseBody 从 httptest.ResponseRecorder 中解析 JSON 响应体
 func parseResponseBody(t *testing.T, w *httptest.ResponseRecorder) Response {
 	t.Helper()
@@ -48,7 +54,7 @@ func parsePaginatedBody(t *testing.T, w *httptest.ResponseRecorder) (Response, P
 // newContextWithQuery 创建一个带有 URL query 参数的 gin.Context 用于测试 ParsePagination
 func newContextWithQuery(query string) (*httptest.ResponseRecorder, *gin.Context) {
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := responseTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/?"+query, nil)
 	return w, c
 }
@@ -93,7 +99,7 @@ func TestErrorWithDetails(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+			c := responseTestContext(w)
 
 			ErrorWithDetails(c, tt.statusCode, tt.message, tt.reason, tt.metadata)
 
@@ -192,7 +198,7 @@ func TestErrorFrom(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+			c := responseTestContext(w)
 
 			written := ErrorFrom(c, tt.err)
 			require.Equal(t, tt.wantWritten, written)
@@ -245,7 +251,7 @@ func TestSuccess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+			c := responseTestContext(w)
 
 			Success(c, tt.data)
 
@@ -288,7 +294,7 @@ func TestCreated(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+			c := responseTestContext(w)
 
 			Created(c, tt.data)
 
@@ -329,7 +335,7 @@ func TestError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+			c := responseTestContext(w)
 
 			Error(c, tt.statusCode, tt.message)
 
@@ -349,7 +355,7 @@ func TestBadRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := responseTestContext(w)
 
 	BadRequest(c, "参数无效")
 
@@ -363,7 +369,7 @@ func TestUnauthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := responseTestContext(w)
 
 	Unauthorized(c, "未登录")
 
@@ -377,7 +383,7 @@ func TestForbidden(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := responseTestContext(w)
 
 	Forbidden(c, "无权限")
 
@@ -391,7 +397,7 @@ func TestNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := responseTestContext(w)
 
 	NotFound(c, "资源不存在")
 
@@ -405,7 +411,7 @@ func TestInternalError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := responseTestContext(w)
 
 	InternalError(c, "服务器内部错误")
 
@@ -489,7 +495,7 @@ func TestPaginated(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+			c := responseTestContext(w)
 
 			Paginated(c, tt.items, tt.total, tt.page, tt.pageSize)
 
@@ -560,7 +566,7 @@ func TestPaginatedWithResult(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+			c := responseTestContext(w)
 
 			PaginatedWithResult(c, tt.items, tt.pagination)
 

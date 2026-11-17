@@ -374,7 +374,7 @@ describe("GroupsView Codex manifest binding", () => {
       wrapper.unmount();
     });
 
-    it(`${form}: switches modes exclusively and submits free Ultrafast`, async () => {
+    it(`${form}: combines forced tiers, keeps filtering exclusive, and submits free Ultrafast`, async () => {
       const wrapper = mountView();
       await flushPromises();
       if (form === "create") {
@@ -394,7 +394,7 @@ describe("GroupsView Codex manifest binding", () => {
       await fast().trigger("click");
       expect(fast().attributes("aria-checked")).toBe("true");
       await ultra().trigger("click");
-      expect(fast().attributes("aria-checked")).toBe("false");
+      expect(fast().attributes("aria-checked")).toBe("true");
       expect(ultra().attributes("aria-checked")).toBe("true");
       await free().trigger("click");
       await filter().trigger("click");
@@ -410,7 +410,7 @@ describe("GroupsView Codex manifest binding", () => {
       const call = (form === "create" ? createGroup : updateGroup).mock.calls[0];
       expect(call).toBeDefined();
       expect(call[form === "create" ? 0 : 1]).toMatchObject({
-        force_openai_fast: false,
+        force_openai_fast: true,
         force_openai_ultrafast: true,
         filter_openai_service_tier: false,
         free_openai_fast: true,

@@ -296,7 +296,7 @@ func (b *eventBody) Read(destination []byte) (int, error) {
 // generation ownership or copying their fields into mutable HTTP headers.
 func isControlEvent(kind string) bool {
 	switch kind {
-	case "codex.rate_limits", "codex.response.metadata", "responsesapi.websocket_timing":
+	case "codex.rate_limits", "codex.response.metadata", "responsesapi.websocket_timing", "keepalive":
 		return true
 	default:
 		return false

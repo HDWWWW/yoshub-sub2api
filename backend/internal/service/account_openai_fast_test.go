@@ -53,14 +53,14 @@ func TestAccountForceFastHTTPAndWebSocket(t *testing.T) {
 }
 
 func TestAccountForceFastPrecedence(t *testing.T) {
-	for _, groupMode := range []string{"off", "priority", "ultrafast", "filter"} {
+	for _, groupMode := range []string{"off", "priority", "ultrafast", "both", "filter"} {
 		for _, action := range []string{BetaPolicyActionPass, BetaPolicyActionFilter, BetaPolicyActionBlock} {
 			t.Run(groupMode+"/"+action, func(t *testing.T) {
 				svc := newOpenAIGatewayServiceWithSettings(t, &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{{
 					ServiceTier: OpenAIFastTierPriority, Action: action, Scope: BetaPolicyScopeAll,
 				}}})
 				group := &Group{ID: 7, Platform: PlatformComposite, Status: StatusActive, Hydrated: true,
-					ForceOpenAIFast: groupMode == "priority", ForceOpenAIUltrafast: groupMode == "ultrafast", FilterOpenAIServiceTier: groupMode == "filter"}
+					ForceOpenAIFast: groupMode == "priority" || groupMode == "both", ForceOpenAIUltrafast: groupMode == "ultrafast" || groupMode == "both", FilterOpenAIServiceTier: groupMode == "filter"}
 				ctx := context.WithValue(context.Background(), ctxkey.Group, group)
 				account := &Account{Platform: PlatformOpenAI, Extra: map[string]any{OpenAIForceFastExtraKey: true}}
 				body := []byte(`{"type":"response.create","model":"gpt-6.1-sol"}`)

@@ -296,8 +296,9 @@ func TestForcedWSProgressTimeoutEvictsOnlyStalledLease(t *testing.T) {
 				require.Error(t, err)
 				require.Less(t, time.Since(started), 2*time.Second)
 				var failure *UpstreamFailoverError
-				if !chat && phase != "content" {
-					// Responses can retry a transport timeout before model output.
+				if phase == "headers" || (!chat && phase != "content") {
+					// HTTP requests can retry before output; Chat commits its role
+					// chunk on created, while Responses still stages that prelude.
 					// The failed dispatch is cleared before the HTTP handler retries.
 					require.ErrorAs(t, err, &failure)
 					require.True(t, failure.RetryableOnSameAccount)

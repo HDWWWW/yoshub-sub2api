@@ -132,7 +132,7 @@ type Group struct {
 	ForceOpenaiFast bool `json:"force_openai_fast,omitempty"`
 	// 此 OpenAI/Composite 分组按账号优先级从大到小调度
 	ReverseAccountPriority bool `json:"reverse_account_priority,omitempty"`
-	// 是否强制此 OpenAI/Composite 分组请求使用 service_tier=ultrafast
+	// 是否对支持 Ultrafast 的模型强制使用 service_tier=ultrafast（优先于 force_openai_fast）
 	ForceOpenaiUltrafast bool `json:"force_openai_ultrafast,omitempty"`
 	// 是否移除此 OpenAI/Composite 分组请求中的 service_tier
 	FilterOpenaiServiceTier bool `json:"filter_openai_service_tier,omitempty"`

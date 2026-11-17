@@ -422,7 +422,10 @@ func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult
 	}
 	retry := smartWSCanRetryHTTPBeforeOutput(c) && (result == nil || (!openAIUsageHasTokens(&result.Usage) && result.ImageCount == 0))
 	v, _ := c.Get(smartWSDispatchKey)
-	d := v.(*smartWSDispatch)
+	d, ok := v.(*smartWSDispatch)
+	if !ok || d == nil {
+		return result, err
+	}
 	detail := ""
 	if failure := d.readFailure.Load(); failure != nil {
 		fields := gin.H{"reason": failure.Reason, "close_code": failure.CloseCode,
@@ -453,8 +456,7 @@ func finalizeSmartWSUncertainFailure(c *gin.Context, result *OpenAIForwardResult
 		failure.StatusCode, failure.ResponseBody = http.StatusBadGateway, payload
 		failure.NextAccountAction, failure.RetryableOnSameAccount = NextAccountRetry, true
 		failure.PreserveUpstreamError = true
-		v, _ := c.Get(smartWSDispatchKey)
-		v.(*smartWSDispatch).state.Store(smartWSHTTPRetryable)
+		d.state.Store(smartWSHTTPRetryable)
 		return result, failure
 	}
 	payload, _ := json.Marshal(gin.H{"error": gin.H{"type": "upstream_error", "code": smartWSUncertainCode, "message": smartWSUncertainMessage}})

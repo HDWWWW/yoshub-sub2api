@@ -95,8 +95,8 @@ type AccountRepository interface {
 	ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error)
 	// ListModelAvailabilityCandidates returns accounts that are enabled by
 	// persistent configuration (active + schedulable) for model-support
-	// diagnosis. It deliberately does not filter transient runtime state such
-	// as rate-limit, overload, temporary-unschedulable, or expiry windows.
+	// diagnosis and scheduler snapshot membership. It deliberately does not
+	// filter rate-limit, overload, temporary-unschedulable, or expiry windows.
 	// When groupID is nil, includeGrouped controls whether the query scans all
 	// matching accounts or only accounts without a group binding.
 	ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]Account, error)
@@ -109,8 +109,11 @@ type AccountRepository interface {
 	ClearRateLimit(ctx context.Context, id int64) error
 	ClearAntigravityQuotaScopes(ctx context.Context, id int64) error
 	ClearModelRateLimits(ctx context.Context, id int64) error
+	// ClearModelRateLimitIfUnchanged 仅在指定 scope 仍与观测内容相同时原子清除。
+	// 返回 false 表示记录已改变或不存在；不得据此清除调用方的本地快照。
+	ClearModelRateLimitIfUnchanged(ctx context.Context, id int64, scope string, observed map[string]any) (bool, error)
 	UpdateSessionWindow(ctx context.Context, id int64, start, end *time.Time, status string) error
-	// UpdateSessionWindowEnd 仅更新 5h 窗口的结束时间，不动 start / status。
+	// UpdateSessionWindowEnd 更新 5h 窗口的起止时间，不动 status。
 	// 用于 active poll 拿到新 ResetsAt 后回写，避免覆盖请求路径上记录的 status。
 	UpdateSessionWindowEnd(ctx context.Context, id int64, end time.Time) error
 	UpdateExtra(ctx context.Context, id int64, updates map[string]any) error

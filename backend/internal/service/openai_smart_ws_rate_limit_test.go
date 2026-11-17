@@ -27,6 +27,9 @@ func TestSmartWSRateLimitRecoveryRequiresUnacceptedRequest(t *testing.T) {
 		}{
 			{"rejected", []string{smartWSRateLimitFixture}, true, 0},
 			{"control_then_rejected", []string{`{"type":"codex.rate_limits","rate_limits":{}}`, smartWSRateLimitFixture}, true, 0},
+			{"keepalive_then_rejected", []string{`{"type":"keepalive"}`, smartWSRateLimitFixture}, true, 0},
+			{"keepalive_with_usage_then_rejected", []string{`{"type":"keepalive","usage":{"input_tokens":0,"output_tokens":0}}`, smartWSRateLimitFixture}, false, 0},
+			{"keepalive_with_response_id_then_rejected", []string{`{"type":"keepalive","response_id":"resp_accepted"}`, smartWSRateLimitFixture}, false, 0},
 			{"accepted_then_rejected", []string{forcedWSCreated, smartWSRateLimitFixture}, false, 0},
 			{"failed_with_usage", []string{`{"type":"response.failed","response":{"id":"resp_used","status":"failed","usage":{"input_tokens":9,"output_tokens":2},"error":{"code":"rate_limit_exceeded"}}}`}, false, 9},
 			{"bare_error_then_usage", []string{smartWSRateLimitFixture, `{"type":"response.failed","response":{"id":"resp_used","status":"failed","usage":{"input_tokens":9,"output_tokens":2},"error":{"code":"rate_limit_exceeded"}}}`}, false, 9},

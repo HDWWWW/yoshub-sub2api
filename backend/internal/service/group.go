@@ -105,9 +105,9 @@ type Group struct {
 	SmartWSMode                 string
 	ForceOpenAIFast             bool // 强制 OpenAI 网关请求使用 service_tier=priority
 	ReverseAccountPriority      bool // 按账号优先级从大到小调度
-	ForceOpenAIUltrafast        bool // 强制 OpenAI 网关请求使用 service_tier=ultrafast
+	ForceOpenAIUltrafast        bool // 对支持 Ultrafast 的模型强制 service_tier=ultrafast，优先于 ForceOpenAIFast
 	FilterOpenAIServiceTier     bool // 移除 OpenAI 请求中的 service_tier
-	FreeOpenAIFast              bool // OpenAI Fast 请求按 Standard 价格向用户计费
+	FreeOpenAIFast              bool // OpenAI Fast/Ultrafast 请求按 Standard 价格向用户计费
 	RequireOAuthOnly            bool // 仅允许非 apikey 类型账号关联（OpenAI/Antigravity/Anthropic/Gemini）
 	RequirePrivacySet           bool // 调度时仅允许 privacy 已成功设置的账号（OpenAI/Antigravity/Anthropic/Gemini）
 	DefaultMappedModel          string

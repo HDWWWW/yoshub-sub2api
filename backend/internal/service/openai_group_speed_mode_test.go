@@ -123,7 +123,7 @@ func TestGroupSpeedModeRequiresTrustedOpenAIContext(t *testing.T) {
 				if scope == "nil-context" {
 					ctx = nil
 				}
-				require.Empty(t, openAIGroupForcedServiceTier(ctx, account))
+				require.Empty(t, openAIGroupForcedServiceTier(ctx, account, "gpt-6.1-sol"))
 				require.False(t, openAIGroupFiltersServiceTier(ctx, account))
 			})
 		}

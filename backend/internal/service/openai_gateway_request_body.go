@@ -707,19 +707,43 @@ func normalizeOpenAIParallelToolCallsWithoutTools(body []byte, responsesLite boo
 }
 
 // openAIRequestBodyHasTools 同时识别顶层 tools 和 input[].additional_tools。
+// additional_tools 类型字符串只有在字面出现、或被能拼出可见 ASCII 的 \u 转义
+// 拼出时才可能匹配，其余请求体跳过对 input 的结构扫描。
 func openAIRequestBodyHasTools(body []byte) bool {
-	if tools := gjson.GetBytes(body, "tools"); tools.IsArray() && len(tools.Array()) > 0 {
+	root := parseRawJSONView(body)
+	if gjsonArrayHasElements(root.Get("tools")) {
 		return true
 	}
-	for _, item := range gjson.GetBytes(body, "input").Array() {
-		if strings.TrimSpace(item.Get("type").String()) != "additional_tools" {
-			continue
-		}
-		if tools := item.Get("tools"); tools.IsArray() && len(tools.Array()) > 0 {
-			return true
-		}
+	if !bytes.Contains(body, []byte("additional_tools")) && !JSONMayEscapePlainASCII(body) {
+		return false
 	}
-	return false
+	found := false
+	isAdditionalToolsWithTools := func(item gjson.Result) bool {
+		return strings.TrimSpace(item.Get("type").String()) == "additional_tools" && gjsonArrayHasElements(item.Get("tools"))
+	}
+	input := root.Get("input")
+	if !input.IsArray() {
+		// gjson 把非数组的值当作只含它自身的数组。
+		return input.Type != gjson.Null && isAdditionalToolsWithTools(input)
+	}
+	input.ForEach(func(_, item gjson.Result) bool {
+		found = isAdditionalToolsWithTools(item)
+		return !found
+	})
+	return found
+}
+
+// gjsonArrayHasElements 不分配结果切片地判断数组是否非空。
+func gjsonArrayHasElements(value gjson.Result) bool {
+	if !value.IsArray() {
+		return false
+	}
+	nonEmpty := false
+	value.ForEach(func(_, _ gjson.Result) bool {
+		nonEmpty = true
+		return false
+	})
+	return nonEmpty
 }
 
 // normalizeOpenAIResponsesReasoningContentReplay removes non-portable
@@ -1506,9 +1530,9 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 	}
 	normalized := body
 	changed := false
-	prompt := gjson.GetBytes(normalized, "prompt")
+	prompt := parseRawJSONView(normalized).Get("prompt")
 	if prompt.Exists() {
-		input := gjson.GetBytes(normalized, "input")
+		input := parseRawJSONView(normalized).Get("input")
 		if prompt.Type != gjson.Null && (!input.Exists() || input.Type == gjson.Null) {
 			next, err := sjson.SetRawBytes(normalized, "input", []byte(prompt.Raw))
 			if err != nil {
@@ -1523,7 +1547,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 		normalized = next
 		changed = true
 	}
-	if gjson.GetBytes(normalized, "commands").Exists() {
+	if parseRawJSONView(normalized).Get("commands").Exists() {
 		next, err := sjson.DeleteBytes(normalized, "commands")
 		if err != nil {
 			return body, false, fmt.Errorf("normalize oauth responses delete commands: %w", err)
@@ -1532,22 +1556,39 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 		changed = true
 	}
 	// Only remove the input-item field, never same-named user content.
-	input := gjson.GetBytes(normalized, "input")
+	input := parseRawJSONView(normalized).Get("input")
 	if !input.IsArray() {
 		return normalized, changed, nil
 	}
-	for i, item := range input.Array() {
-		if !item.IsObject() || !item.Get("internal_chat_message_metadata_passthrough").Exists() {
-			continue
-		}
-		next, err := sjson.DeleteBytes(normalized, fmt.Sprintf("input.%d.internal_chat_message_metadata_passthrough", i))
-		if err != nil {
-			return body, false, fmt.Errorf("normalize oauth input metadata: %w", err)
-		}
-		normalized = next
-		changed = true
+	const field = "internal_chat_message_metadata_passthrough"
+	hasMetadata := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		hasMetadata = item.IsObject() && item.Get(field).Exists()
+		return !hasMetadata
+	})
+	if !hasMetadata {
+		return normalized, changed, nil
 	}
-	return normalized, changed, nil
+
+	// Clean each item locally, then rebuild the request once. Deleting by
+	// input.N on the full body copies the entire history for every message.
+	var items []string
+	var normalizeErr error
+	input.ForEach(func(_, item gjson.Result) bool {
+		raw := item.Raw
+		if item.IsObject() && item.Get(field).Exists() {
+			raw, normalizeErr = sjson.Delete(raw, field)
+			if normalizeErr != nil {
+				return false
+			}
+		}
+		items = append(items, raw)
+		return true
+	})
+	if normalizeErr != nil {
+		return body, false, fmt.Errorf("normalize oauth input metadata: %w", normalizeErr)
+	}
+	return replaceOpenAIRawInput(normalized, input, items), true, nil
 }
 
 func normalizeGPT6ResponsesSampling(body []byte, model string) ([]byte, bool, error) {
@@ -1675,6 +1716,12 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		normalized, changed, err = normalizeOpenAIResponsesLegacyIngressWithConfig(opts.Config, body)
 		if err != nil {
 			return body, false, err
+		}
+		if next, idsChanged, err := normalizeCodexAdditionalToolsIDsBody(normalized); err != nil {
+			return body, false, err
+		} else if idsChanged {
+			normalized = next
+			changed = true
 		}
 	}
 	if next, normalizedReasoningContent, err := normalizeOpenAIResponsesReasoningContentReplay(normalized); err != nil {
@@ -2252,6 +2299,14 @@ func openAIFastPolicySettingsFromContext(ctx context.Context) *OpenAIFastPolicyS
 	return nil
 }
 
+// openAIModelSupportsUltrafast is shared by forced-tier selection and the
+// model-specific billing multiplier. Unsupported models retain their client
+// tier unless the group also enables the Fast fallback.
+func openAIModelSupportsUltrafast(model string) bool {
+	normalized := normalizeKnownOpenAICodexModel(model)
+	return isOpenAIGPT6AstraModel(normalized) || normalized == "gpt-6.1-sol"
+}
+
 func openAIGroupFiltersServiceTier(ctx context.Context, account *Account) bool {
 	if ctx == nil || account == nil || account.Platform != PlatformOpenAI {
 		return false
@@ -2265,16 +2320,17 @@ func openAIGroupFiltersServiceTier(ctx context.Context, account *Account) bool {
 
 // Account policy takes precedence over group tier selection. Global Fast
 // filtering and blocking still apply to the resulting priority request.
-func openAIForcedServiceTier(ctx context.Context, account *Account) string {
+func openAIForcedServiceTier(ctx context.Context, account *Account, model string) string {
 	if account.IsOpenAIForceFastEnabled() {
 		return OpenAIFastTierPriority
 	}
-	return openAIGroupForcedServiceTier(ctx, account)
+	return openAIGroupForcedServiceTier(ctx, account, model)
 }
 
-// openAIGroupForcedServiceTier only trusts a hydrated request group. Ultrafast
-// wins defensively for invalid legacy snapshots; writes reject both flags.
-func openAIGroupForcedServiceTier(ctx context.Context, account *Account) string {
+// openAIGroupForcedServiceTier only trusts a hydrated request group. The flags
+// can coexist: supported models use Ultrafast, others fall back to Fast when
+// enabled. With only Ultrafast enabled, unsupported models keep the client tier.
+func openAIGroupForcedServiceTier(ctx context.Context, account *Account, model string) string {
 	if ctx == nil || account == nil || account.Platform != PlatformOpenAI {
 		return ""
 	}
@@ -2282,13 +2338,14 @@ func openAIGroupForcedServiceTier(ctx context.Context, account *Account) string 
 	if !IsGroupContextValid(group) || !groupSupportsOpenAIFast(group.Platform) {
 		return ""
 	}
-	if group.ForceOpenAIUltrafast {
+	switch {
+	case group.ForceOpenAIUltrafast && openAIModelSupportsUltrafast(model):
 		return OpenAIFastTierUltrafast
-	}
-	if group.ForceOpenAIFast {
+	case group.ForceOpenAIFast:
 		return OpenAIFastTierPriority
+	default:
+		return ""
 	}
-	return ""
 }
 
 // applyOpenAIFastPolicyToBody applies the OpenAI fast policy to a raw request
@@ -2297,7 +2354,7 @@ func openAIGroupForcedServiceTier(ctx context.Context, account *Account) string 
 // normalizes the service_tier value (e.g. client alias "fast" → "priority").
 // action=force_priority rewrites any matched known tier to "priority". Before
 // the global policy is evaluated, account Force Fast sets priority; otherwise
-// a trusted request Group can force priority or ultrafast.
+// a trusted request Group can force priority, or ultrafast for supported models.
 // The global policy remains authoritative and may still pass, filter, or block
 // that final value.
 //
@@ -2310,7 +2367,7 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToBody(ctx context.Context, 
 	if len(body) == 0 {
 		return body, nil
 	}
-	if tier := openAIForcedServiceTier(ctx, account); tier != "" {
+	if tier := openAIForcedServiceTier(ctx, account, model); tier != "" {
 		updated, err := sjson.SetBytes(body, "service_tier", tier)
 		if err != nil {
 			return body, fmt.Errorf("force service_tier on body: %w", err)
@@ -2440,7 +2497,7 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToWSResponseCreate(
 	if frameType != "response.create" {
 		return frame, nil, nil
 	}
-	if tier := openAIForcedServiceTier(ctx, account); tier != "" {
+	if tier := openAIForcedServiceTier(ctx, account, model); tier != "" {
 		updated, err := sjson.SetBytes(frame, "service_tier", tier)
 		if err != nil {
 			return frame, nil, fmt.Errorf("force service_tier in ws frame: %w", err)
@@ -2592,7 +2649,7 @@ func openAIRequestBodyMayContainEmptyBase64InputImage(body []byte) bool {
 	if len(body) == 0 || !openAIRequestBodyMayContainInputImageToken(body) {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
+	input := parseRawJSONView(body).Get("input")
 	if !input.Exists() {
 		return false
 	}
@@ -2603,8 +2660,9 @@ func openAIRequestBodyMayContainInputImageToken(body []byte) bool {
 	if bytes.Contains(body, []byte("input_image")) {
 		return true
 	}
-	// JSON 字符串任意字符都可能被 unicode escape，遇到 \u 时交给 gjson 解码后的结构扫描兜底。
-	return bytes.Contains(body, []byte("\\u"))
+	// JSON 字符串任意字符都可能被 unicode escape；只有能拼出可见 ASCII 字符的 \u
+	// 才可能藏住 input_image，此时交给 gjson 解码后的结构扫描兜底。
+	return JSONMayEscapePlainASCII(body)
 }
 
 func openAIJSONValueMayContainEmptyBase64InputImage(value gjson.Result) bool {

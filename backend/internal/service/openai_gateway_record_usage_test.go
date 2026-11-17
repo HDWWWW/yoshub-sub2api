@@ -476,6 +476,8 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 		},
 		User:    &User{ID: 2004},
 		Account: &Account{ID: 3004},
+		// The peak window excludes 23:59, so do not depend on the wall clock.
+		PricingAt: time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC),
 	})
 
 	require.NoError(t, err)
@@ -3274,6 +3276,17 @@ func TestGroupBillsOpenAIFastAtStandardRequiresOpenAIAccount(t *testing.T) {
 		apiKey,
 		&Account{Platform: PlatformGrok, Type: AccountTypeAPIKey},
 		"priority",
+	))
+}
+
+// Yoshub 免费加速同时覆盖 Fast 和 Ultrafast，保留官方模型成本倍率。
+func TestGroupBillsOpenAIFastAtStandardIncludesUltrafast(t *testing.T) {
+	apiKey := &APIKey{Group: &Group{Platform: PlatformOpenAI, FreeOpenAIFast: true, ForceOpenAIUltrafast: true}}
+
+	require.True(t, billsOpenAIFastAtStandard(
+		apiKey,
+		&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		OpenAIFastTierUltrafast,
 	))
 }
 

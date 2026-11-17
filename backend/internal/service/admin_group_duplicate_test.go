@@ -166,6 +166,8 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 		SortOrder:                       9,
 		AllowMessagesDispatch:           true,
 		AllowLive:                       true,
+		SmartWSMode:                     "enabled",
+		ForceOpenAIFast:                 true,
 		ForceOpenAIUltrafast:            true,
 		ReverseAccountPriority:          true,
 		FreeOpenAIFast:                  true,
@@ -216,6 +218,8 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, source.FallbackGroupID, duplicate.FallbackGroupID)
 	require.Equal(t, source.ModelRouting, duplicate.ModelRouting)
 	require.Equal(t, source.MessagesDispatchModelConfig, duplicate.MessagesDispatchModelConfig)
+	require.Equal(t, source.SmartWSMode, duplicate.SmartWSMode)
+	require.Equal(t, source.ForceOpenAIFast, duplicate.ForceOpenAIFast)
 	require.Equal(t, source.ForceOpenAIUltrafast, duplicate.ForceOpenAIUltrafast)
 	require.True(t, duplicate.ReverseAccountPriority)
 	require.Equal(t, source.FreeOpenAIFast, duplicate.FreeOpenAIFast)
