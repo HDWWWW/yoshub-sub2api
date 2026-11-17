@@ -37,7 +37,7 @@ func writeSmartWSNativeFailure(c *gin.Context, status int, body []byte, headers 
 		return err
 	}
 	c.Set(smartWSFailureDeliveredKey, true)
-	markOpenAIWSClientVisibleFailure(c, gjson.GetBytes(payload, "type").String(), payload)
+	markOpenAIWSClientVisibleFailure(c, gjson.GetBytes(payload, "type").String(), payload, status)
 	return smartWSStopFailure(status, body, headers)
 }
 

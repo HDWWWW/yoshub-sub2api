@@ -1717,6 +1717,12 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		if err != nil {
 			return body, false, err
 		}
+		if next, rolesChanged, err := normalizeOpenAICodexSystemRolesBody(normalized, account); err != nil {
+			return body, false, err
+		} else if rolesChanged {
+			normalized = next
+			changed = true
+		}
 		if next, idsChanged, err := normalizeCodexAdditionalToolsIDsBody(normalized); err != nil {
 			return body, false, err
 		} else if idsChanged {

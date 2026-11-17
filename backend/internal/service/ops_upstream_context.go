@@ -42,9 +42,11 @@ const (
 	// 上就地(in-band)补发错误帧时记录的 OpsStreamError。因为 wire 状态码停留在 200，
 	// ops_error_logger 的 status>=400 采集路径永远不会触发，这类流内失败
 	//（例如等待并发槽位超时后回退的限流、Wait 后二次计费校验失败）本会在错误看板里隐形。
-	OpsStreamErrorKey  = "ops_stream_error"
-	OpsStreamErrorsKey = "ops_stream_errors"
-	OpsStreamTurnKey   = "ops_stream_turn"
+	OpsStreamErrorKey         = "ops_stream_error"
+	OpsStreamErrorsKey        = "ops_stream_errors"
+	OpsStreamTurnKey          = "ops_stream_turn"
+	opsStreamTurnMarkedKey    = "ops_stream_turn_marked"
+	opsStreamErrorObserverKey = "ops_stream_error_observer"
 
 	// Client-side configuration denials should remain visible in ops_error_logs,
 	// but should be excluded from SLA/error-rate calculations.
@@ -199,6 +201,9 @@ type OpsStreamError struct {
 	CountTowardsSLA bool
 	// Turn identifies a WebSocket turn. HTTP/SSE requests leave it at zero.
 	Turn int
+	// ImmediateLogHandled means the native WS observer has consumed this event
+	// (including configured filtering). Session cleanup must not submit it again.
+	ImmediateLogHandled bool
 	// SkipMonitoring snapshots the rule decision for this visible failure.
 	SkipMonitoring  bool
 	AccountID       int64
@@ -223,12 +228,25 @@ func BeginOpsStreamTurn(c *gin.Context, turn int) {
 		return
 	}
 	c.Set(OpsStreamTurnKey, turn)
+	// A new proxy invocation can restart its turn numbering. Deduplicate within
+	// this generation, not against numeric IDs left in the bounded history.
+	c.Set(opsStreamTurnMarkedKey, false)
 	// Rule and attempt state is turn-scoped on a long-lived WS connection.
 	c.Set(OpsSkipPassthroughKey, false)
 	c.Set(OpsUpstreamErrorsKey, []*OpsUpstreamErrorEvent{})
 	c.Set(OpsUpstreamStatusCodeKey, 0)
 	c.Set(OpsUpstreamErrorMessageKey, "")
 	c.Set(OpsUpstreamErrorDetailKey, "")
+}
+
+// BindOpsStreamErrorObserver installs a synchronous, request-local observer.
+// Native WS calls it after a first-wins mark; the handler builds an immutable
+// log entry immediately and submits it to the existing bounded async queue.
+// HTTP/SSE retains its response-end logging path.
+func BindOpsStreamErrorObserver(c *gin.Context, observer func(OpsStreamError)) {
+	if c != nil {
+		c.Set(opsStreamErrorObserverKey, observer)
+	}
 }
 
 // MarkOpsStreamError 记录一次就地 SSE 错误，供 ops 日志采集。
@@ -277,6 +295,9 @@ func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 	}
 	snapshotOpsStreamErrorContext(c, &streamErr)
 	if GetOpenAIClientTransport(c) == OpenAIClientTransportWS {
+		if c.GetBool(opsStreamTurnMarkedKey) {
+			return
+		}
 		if value, ok := c.Get(OpsStreamTurnKey); ok {
 			streamErr.Turn, _ = value.(int)
 		}
@@ -284,15 +305,21 @@ func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 		if value, ok := c.Get(OpsStreamErrorsKey); ok {
 			errorsForRequest, _ = value.([]OpsStreamError)
 		}
-		if len(errorsForRequest) > 0 && errorsForRequest[len(errorsForRequest)-1].Turn == streamErr.Turn {
-			return
+		var observer func(OpsStreamError)
+		if value, ok := c.Get(opsStreamErrorObserverKey); ok {
+			observer, _ = value.(func(OpsStreamError))
 		}
+		streamErr.ImmediateLogHandled = observer != nil
+		c.Set(opsStreamTurnMarkedKey, true)
 		errorsForRequest = append(errorsForRequest, streamErr)
 		if len(errorsForRequest) > maxOpsStreamErrorsPerRequest {
 			errorsForRequest = append([]OpsStreamError(nil), errorsForRequest[len(errorsForRequest)-maxOpsStreamErrorsPerRequest:]...)
 		}
 		c.Set(OpsStreamErrorsKey, errorsForRequest)
 		c.Set(OpsStreamErrorKey, streamErr)
+		if observer != nil {
+			observer(streamErr)
+		}
 		return
 	}
 	if _, exists := c.Get(OpsStreamErrorKey); exists {

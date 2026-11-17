@@ -225,30 +225,39 @@ func normalizeOpenAIWSTerminalEvent(eventType string) string {
 // markOpenAIWSClientVisibleFailure records only terminal/error protocol events
 // that were delivered to the client. Callers invoke it only after any hidden
 // failover/recovery decision and a successful downstream write.
-func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload []byte) {
+func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload []byte, upstreamHTTPStatus ...int) {
 	eventType = strings.TrimSpace(eventType)
 	if eventType != "error" && eventType != "response.failed" {
 		return
 	}
-	prefix := "error"
-	if eventType == "response.failed" {
-		prefix = "response.error"
+	detail := gjson.GetBytes(payload, "response.error")
+	if !detail.IsObject() || (strings.TrimSpace(detail.Get("code").String()) == "" &&
+		strings.TrimSpace(detail.Get("type").String()) == "" && strings.TrimSpace(detail.Get("message").String()) == "") {
+		detail = gjson.GetBytes(payload, "error")
 	}
-	code := strings.TrimSpace(gjson.GetBytes(payload, prefix+".code").String())
-	errType := strings.TrimSpace(gjson.GetBytes(payload, prefix+".type").String())
-	message := strings.TrimSpace(gjson.GetBytes(payload, prefix+".message").String())
-	if eventType == "response.failed" && code == "" && errType == "" && message == "" {
-		prefix = "error"
-		code = strings.TrimSpace(gjson.GetBytes(payload, prefix+".code").String())
-		errType = strings.TrimSpace(gjson.GetBytes(payload, prefix+".type").String())
-		message = strings.TrimSpace(gjson.GetBytes(payload, prefix+".message").String())
+	code := strings.TrimSpace(detail.Get("code").String())
+	errType := strings.TrimSpace(detail.Get("type").String())
+	message := extractOpenAISSEErrorMessage(payload)
+	if message == "" {
+		for _, path := range []string{"response.error", "error"} {
+			if value := gjson.GetBytes(payload, path); value.Type == gjson.String && strings.TrimSpace(value.String()) != "" {
+				message = value.String()
+				break
+			}
+		}
 	}
-	status := int(gjson.GetBytes(payload, prefix+".status_code").Int())
-	if status == 0 {
-		status = int(gjson.GetBytes(payload, prefix+".status").Int())
+	status := 0
+	for _, path := range openAIStreamErrorStatusPaths {
+		if value := gjson.GetBytes(payload, path); (value.Type == gjson.Number || value.Type == gjson.String) &&
+			value.Int() >= 400 && value.Int() <= 599 && value.Float() == float64(value.Int()) {
+			status = int(value.Int())
+			break
+		}
 	}
-	if status == 0 && eventType == "error" {
-		status = int(gjson.GetBytes(payload, "status").Int())
+	// A bridge/handshake can preserve an already-typed error envelope without
+	// injecting HTTP status into it. Keep the known source status for logging.
+	if status == 0 && len(upstreamHTTPStatus) > 0 && upstreamHTTPStatus[0] >= 400 && upstreamHTTPStatus[0] <= 599 {
+		status = upstreamHTTPStatus[0]
 	}
 	if status == 0 {
 		status = openAIWSErrorHTTPStatusFromRaw(code, errType)
@@ -262,6 +271,7 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 	if message == "" {
 		message = "upstream websocket request failed"
 	}
+	message = sanitizeUpstreamErrorMessage(truncateString(strings.TrimSpace(message), 4096))
 	MarkOpsStreamFailure(c, errType, code, message, status)
 	if c != nil {
 		c.Set(smartWSFailureDeliveredKey, true)

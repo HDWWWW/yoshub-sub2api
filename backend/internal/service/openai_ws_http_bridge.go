@@ -243,8 +243,12 @@ func skipOpenAIWSJSONValue(payload []byte, i int) int {
 }
 
 func prepareOpenAIWSHTTPBridgeBody(account *Account, payload []byte) ([]byte, error) {
+	normalized, _, err := normalizeOpenAICodexSystemRolesBody(payload, account)
+	if err != nil {
+		return nil, err
+	}
 	var body map[string]any
-	if err := decodeOpenAIJSONUseNumber(payload, &body); err != nil {
+	if err := decodeOpenAIJSONUseNumber(normalized, &body); err != nil {
 		return nil, err
 	}
 	if body == nil {

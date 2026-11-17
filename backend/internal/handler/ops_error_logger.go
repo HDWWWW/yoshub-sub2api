@@ -1088,6 +1088,21 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			releaseOpsCaptureWriter(w)
 		}()
 		c.Writer = w
+		if ops != nil {
+			service.BindOpsStreamErrorObserver(c, func(streamErr service.OpsStreamError) {
+				if _, rejected := middleware2.GetIngressRejectReason(c); rejected {
+					return
+				}
+				// Policy errors have a dedicated per-turn writer. Passthrough may
+				// clear its context mark in AfterTurn before AfterClientWrite runs,
+				// so the delivered event's code also retains that ownership.
+				if !ops.IsMonitoringEnabled(c.Request.Context()) || c.GetBool(opsDedicatedErrorRecordedKey) ||
+					shouldSkipOpsErrorLogForCyber(c) || strings.EqualFold(streamErr.Code, service.OpenAIPolicyCyber) || strings.EqualFold(streamErr.Code, service.OpenAIPolicyBio) {
+					return
+				}
+				logOpsStreamErrorValue(c, ops, http.StatusSwitchingProtocols, streamErr)
+			})
+		}
 		c.Next()
 		w.finalizeCapture()
 
@@ -1426,7 +1441,9 @@ func opsRequestTypeFromContext(c *gin.Context) *int16 {
 // 错误日志。上游错误上下文（若有）是否参与分类与归因由标记的 RequestScoped 决定。
 func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) {
 	for _, streamErr := range service.GetOpsStreamErrors(c) {
-		logOpsStreamErrorValue(c, ops, wireStatus, streamErr)
+		if !streamErr.ImmediateLogHandled {
+			logOpsStreamErrorValue(c, ops, wireStatus, streamErr)
+		}
 	}
 }
 
@@ -1567,7 +1584,7 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 	if !streamErr.RequestScoped {
 		applyOpsUpstreamFieldsFromContext(c, entry)
 	}
-	if streamErr.Turn > 0 && !streamErr.RequestScoped {
+	if (streamErr.Turn > 0 || service.GetOpenAIClientTransport(c) == service.OpenAIClientTransportWS) && !streamErr.RequestScoped {
 		applyOpsStreamErrorSnapshot(entry, streamErr)
 	}
 
