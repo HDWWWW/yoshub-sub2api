@@ -72,6 +72,13 @@
               </select>
             </label>
             <p class="text-xs text-gray-500">{{ t('accountRisk.probeScopeHint') }}</p>
+            <div class="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-600" data-testid="risk-probe-mismatch-settings">
+              <label class="block sm:max-w-xs">
+                <span class="input-label">{{ t('accountRisk.probeMismatchMaxRetries') }}</span>
+                <input v-model.number="draft.probe_mismatch_max_retries" class="input" data-testid="risk-probe-mismatch-retries" type="number" min="0" max="20" step="1" :disabled="!draft.probe_enabled" required />
+              </label>
+              <p class="text-xs text-gray-500">{{ t('accountRisk.probeMismatchHint') }}</p>
+            </div>
             <label class="flex items-center gap-3 rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
               <input v-model="draft.probe_notify_only" data-testid="risk-probe-notify-only" type="checkbox" class="rounded" />
               <span class="text-sm">{{ t('accountRisk.probeNotifyOnly') }}</span>
@@ -178,6 +185,7 @@ const valid = computed(() => {
   const c = draft.value
   return !!c && Number.isInteger(c.rate_limit_429_window_seconds) && c.rate_limit_429_window_seconds >= 1 && c.rate_limit_429_window_seconds <= 3600 &&
     ['single', 'all'].includes(c.probe_scope) &&
+    Number.isInteger(c.probe_mismatch_max_retries) && c.probe_mismatch_max_retries >= 0 && c.probe_mismatch_max_retries <= 20 &&
     (!c.probe_429_stop_enabled || (Number.isInteger(c.probe_429_max_retries) && c.probe_429_max_retries >= 1 && c.probe_429_max_retries <= 20)) &&
     Number.isInteger(c.rate_limit_429_threshold) && c.rate_limit_429_threshold >= 1 && c.rate_limit_429_threshold <= 10000 && Number.isInteger(c.first_below_percent) && c.first_below_percent >= 1 && c.first_below_percent <= c.second_at_least_percent &&
     Number.isInteger(c.second_at_least_percent) && c.second_at_least_percent <= 100 &&
@@ -200,7 +208,7 @@ async function load() {
   view.value = null; draft.value = null; testResult.value = null; testAccountID.value = 0; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_mismatch_max_retries: data.config.probe_mismatch_max_retries ?? 0, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { if (current === generation) loading.value = false }
 }

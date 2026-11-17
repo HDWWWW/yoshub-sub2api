@@ -39,6 +39,7 @@ type AccountRiskConfig struct {
 	ProbeEnabled              bool   `json:"probe_enabled"`
 	ProbeScope                string `json:"probe_scope"`
 	ProbeNotifyOnly           bool   `json:"probe_notify_only"`
+	ProbeMismatchMaxRetries   int    `json:"probe_mismatch_max_retries"`
 	Probe429StopEnabled       bool   `json:"probe_429_stop_enabled"`
 	Probe429MaxRetries        int    `json:"probe_429_max_retries"`
 	ModelMismatchAction       string `json:"model_mismatch_action"`
@@ -85,6 +86,9 @@ func (c *AccountRiskConfig) Normalize429() {
 }
 
 func (c AccountRiskConfig) Validate() error {
+	if c.ProbeMismatchMaxRetries < 0 || c.ProbeMismatchMaxRetries > 20 {
+		return errors.New("定时测试回复不匹配最大重试次数须为 0–20")
+	}
 	if !slices.Contains([]string{"", "single", "all"}, c.ProbeScope) {
 		return errors.New("定时检测范围须为单账号或全部账号")
 	}
@@ -226,8 +230,10 @@ type AccountRiskProbeResult struct {
 	OutputTokens int
 	// Only an actual HTTP response can populate UpstreamStatus. Local slot
 	// exhaustion, transport errors and error text must never count as a 429.
-	UpstreamStatus int
-	Consecutive429 int
+	UpstreamStatus        int
+	Consecutive429        int
+	ConsecutiveMismatches int
+	MismatchRetry429      bool
 }
 type accountRiskProber interface {
 	RunRiskProbe(context.Context, *Account, AccountRiskConfig) (AccountRiskProbeResult, error)
@@ -529,7 +535,7 @@ func (s *AccountRiskService) dispatchProbes(ctx context.Context, jobs []*account
 }
 
 func reserveAccountRiskProbe(state *AccountRiskState, r *AccountRiskRule, account Account, signature, kind, reason string, now time.Time) *accountRiskJob {
-	pending := AccountRiskPending{ID: uuid.NewString(), GroupID: r.GroupID, AccountID: account.ID, Revision: r.Revision, ExpiresAt: now.Add(120 * time.Second), Kind: kind, Signature: signature}
+	pending := AccountRiskPending{ID: uuid.NewString(), GroupID: r.GroupID, AccountID: account.ID, Revision: r.Revision, ExpiresAt: now.Add(riskProbeTimeout(r.Config, kind) + 30*time.Second), Kind: kind, Signature: signature}
 	if state.ActiveProbes == nil {
 		state.ActiveProbes = make(map[int64]*AccountRiskPending)
 	}
@@ -592,7 +598,7 @@ func riskRecordStop(r *AccountRiskRule, account *Account, now time.Time, reason 
 }
 
 func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJob) {
-	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
+	ctx, cancel := context.WithTimeout(parent, riskProbeTimeout(job.config, job.pending.Kind))
 	defer cancel()
 	var result AccountRiskProbeResult
 	// Check the persisted rule and current membership immediately before dispatch.
@@ -601,14 +607,7 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 		_, err = s.probeAccount(ctx, job, time.Now())
 	}
 	if err == nil {
-		var slot *AcquireResult
-		slot, err = s.loads.AcquireAccountSlot(ctx, job.account.ID, job.account.Concurrency)
-		if err == nil && slot != nil && slot.Acquired {
-			defer slot.ReleaseFunc()
-			result, err = s.runProbeAttempts(ctx, job)
-		} else if err == nil {
-			err = errors.New("account busy")
-		}
+		result, err = s.runProbeAttempts(ctx, job)
 	}
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
 	defer finishCancel()
@@ -665,7 +664,10 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		o.OutputTokens = result.OutputTokens
 		exhausted429 := isScheduledRiskProbe(job.pending.Kind) && r.Config.Probe429StopEnabled &&
 			r.Config.Probe429MaxRetries > 0 && result.Consecutive429 > r.Config.Probe429MaxRetries && result.UpstreamStatus == 429 && probeErr != nil
-		if !exhausted429 && (probeErr != nil || !result.Completed) {
+		mismatchRetry429 := isScheduledRiskProbe(job.pending.Kind) && r.Config.ProbeMismatchMaxRetries > 0 &&
+			result.MismatchRetry429 && result.ConsecutiveMismatches > 0 && result.UpstreamStatus == 429 && probeErr != nil
+		stop429 := exhausted429 || mismatchRetry429
+		if !stop429 && (probeErr != nil || !result.Completed) {
 			o.LastProbeResult = "检测未完成（网络、上游错误或账号繁忙），未据此停调度"
 			return nil
 		}
@@ -674,18 +676,27 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 			o.LastProbeResult = "账号或分组已变化，本次结果作废"
 			return nil
 		}
-		if !exhausted429 && strings.Contains(result.Text, r.Config.ExpectedText) {
+		if !stop429 && strings.Contains(result.Text, r.Config.ExpectedText) {
 			o.LastProbeResult = "回复包含期望内容，检测通过"
+			return nil
+		}
+		if !stop429 && isScheduledRiskProbe(job.pending.Kind) && r.Config.ProbeMismatchMaxRetries > 0 && result.ConsecutiveMismatches <= r.Config.ProbeMismatchMaxRetries {
+			o.LastProbeResult = "回复不匹配复测未完成，未据此停调度"
 			return nil
 		}
 		kind, notifyOnly := job.pending.Kind, r.Config.ProbeNotifyOnly
 		reason := "完整回复不含期望内容"
-		if exhausted429 {
+		if mismatchRetry429 {
+			kind, notifyOnly = job.pending.Kind+"_mismatch_429", false
+			reason = fmt.Sprintf("定时测试消息连续 %d 次完整回复不含期望内容，立即复测收到上游 429", result.ConsecutiveMismatches)
+		} else if exhausted429 {
 			kind, notifyOnly = job.pending.Kind+"_429", false
 			reason = fmt.Sprintf("定时测试消息首次收到上游 429 后立即重试 %d 次，仍连续收到 429，无法完成检测", r.Config.Probe429MaxRetries)
 		} else if job.pending.Kind == accountRiskProbeCapacity {
 			kind, notifyOnly = accountRiskProbeCapacity, r.Config.CapacityNotifyOnly
 			reason = job.reason + "；消息复测完整回复不含期望内容"
+		} else if r.Config.ProbeMismatchMaxRetries > 0 {
+			reason = fmt.Sprintf("定时测试消息首次完整回复不含期望内容后立即重试 %d 次，连续 %d 次均不匹配", r.Config.ProbeMismatchMaxRetries, result.ConsecutiveMismatches)
 		}
 		if notifyOnly {
 			o.LastProbeResult = reason + "，仅提醒，未停止调度"

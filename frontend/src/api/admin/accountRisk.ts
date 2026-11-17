@@ -10,6 +10,7 @@ export interface AccountRiskConfig {
   probe_enabled: boolean
   probe_scope: 'single' | 'all'
   probe_notify_only: boolean
+  probe_mismatch_max_retries: number
   probe_429_stop_enabled: boolean
   probe_429_max_retries: number
   model_mismatch_action: 'off' | 'stop' | 'notify_only'
