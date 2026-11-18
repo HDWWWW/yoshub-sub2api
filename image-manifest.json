@@ -1,0 +1,13 @@
+{
+  "version": "0.2.23-yoshub.46",
+  "platform": "linux/amd64",
+  "build_revision": "bbc207248a34a1789310b9bfeed117466c74dc01",
+  "image": "ghcr.io/hdwwww/yoshub-sub2api:v0.2.23-yoshub.46",
+  "manifest_digest": "sha256:9cbabac26fa946ca5c6bd0939b2ac5be8e387f77d6a24ce6e1aa8c56298a3af3",
+  "archive": {
+    "name": "sub2api-v0.2.23-yoshub.46-linux-amd64.tar.gz",
+    "size": 51394991,
+    "sha256": "3509d37c72931ddda77b9ad8aa0e6afc14c84f99fabaf72f1937de60d1059fa4"
+  },
+  "application_sha256": "3a1bc2272ee90a8dda5872a2e1a26c9d198cd84ad77bfeed4f72fac794ed6e21"
+}
