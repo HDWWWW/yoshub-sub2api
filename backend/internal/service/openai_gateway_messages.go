@@ -946,14 +946,8 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 						acc.ProcessEvent(&event)
 						recordPrior(&event)
 						if response := openAICompatTerminalResponse(&event, []byte(payload)); isOpenAICompatResponsesTerminalEvent(event.Type) && response != nil {
-							if event.Usage != nil {
-								usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
-								if response.Usage == nil {
-									response.Usage = event.Usage
-								}
-							}
-							if response.Usage != nil {
-								usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
+							if response.Usage == nil {
+								response.Usage = event.Usage
 							}
 							if strings.TrimSpace(response.Status) == "failed" {
 								markOpenAICyberPolicyEvent(c, []byte(frame.Data), resp.StatusCode, &usage)
@@ -999,14 +993,8 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 			recordPrior(&event)
 
 			if response := openAICompatTerminalResponse(&event, []byte(payload)); isOpenAICompatResponsesTerminalEvent(event.Type) && response != nil {
-				if event.Usage != nil {
-					usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
-					if response.Usage == nil {
-						response.Usage = event.Usage
-					}
-				}
-				if response.Usage != nil {
-					usage = copyOpenAIUsageFromResponsesUsage(response.Usage)
+				if response.Usage == nil {
+					response.Usage = event.Usage
 				}
 				if strings.TrimSpace(response.Status) == "failed" {
 					markOpenAICyberPolicyEvent(c, []byte(frame.Data), resp.StatusCode, &usage)
@@ -1169,8 +1157,6 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					responseID = id
 				}
 			}
-			// The common parser above applies authoritative terminal usage while
-			// retaining actual progressive usage when the terminal reports zeros.
 			// cyber_policy 致命不可重试：标记供 handler 事后记录；以 Anthropic SSE error 事件
 			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
 			if eventType == "response.failed" || isBareErrorEvent {

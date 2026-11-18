@@ -1304,7 +1304,7 @@ export default {
         force: 'Force Fast (priority)',
         hint: 'Forces service_tier=priority on OpenAI requests in this group. The global Fast/Flex policy can still filter or block it. New requests update immediately after saving; existing WebSocket sessions must reconnect.',
         forceUltrafast: 'Force Ultra Fast (ultrafast)',
-        ultrafastHint: 'Forces service_tier=ultrafast on supported models (GPT-6 Astra and GPT-6.1 Sol), taking precedence over Force Fast. Both switches can stay enabled: other models use Fast when Force Fast is on, otherwise they follow the client. Ultra Fast uses 6x Standard pricing unless Free Fast / Ultra Fast is enabled. Upstream access and global tier policies still apply. Existing WebSocket sessions must reconnect.',
+        ultrafastHint: 'Forces service_tier=ultrafast on supported models. Pro 200 includes GPT-6.2 Sol Ultra Fast; Pro 500 includes Sol and Astra. Other subscriptions follow the tiers advertised by the account. When Ultra Fast is unavailable, Force Fast uses Fast; otherwise the client tier is kept. GPT-6.2 defaults to 3× Standard before March 1, 2027 (Pacific time), then 6×. GPT-6 Astra and GPT-6.1 Sol default to 6×. Channel pricing can override the multiplier. Free Fast / Ultra Fast keeps the customer at Standard. Global tier policies still apply; reconnect existing WebSocket sessions.',
         filter: 'Filter service_tier',
         filterHint: 'Removes service_tier, including Fast, Ultrafast and Flex. Turns off both forced modes. Global block rules still apply; the upstream default determines the final tier.',
         free: 'Free Fast / Ultrafast',
