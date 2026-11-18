@@ -4,13 +4,16 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestSmartWSNativeDeliveredErrorLogPreservesMessageAndStatus(t *testing.T) {
@@ -101,4 +104,82 @@ func TestSmartWSNativeErrorLogDoesNotCaptureUnrelatedPayload(t *testing.T) {
 	require.Contains(t, marked[0].Message, "access_token=***")
 	require.NotContains(t, marked[0].Message, "do-not-log")
 	require.NotContains(t, marked[0].Message+marked[0].UpstreamDetail, "private generated content")
+}
+
+func TestOpenAIWSHTTPBridge422LogPrivacy(t *testing.T) {
+	const validation = `[{"loc":["body","model"],"msg":"Invalid model","input":{"message":"LOCAL_INPUT_MARK"}}]`
+	const noReason = `[{"msg":{"input":"LOCAL_INPUT_MARK"},"input":{"msg":"LOCAL_INPUT_MARK"},"ctx":{"message":"LOCAL_INPUT_MARK"}}]`
+	for _, route := range []struct{ name, platform string }{
+		{"raw_envelope", PlatformOpenAI},
+		{"bridge_string_message", PlatformGrok}, // Non-OpenAI accounts use the ordinary HTTP bridge encoder.
+	} {
+		for _, tc := range []struct{ name, detail, wireMessage, logMessage string }{
+			{"validation", validation, validation, "Invalid model"},
+			{"no_text_reason", noReason, noReason, "upstream websocket request failed"},
+			{"plain_text", `"[validation] Invalid model"`, "[validation] Invalid model", "[validation] Invalid model"},
+		} {
+			t.Run(route.name+"/"+tc.name, func(t *testing.T) {
+				const status = http.StatusUnprocessableEntity
+				body := `{"detail":` + tc.detail + `}`
+				up := &httpUpstreamRecorder{responses: []*http.Response{newOpenAIUpstreamErrorResponse(status, body)}}
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: up}
+				account := &Account{ID: 704, Platform: route.platform, Type: AccountTypeAPIKey, Concurrency: 1}
+				c, _ := newOpenAIUpstreamErrorTestContext(t)
+				SetOpenAIClientTransport(c, OpenAIClientTransportWS)
+				BeginOpsStreamTurn(c, 1)
+				var logged []OpsStreamError
+				BindOpsStreamErrorObserver(c, func(e OpsStreamError) { logged = append(logged, e) })
+				request := []byte(`{"type":"response.create","model":"gpt-5.1","stream":true,"input":"hello"}`)
+				var frames []string
+				_, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, account, "test-token", request, len(request),
+					"gpt-5.1", "", "", "", "", 1, func(p []byte) error { frames = append(frames, string(p)); return nil })
+				require.Error(t, err)
+				require.Len(t, up.requests, 1)
+				require.Len(t, frames, 1)
+				if route.platform == PlatformOpenAI {
+					require.JSONEq(t, `{"type":"error","status":422,"detail":`+tc.detail+`}`, frames[0])
+				} else {
+					msg, err := json.Marshal(tc.wireMessage)
+					require.NoError(t, err)
+					require.JSONEq(t, `{"type":"error","status":422,"sequence_number":0,"error":{"type":"upstream_error","message":`+string(msg)+`}}`, frames[0])
+				}
+				require.Len(t, logged, 1)
+				require.Equal(t, logged, GetOpsStreamErrors(c))
+				require.Equal(t, status, logged[0].IntendedStatus)
+				require.Equal(t, tc.logMessage, logged[0].Message)
+				snapshot, err := json.Marshal(logged[0])
+				require.NoError(t, err)
+				require.NotContains(t, string(snapshot), "LOCAL_INPUT_MARK")
+			})
+		}
+	}
+}
+
+func TestOpenAIWS422LogReasonOnDeliveredEnvelope(t *testing.T) {
+	const fallback = "upstream websocket request failed"
+	for _, tc := range []struct{ name, fields, want string }{
+		{"skip_non_text_entries", `"detail":["LOCAL_INPUT_MARK",{"msg":false},{"msg":" "},{"msg":"Invalid model","input":"LOCAL_INPUT_MARK"}]`, "Invalid model"},
+		{"skip_input_and_output", `"detail":{"input":{"message":"LOCAL_INPUT_MARK"}},"response":{"output":[{"message":"LOCAL_INPUT_MARK"}]}`, fallback},
+		{"object_in_message_string", `"error":{"message":"{\"input\":{\"message\":\"LOCAL_INPUT_MARK\"}}"}`, fallback},
+		{"structured_msg_is_not_text", `"detail":[{"msg":"{\"input\":\"LOCAL_INPUT_MARK\"}"}]`, fallback},
+		{"truncated_bridge_array", `"error":{"message":"[{\"input\":\"LOCAL_INPUT_MARK\""}`, fallback},
+		{"next_explicit_reason", `"response":{"error":{"message":{"input":"LOCAL_INPUT_MARK"}}},"message":"Bad model"`, "Bad model"},
+		{"redact_validation_reason", `"detail":[{"msg":"see https://example.invalid/?access_token=LOCAL_INPUT_MARK"}]`, "see https://example.invalid/?access_token=***"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := `{"type":"response.failed", ` + tc.fields + `}`
+			require.True(t, gjson.Valid(frame))
+			c, _ := newOpenAIUpstreamErrorTestContext(t)
+			SetOpenAIClientTransport(c, OpenAIClientTransportWS)
+			err := writeSmartWSNativeFailure(c, http.StatusUnprocessableEntity, []byte(frame), nil, func(p []byte) error {
+				require.Equal(t, frame, string(p)) // A typed upstream envelope is delivered byte for byte, without injecting status.
+				return nil
+			})
+			require.Error(t, err)
+			marked := GetOpsStreamErrors(c)
+			require.Len(t, marked, 1)
+			require.Equal(t, http.StatusUnprocessableEntity, marked[0].IntendedStatus)
+			require.Equal(t, tc.want, marked[0].Message)
+		})
+	}
 }

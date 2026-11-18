@@ -87,6 +87,54 @@ func TestFullHistoryReusesSocketAndCancelCloses(t *testing.T) {
 	require.Eventually(t, func() bool { return p.Stats()["active"] == 0 }, time.Second, time.Millisecond)
 }
 
+// Streaming formatters may stop at the terminal blank line without an EOF
+// read. Ordinary response cleanup then cancels the request's child context.
+func TestSuccessfulTerminalLeaseBoundary(t *testing.T) {
+	const success = `{"type":"response.completed","response":{"id":"resp_drain","status":"completed","output":[]}}`
+	for _, tc := range []struct {
+		name, kind, payload string
+		left, idle          int
+	}{
+		{"success_fully_read", "response.completed", success, 0, 1},
+		{"success_missing_last_byte", "response.completed", success, 1, 0},
+		{"no_terminal", "response.created", `{"type":"response.created","response":{"id":"resp_drain"}}`, 0, 0},
+		{"failed_terminal", "response.failed", `{"type":"response.failed","response":{"id":"resp_drain","status":"failed"}}`, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer ws.Close()
+				if _, _, err := ws.ReadMessage(); err != nil || ws.WriteMessage(websocket.TextMessage, []byte(tc.payload)) != nil {
+					return
+				}
+				_, _, _ = ws.ReadMessage() // Keep the peer alive until pool cleanup.
+			}))
+			defer srv.Close()
+			p := testPool(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, strings.NewReader(`{"model":"test","input":"hello"}`))
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer local-test")
+			r, handled, err := p.TryWithOptions(req, "", "one-session", Options{AllowTarget: true, ReadTimeout: time.Second})
+			require.NoError(t, err)
+			require.True(t, handled)
+			wire := "event: " + tc.kind + "\ndata: " + tc.payload + "\n\n"
+			data := make([]byte, len(wire)-tc.left)
+			_, err = io.ReadFull(r.Body, data)
+			require.NoError(t, err)
+			require.Equal(t, wire[:len(data)], string(data))
+			cancel()
+			require.NoError(t, r.Body.Close())
+			require.Zero(t, p.Stats()["active"])
+			require.Equal(t, tc.idle, p.Stats()["idle"])
+		})
+	}
+}
+
 func TestMissingContinuationNeverDials(t *testing.T) {
 	p := testPool(t)
 	req, _ := http.NewRequest("POST", "http://127.0.0.1:1/responses", strings.NewReader(`{"stream":true,"previous_response_id":"missing","input":"next"}`))

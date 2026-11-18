@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,9 +18,17 @@ import (
 )
 
 func TestSmartWS_PreDispatchFallbackPreservesEntireBody(t *testing.T) {
-	for _, kind := range []string{"unsupported", "background", "large", "configured_large"} {
+	for _, kind := range []string{"unsupported", "unsupported_404", "background", "large", "configured_large"} {
 		t.Run(kind, func(t *testing.T) {
-			s, a, httpTransport := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(426) })
+			var handshakes atomic.Int32
+			s, a, httpTransport := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
+				handshakes.Add(1)
+				if kind == "unsupported_404" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.WriteHeader(http.StatusUpgradeRequired)
+			})
 			body := `{"model":"gpt-5.1","stream":true,"input":"hello","reasoning":{"effort":"high"},"service_tier":"priority"}`
 			if kind == "background" {
 				body = `{"model":"gpt-5.1","background":true,"input":"hello"}`
@@ -40,6 +49,11 @@ func TestSmartWS_PreDispatchFallbackPreservesEntireBody(t *testing.T) {
 			require.NoError(t, err)
 			defer resp.Body.Close()
 			require.Equal(t, 1, httpTransport.callCount)
+			if strings.HasPrefix(kind, "unsupported") {
+				require.EqualValues(t, 1, handshakes.Load())
+			} else {
+				require.Zero(t, handshakes.Load())
+			}
 			require.Equal(t, body, string(httpTransport.bodies[0]))
 			require.True(t, smartWSHasDispatched(c), "HTTP fallback is now dispatched and must not be replayed either")
 			require.False(t, isOpenAIHTTPWSResponse(resp), "fallback must retain HTTP usage attribution")

@@ -222,6 +222,66 @@ func normalizeOpenAIWSTerminalEvent(eventType string) string {
 	}
 }
 
+// An HTTP bridge may have serialized a validation object or array into a
+// string. Treat it as data, not prose, even when the body limit cut it short.
+func openAIWSLogReasonValue(v gjson.Result) gjson.Result {
+	if v.Type != gjson.String {
+		return v
+	}
+	v.Str = strings.TrimSpace(v.Str)
+	var close string
+	switch {
+	case strings.HasPrefix(v.Str, "["):
+		close = "]"
+	case strings.HasPrefix(v.Str, "{"):
+		close = "}"
+	default:
+		return v
+	}
+	if gjson.Valid(v.Str) {
+		return gjson.Parse(v.Str)
+	}
+	// Keep bracketed text such as "[validation] Invalid model", but not
+	// fragments of a container with fields, nested values or array elements.
+	if prefix, _, found := strings.Cut(v.Str[1:], close); found && !strings.ContainsAny(prefix, `[]{}":,`) {
+		return v
+	}
+	return gjson.Result{}
+}
+
+func openAIWSValidationLogReason(item gjson.Result) string {
+	if item.IsObject() {
+		for _, key := range []string{"msg", "message"} {
+			if v := openAIWSLogReasonValue(item.Get(key)); v.Type == gjson.String && v.Str != "" {
+				return v.Str
+			}
+		}
+	}
+	return ""
+}
+
+func openAIWSLogErrorMessage(payload []byte) string {
+	for _, path := range []string{"response.error.message", "error.message", "message", "detail", "response.error", "error"} {
+		v := openAIWSLogReasonValue(gjson.GetBytes(payload, path))
+		var reason string
+		switch {
+		case v.Type == gjson.String:
+			reason = v.Str
+		case v.IsObject():
+			reason = openAIWSValidationLogReason(v)
+		case v.IsArray():
+			v.ForEach(func(_, item gjson.Result) bool {
+				reason = openAIWSValidationLogReason(item)
+				return reason == ""
+			})
+		}
+		if reason != "" {
+			return reason
+		}
+	}
+	return "upstream websocket request failed"
+}
+
 // markOpenAIWSClientVisibleFailure records only terminal/error protocol events
 // that were delivered to the client. Callers invoke it only after any hidden
 // failover/recovery decision and a successful downstream write.
@@ -237,15 +297,6 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 	}
 	code := strings.TrimSpace(detail.Get("code").String())
 	errType := strings.TrimSpace(detail.Get("type").String())
-	message := extractOpenAISSEErrorMessage(payload)
-	if message == "" {
-		for _, path := range []string{"response.error", "error"} {
-			if value := gjson.GetBytes(payload, path); value.Type == gjson.String && strings.TrimSpace(value.String()) != "" {
-				message = value.String()
-				break
-			}
-		}
-	}
 	status := 0
 	for _, path := range openAIStreamErrorStatusPaths {
 		if value := gjson.GetBytes(payload, path); (value.Type == gjson.Number || value.Type == gjson.String) &&
@@ -268,10 +319,7 @@ func markOpenAIWSClientVisibleFailure(c *gin.Context, eventType string, payload 
 	if code == "" {
 		code = strings.ReplaceAll(eventType, ".", "_")
 	}
-	if message == "" {
-		message = "upstream websocket request failed"
-	}
-	message = sanitizeUpstreamErrorMessage(truncateString(strings.TrimSpace(message), 4096))
+	message := truncateString(sanitizeUpstreamErrorMessage(openAIWSLogErrorMessage(payload)), 4096)
 	MarkOpsStreamFailure(c, errType, code, message, status)
 	if c != nil {
 		c.Set(smartWSFailureDeliveredKey, true)

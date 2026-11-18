@@ -1,8 +1,12 @@
-package repository
+// Package upstreamtcp shares the TCP liveness policy for upstream connections.
+package upstreamtcp
 
-import "time"
+import (
+	"net"
+	"time"
+)
 
-// TCP keep-alive of upstream connections (newUpstreamDialer). A connection
+// TCP keep-alive of upstream connections. A connection
 // whose peer stops answering is aborted upstreamTCPUserTimeout after its last
 // received packet: idle 15 s, then 3 probes 5 s apart. With the previous
 // KeepAlive of 30 s and Go's default interval 15 s and count 9, the same case
@@ -21,3 +25,18 @@ const (
 	upstreamKeepAliveCount    = 3
 	upstreamTCPUserTimeout    = upstreamKeepAliveIdle + upstreamKeepAliveInterval*upstreamKeepAliveCount
 )
+
+// NewDialer keeps the caller's connect timeout. On a proxied route the peer
+// probed by TCP is the proxy, not the origin behind it.
+func NewDialer(timeout time.Duration) *net.Dialer {
+	return &net.Dialer{
+		Timeout: timeout,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   true,
+			Idle:     upstreamKeepAliveIdle,
+			Interval: upstreamKeepAliveInterval,
+			Count:    upstreamKeepAliveCount,
+		},
+		Control: upstreamDialControl,
+	}
+}

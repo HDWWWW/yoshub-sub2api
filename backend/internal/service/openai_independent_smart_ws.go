@@ -65,8 +65,11 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		ReadTimeout:      readTimeout,
 		MaxFrameBytes:    frameLimit,
 		RequireWebSearch: account.IsOpenAIOAuthLike() && openAIWSWebSearchDeclared(encoded),
-		OnFailure: func(first, tail []byte) []byte {
-			dispatch.observe(c, tail)
+		OnFailure: func(first, tail []byte, uncertainTail bool) []byte {
+			if uncertainTail {
+				dispatch.accepted.Store(true)
+				dispatch.replayUnsafe.Store(true)
+			}
 			first = dispatch.failurePayload(first)
 			rememberSmartWSHTTPFailure(c, response.Header, raw, first, tail, observation.start)
 			return first
@@ -83,18 +86,23 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 				gjson.GetBytes(raw, "previous_response_id").String() == ""
 			dispatch.state.Store(smartWSMayBeSent)
 		},
-		OnEvent: func(payload []byte) {
+		OnEvent: func(payload []byte, controlWithWork bool) {
+			if controlWithWork {
+				// A mislabeled tool/output frame is not permission to replay.
+				dispatch.accepted.Store(true)
+				dispatch.replayUnsafe.Store(true)
+			}
 			dispatch.observe(c, payload)
 			observation.event(payload)
 			typ := gjson.GetBytes(payload, "type").String()
 			if response != nil {
 				rememberSmartWSHTTPUsage(c, response.Header, raw, payload, observation.start, true)
-
 			}
 			if isOpenAIWSTerminalEvent(typ) || typ == "error" {
 				dispatch.state.Store(smartWSTerminal)
 			} else {
-				dispatch.state.Store(smartWSReceived)
+				// Metadata drained after an explicit error cannot reopen the turn.
+				dispatch.state.CompareAndSwap(smartWSMayBeSent, smartWSReceived)
 			}
 		},
 	})

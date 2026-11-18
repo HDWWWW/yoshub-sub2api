@@ -1,6 +1,6 @@
 //go:build linux
 
-package repository
+package upstreamtcp
 
 import (
 	"log/slog"

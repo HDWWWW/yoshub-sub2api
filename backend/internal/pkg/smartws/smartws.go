@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/upstreamtcp"
 )
 
 // SentError means a generation may have reached upstream. Callers must not replay
@@ -61,11 +63,12 @@ const maxNegativeEntries = 256
 
 // Options is supplied by the trusted gateway after account policy and URL validation.
 type Options struct {
-	OnHandshake   func(int, http.Header, []byte, error, time.Duration)
-	AllowTarget   bool
-	OnDispatch    func()
-	OnEvent       func([]byte)
-	OnFailure     func([]byte, []byte) []byte
+	OnHandshake func(int, http.Header, []byte, error, time.Duration)
+	AllowTarget bool
+	OnDispatch  func()
+	OnEvent     func(payload []byte, controlWithWork bool)
+	// An uncertain tail may veto a retry, but is never passed as usage evidence.
+	OnFailure     func(first, tail []byte, uncertainTail bool) []byte
 	WireMessage   []byte
 	ReadTimeout   time.Duration
 	MaxFrameBytes int64
@@ -122,8 +125,8 @@ type connection struct {
 type lease struct {
 	requestBytes     int
 	requireWebSearch bool
-	onEvent          func([]byte)
-	onFailure        func([]byte, []byte) []byte
+	onEvent          func(payload []byte, controlWithWork bool)
+	onFailure        func(first, tail []byte, uncertainTail bool) []byte
 	readTimeout      time.Duration
 	events           chan frame
 	done             chan struct{}
@@ -144,7 +147,7 @@ func NewPool(dial ...DialFunc) *Pool {
 		lifetime: 20 * time.Minute, handshake: 5 * time.Second, allowed: productionTarget,
 		dialer: &websocket.Dialer{HandshakeTimeout: 5 * time.Second, EnableCompression: false,
 			ReadBufferSize: 16 << 10, WriteBufferSize: 16 << 10,
-			NetDialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext}})
+			NetDialContext: upstreamtcp.NewDialer(5 * time.Second).DialContext}})
 	if len(dial) > 0 {
 		p.config.dial = dial[0]
 	}

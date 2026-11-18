@@ -53,15 +53,32 @@ func forcedWSService(t *testing.T, handler http.HandlerFunc) (*OpenAIGatewayServ
 	t.Cleanup(pool.Close)
 	httpUpstream := &httpUpstreamSequenceRecorder{}
 	s := &OpenAIGatewayService{cfg: cfg, openaiWSPool: pool, httpUpstream: httpUpstream, toolCorrector: NewCodexToolCorrector()}
-	s.openaiSmartPool = smartws.NewPool(func(ctx context.Context, d *websocket.Dialer, _ string, h http.Header) (*websocket.Conn, *http.Response, error) {
-		return d.DialContext(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", h)
-	})
-	t.Cleanup(s.openaiSmartPool.Close)
+	setLoopbackSmartWSPool(t, s, server)
 	a := &Account{ID: 71, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 4,
 		Credentials: map[string]any{"api_key": "test-token", "base_url": server.URL},
 		Extra:       map[string]any{"openai_apikey_responses_websockets_v2_mode": "ctx_pool", "openai_responses_mode": "force_responses"},
 	}
 	return s, a, httpUpstream
+}
+
+func setLoopbackSmartWSPool(t *testing.T, s *OpenAIGatewayService, server *httptest.Server) {
+	s.openaiSmartPool = smartws.NewPool(func(ctx context.Context, d *websocket.Dialer, _ string, h http.Header) (*websocket.Conn, *http.Response, error) {
+		return d.DialContext(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/v1/responses", h)
+	})
+	t.Cleanup(s.openaiSmartPool.Close)
+}
+
+// ConfigureHappyWireForTest keeps OAuth's fixed WS destination on loopback and
+// enables the actual notification timer (not synthetic writer accounting).
+func ConfigureHappyWireForTest(t *testing.T, s *OpenAIGatewayService, server *httptest.Server, enabled, delta bool, delayMS ...int) {
+	setLoopbackSmartWSPool(t, s, server)
+	if enabled {
+		delay := 0
+		if len(delayMS) > 0 {
+			delay = delayMS[0]
+		}
+		s.settingService = happyTestService(t, delay, delta).settingService
+	}
 }
 
 func forcedWSContext(t *testing.T, path string, key int64, thread string) (*gin.Context, *httptest.ResponseRecorder) {

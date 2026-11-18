@@ -33,6 +33,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/upstreamtcp"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -1363,16 +1364,7 @@ func defaultPoolSettings(cfg *config.Config) poolSettings {
 // 必须显式提供：http.Transport 的 DialContext 为 nil 时使用零值 net.Dialer，
 // 建连没有任何超时上限，只能等内核 TCP 重传耗尽（Linux 约 130 秒）。
 func newUpstreamDialer() *net.Dialer {
-	return &net.Dialer{
-		Timeout: defaultUpstreamDialTimeout,
-		KeepAliveConfig: net.KeepAliveConfig{
-			Enable:   true,
-			Idle:     upstreamKeepAliveIdle,
-			Interval: upstreamKeepAliveInterval,
-			Count:    upstreamKeepAliveCount,
-		},
-		Control: upstreamDialControl,
-	}
+	return upstreamtcp.NewDialer(defaultUpstreamDialTimeout)
 }
 
 // buildUpstreamTransport 构建上游请求的 Transport

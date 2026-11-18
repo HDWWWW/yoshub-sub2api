@@ -73,10 +73,13 @@ func (d *smartWSDispatch) observe(c *gin.Context, payload []byte) {
 			gjson.GetBytes(payload, "response.output.#").Int() > 0 || gjson.GetBytes(payload, "output.#").Int() > 0 ||
 			openAIStreamDataStartsClientOutput(string(payload), typ) {
 			d.replayUnsafe.Store(true)
-		}
-		if typ == "response.output_item.added" {
-			itemType := gjson.GetBytes(payload, "item.type").String()
-			if itemType != "message" && itemType != "reasoning" {
+		} else if typ == "response.output_item.added" {
+			item := parseRawJSONView(payload).Get("item")
+			itemType := item.Get("type").String()
+			// Opaque output commits work even if the client-output predicate
+			// sees only an otherwise empty message or reasoning scaffold.
+			if (itemType != "message" && itemType != "reasoning") || item.Get("encrypted_content").String() != "" ||
+				item.Get(`content.#(type=="encrypted_content")`).Exists() {
 				d.replayUnsafe.Store(true)
 			}
 		}

@@ -127,6 +127,34 @@ func writeOpenAIEarlyControlFrame(c *gin.Context, frame string) error {
 	return nil
 }
 
+// A final HTTP error takes over the writer. Only a real, locally emitted happy
+// notification changes its wire format; a configured timer is not a commit.
+func stopHappyNotificationForHTTPError(c *gin.Context) bool {
+	if c == nil || smartWSHasDispatched(c) {
+		return false
+	}
+	v, _ := c.Get(openAICompactSSEKeepaliveKey)
+	k, _ := v.(*openAICompactSSEKeepalive)
+	if k == nil {
+		return false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.markStoppedLocked()
+	return k.initialEventSent
+}
+
+// body is the endpoint's public HTTP error envelope, not a raw WS frame.
+func writeHappyNotificationHTTPError(c *gin.Context, status int, body []byte) {
+	typ, code, msg := OpenAIUpstreamErrorFields(status, body)
+	public := gin.H{"code": code, "type": typ, "message": msg, "status_code": status}
+	if param := gjson.GetBytes(body, "error.param"); param.Type == gjson.String {
+		public["param"] = param.Str
+	}
+	MarkResponseCommitted(c)
+	writeOpenAIControlFailure(c, status, typ, msg, public)
+}
+
 // Later attempts can fail before reaching the stream handler (HTTP errors or
 // local validation). Once a leading status committed SSE, every such error
 // must terminate that same stream; an HTTP/JSON response is no longer valid.
@@ -155,6 +183,10 @@ func writeOpenAIEarlyControlError(c *gin.Context, status int, body []byte) bool 
 // A retry may return a unary Responses object after an earlier limits event
 // committed SSE. Complete that stream without changing the upstream usage.
 func writeOpenAIEarlyControlResponse(c *gin.Context, status int, body []byte) bool {
+	if status >= 400 && stopHappyNotificationForHTTPError(c) {
+		writeHappyNotificationHTTPError(c, status, body)
+		return true
+	}
 	if openAIEarlyControlBytes(c) <= 0 {
 		return false
 	}
@@ -193,6 +225,11 @@ func writeOpenAIEarlyControlResponse(c *gin.Context, status int, body []byte) bo
 }
 
 func writeOpenAIJSONError(c *gin.Context, status int, body any) {
+	if status >= 400 && stopHappyNotificationForHTTPError(c) {
+		payload, _ := json.Marshal(body)
+		writeHappyNotificationHTTPError(c, status, payload)
+		return
+	}
 	if openAIEarlyControlBytes(c) > 0 {
 		payload, _ := json.Marshal(body)
 		writeOpenAIEarlyControlError(c, status, payload)

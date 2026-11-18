@@ -347,45 +347,49 @@ func asDeepSeekResponsesSlice(value any) ([]any, bool) {
 }
 
 func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
+	return openAIExtendedHistory.editItems(reqBody, nil) > 0
+}
+
+func (scope openAIEncryptedHistoryScope) editItems(reqBody map[string]any, invalid map[string]struct{}) int {
 	if len(reqBody) == 0 {
-		return false
+		return 0
 	}
 
 	inputValue, has := reqBody["input"]
 	if !has {
-		return false
+		return 0
 	}
 
 	switch input := inputValue.(type) {
 	case []any:
 		filtered := input[:0]
-		changed := false
+		changed := 0
 		for _, item := range input {
-			nextItem, itemChanged, keep := sanitizeEncryptedReasoningInputItem(item)
+			nextItem, itemChanged, keep := scope.sanitizeItem(item, invalid)
 			if itemChanged {
-				changed = true
+				changed++
 			}
 			if !keep {
 				continue
 			}
 			filtered = append(filtered, nextItem)
 		}
-		if !changed {
-			return false
+		if changed == 0 {
+			return 0
 		}
 		if len(filtered) == 0 {
 			delete(reqBody, "input")
-			return true
+			return changed
 		}
 		reqBody["input"] = filtered
-		return true
+		return changed
 	case []map[string]any:
 		filtered := input[:0]
-		changed := false
+		changed := 0
 		for _, item := range input {
-			nextItem, itemChanged, keep := sanitizeEncryptedReasoningInputItem(item)
+			nextItem, itemChanged, keep := scope.sanitizeItem(item, invalid)
 			if itemChanged {
-				changed = true
+				changed++
 			}
 			if !keep {
 				continue
@@ -397,43 +401,39 @@ func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
 			}
 			filtered = append(filtered, nextMap)
 		}
-		if !changed {
-			return false
+		if changed == 0 {
+			return 0
 		}
 		if len(filtered) == 0 {
 			delete(reqBody, "input")
-			return true
+			return changed
 		}
 		reqBody["input"] = filtered
-		return true
+		return changed
 	case map[string]any:
-		nextItem, changed, keep := sanitizeEncryptedReasoningInputItem(input)
+		nextItem, changed, keep := scope.sanitizeItem(input, invalid)
 		if !changed {
-			return false
+			return 0
 		}
 		if !keep {
 			delete(reqBody, "input")
-			return true
+			return 1
 		}
 		nextMap, ok := nextItem.(map[string]any)
 		if !ok {
-			return false
+			return 0
 		}
 		reqBody["input"] = nextMap
-		return true
+		return 1
 	default:
-		return false
+		return 0
 	}
-}
-
-func sanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep bool) {
-	return sanitizeOpenAIEncryptedInputItem(item, nil)
 }
 
 // A nil digest set means an explicit upstream rejection: remove all supported
 // encryption. Otherwise remove only previously rejected ciphertext. Do not walk
 // arbitrary tool arguments or tool outputs, which are application data.
-func sanitizeOpenAIEncryptedInputItem(item any, invalid map[string]struct{}) (next any, changed bool, keep bool) {
+func (scope openAIEncryptedHistoryScope) sanitizeItem(item any, invalid map[string]struct{}) (next any, changed bool, keep bool) {
 	inputItem, ok := item.(map[string]any)
 	if !ok {
 		return item, false, true
@@ -458,7 +458,12 @@ func sanitizeOpenAIEncryptedInputItem(item any, invalid map[string]struct{}) (ne
 			return nil, true, false
 		}
 		return item, false, true
-	case "reasoning", "message":
+	case "message":
+		if scope == openAIReasoningHistory {
+			return item, false, true
+		}
+		fallthrough
+	case "reasoning":
 		if encrypted, exists := inputItem["encrypted_content"]; exists && matches(encrypted) {
 			delete(inputItem, "encrypted_content")
 			changed = true
@@ -467,6 +472,11 @@ func sanitizeOpenAIEncryptedInputItem(item any, invalid map[string]struct{}) (ne
 			delete(inputItem, "content")
 			changed = true
 		}
+	}
+	if scope == openAIReasoningHistory {
+		// Only a changed, bare reasoning skeleton is discarded; never descend
+		// into messages or extension envelopes with the same ciphertext.
+		return inputItem, changed, !changed || len(inputItem) > 1
 	}
 	// New protocol envelopes can carry content[] without using the message type.
 	// Inspect only this protocol slot; tool arguments and output remain opaque.

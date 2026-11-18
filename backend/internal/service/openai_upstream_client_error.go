@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -85,7 +86,13 @@ func writeOpenAIUpstreamClientError(c *gin.Context, statusCode int, body []byte,
 	}
 	errorPayload["message"] = message
 
-	c.JSON(statusCode, gin.H{"error": errorPayload})
+	public := gin.H{"error": errorPayload}
+	if statusCode >= http.StatusBadRequest && stopHappyNotificationForHTTPError(c) {
+		payload, _ := json.Marshal(public) // Only the public string fields above.
+		writeHappyNotificationHTTPError(c, statusCode, payload)
+		return
+	}
+	c.JSON(statusCode, public)
 }
 
 // WriteOpenAIUpstreamClientError preserves a structured deterministic upstream

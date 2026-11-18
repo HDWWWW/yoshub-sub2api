@@ -1,22 +1,6 @@
 package service
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-)
-
-func sanitizeOpenAIRejectedEncryptedContent(body []byte) ([]byte, bool, error) {
-	var decoded map[string]any
-	if err := decodeOpenAIJSONUseNumber(body, &decoded); err != nil {
-		return body, false, fmt.Errorf("decode encrypted-content recovery: %w", err)
-	}
-	if !trimOpenAIEncryptedReasoningItems(decoded) {
-		return body, false, nil
-	}
-	cleaned, err := marshalOpenAIUpstreamJSON(decoded)
-	return cleaned, err == nil, err
-}
+import "strings"
 
 // This is a rejected request-history error, not a measure of account health.
 type openAIInvalidEncryptedContentError struct{ cause error }
@@ -37,14 +21,6 @@ func openAIInvalidEncryptedContentSignal(code, message string) bool {
 func isOpenAIInvalidEncryptedContentResponse(payload []byte, message string) bool {
 	return openAIInvalidEncryptedContentSignal(extractUpstreamErrorCode(payload), message) ||
 		openAIInvalidEncryptedContentSignal(openAIStreamFailedEventErrorCode(payload), message)
-}
-
-func isOpenAIInvalidEncryptedContentError(err error) bool {
-	if err == nil {
-		return false
-	}
-	var rejected *openAIInvalidEncryptedContentError
-	return errors.As(err, &rejected) || openAIInvalidEncryptedContentSignal("", err.Error())
 }
 
 func wrapOpenAIInvalidEncryptedContentError(err error, rejected bool) error {

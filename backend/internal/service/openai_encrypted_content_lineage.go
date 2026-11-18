@@ -29,17 +29,30 @@ func openAIEncryptedContentDigest(encrypted string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// visitOpenAIEncryptedItemDigests covers only protocol encryption, never tool data.
-func visitOpenAIEncryptedItemDigests(item gjson.Result, visit func(string) bool) bool {
+// A request-level error is not proof that a message or an opaque content part
+// is bad. Ordinary OpenAI recovery is limited to the v0.2.22 item types.
+type openAIEncryptedHistoryScope uint8
+
+const (
+	openAIReasoningHistory openAIEncryptedHistoryScope = iota
+	openAIExtendedHistory
+)
+
+func (scope openAIEncryptedHistoryScope) visitItemDigests(item gjson.Result, visit func(string) bool) bool {
 	kind := openAIEncryptedInputItemKind(item.Get("type").String(), item.Get("role").String())
 	switch kind {
-	case "reasoning", "compaction", "compaction_summary", "message":
+	case "message":
+		if scope == openAIReasoningHistory {
+			return true
+		}
+		fallthrough
+	case "reasoning", "compaction", "compaction_summary":
 		encrypted := item.Get("encrypted_content")
 		if encrypted.Type == gjson.String && encrypted.String() != "" && !visit(openAIEncryptedContentDigest(encrypted.String())) {
 			return false
 		}
 	}
-	if kind == "compaction" || kind == "compaction_summary" {
+	if scope == openAIReasoningHistory || kind == "compaction" || kind == "compaction_summary" {
 		return true
 	}
 	done := true
@@ -83,9 +96,9 @@ func openAIEncryptedPartDigestRaw(part gjson.Result) string {
 	return openAIEncryptedPartDigestMap(decoded)
 }
 
-func openAIEncryptedItemHasInvalidDigest(item gjson.Result, invalid map[string]struct{}) bool {
+func (scope openAIEncryptedHistoryScope) itemHasInvalidDigest(item gjson.Result, invalid map[string]struct{}) bool {
 	hit := false
-	visitOpenAIEncryptedItemDigests(item, func(digest string) bool {
+	scope.visitItemDigests(item, func(digest string) bool {
 		_, hit = invalid[digest]
 		return !hit
 	})
@@ -95,6 +108,10 @@ func openAIEncryptedItemHasInvalidDigest(item gjson.Result, invalid map[string]s
 // collectOpenAIEncryptedContentDigestsRaw 收集 input 中 lineage 覆盖类型所携
 // 密文的摘要。payload 须遵守 replay 所有权不变式（零拷贝视图解析）。
 func collectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
+	return openAIExtendedHistory.collectDigests(payload)
+}
+
+func (scope openAIEncryptedHistoryScope) collectDigests(payload []byte) []string {
 	if len(payload) == 0 {
 		return nil
 	}
@@ -104,7 +121,7 @@ func collectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 	}
 	var digests []string
 	appendItem := func(item gjson.Result) {
-		visitOpenAIEncryptedItemDigests(item, func(digest string) bool { digests = append(digests, digest); return true })
+		scope.visitItemDigests(item, func(digest string) bool { digests = append(digests, digest); return true })
 	}
 
 	if input.IsArray() {
@@ -125,64 +142,16 @@ func collectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
 // encrypted_content（连带 content:null 清理与空骨架删除），compaction/
 // compaction_summary 整项删除。返回被改写的项数。
 func stripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map[string]struct{}) int {
-	if len(reqBody) == 0 || len(invalid) == 0 {
+	if len(invalid) == 0 {
 		return 0
 	}
-	inputValue, has := reqBody["input"]
-	if !has {
-		return 0
-	}
-	stripped := 0
-	stripItem := func(item any) (next any, changed bool, keep bool) {
-		return sanitizeOpenAIEncryptedInputItem(item, invalid)
-	}
-
-	switch input := inputValue.(type) {
-	case []any:
-		filtered := input[:0]
-		for _, item := range input {
-			nextItem, changed, keep := stripItem(item)
-			if changed {
-				stripped++
-			}
-			if !keep {
-				continue
-			}
-			filtered = append(filtered, nextItem)
-		}
-		if stripped == 0 {
-			return 0
-		}
-		if len(filtered) == 0 {
-			delete(reqBody, "input")
-			return stripped
-		}
-		reqBody["input"] = filtered
-		return stripped
-	case map[string]any:
-		nextItem, changed, keep := stripItem(input)
-		if !changed {
-			return 0
-		}
-		if !keep {
-			delete(reqBody, "input")
-			return 1
-		}
-		nextMap, ok := nextItem.(map[string]any)
-		if !ok {
-			return 0
-		}
-		reqBody["input"] = nextMap
-		return 1
-	default:
-		return 0
-	}
+	return openAIExtendedHistory.editItems(reqBody, invalid)
 }
 
-// openAIRawPayloadHasInvalidEncryptedContent 探测 raw payload 是否携带命中
+// rawHasInvalidDigest 探测 raw payload 是否携带命中
 // invalid 摘要的密文项；零命中的常态路径不做任何改写。payload 须遵守 replay
 // 所有权不变式（零拷贝视图解析）。
-func openAIRawPayloadHasInvalidEncryptedContent(payload []byte, invalid map[string]struct{}) bool {
+func (scope openAIEncryptedHistoryScope) rawHasInvalidDigest(payload []byte, invalid map[string]struct{}) bool {
 	if len(payload) == 0 || len(invalid) == 0 {
 		return false
 	}
@@ -191,7 +160,7 @@ func openAIRawPayloadHasInvalidEncryptedContent(payload []byte, invalid map[stri
 		return false
 	}
 	hit := false
-	checkItem := func(item gjson.Result) bool { return openAIEncryptedItemHasInvalidDigest(item, invalid) }
+	checkItem := func(item gjson.Result) bool { return scope.itemHasInvalidDigest(item, invalid) }
 
 	if input.IsArray() {
 		input.ForEach(func(_, item gjson.Result) bool {
@@ -218,7 +187,7 @@ func stripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 	}
 	hit := false
 	for _, item := range items {
-		if openAIEncryptedItemHasInvalidDigest(gjson.ParseBytes(item), invalid) {
+		if openAIExtendedHistory.itemHasInvalidDigest(gjson.ParseBytes(item), invalid) {
 			hit = true
 			break
 		}
@@ -235,7 +204,7 @@ func stripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 			next = append(next, item)
 			continue
 		}
-		nextItem, changed, keep := sanitizeOpenAIEncryptedInputItem(decoded, invalid)
+		nextItem, changed, keep := openAIExtendedHistory.sanitizeItem(decoded, invalid)
 		if !changed {
 			next = append(next, item)
 			continue
@@ -261,14 +230,18 @@ func stripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 // stripOpenAIInvalidEncryptedContentRaw 是 raw JSON 版剥离：先零成本探测，命中
 // 才解码改写重编码。返回改写后的 payload 与剥离项数；未命中时原样返回。
 func stripOpenAIInvalidEncryptedContentRaw(payload []byte, invalid map[string]struct{}) ([]byte, int, error) {
-	if !openAIRawPayloadHasInvalidEncryptedContent(payload, invalid) {
+	return openAIExtendedHistory.stripRaw(payload, invalid)
+}
+
+func (scope openAIEncryptedHistoryScope) stripRaw(payload []byte, invalid map[string]struct{}) ([]byte, int, error) {
+	if !scope.rawHasInvalidDigest(payload, invalid) {
 		return payload, 0, nil
 	}
 	var decoded map[string]any
 	if err := decodeOpenAIJSONUseNumber(payload, &decoded); err != nil {
 		return payload, 0, err
 	}
-	stripped := stripOpenAIInvalidEncryptedContentItems(decoded, invalid)
+	stripped := scope.editItems(decoded, invalid)
 	if stripped == 0 {
 		return payload, 0, nil
 	}
@@ -340,14 +313,14 @@ func (s *OpenAIGatewayService) markOpenAIWSInvalidEncryptedContentLineageFromPay
 // stripSessionInvalidEncryptedContentLogged 对 payload 执行会话失效密文剥离并
 // 输出观测日志（logKey / logKey+"_skip"），返回（可能已替换的）payload 与剥离
 // 项数；未命中或剥离失败时原样返回。
-func (s *OpenAIGatewayService) stripSessionInvalidEncryptedContentLogged(
+func (scope openAIEncryptedHistoryScope) stripSessionInvalidEncryptedContentLogged(
 	payload []byte,
 	invalid map[string]struct{},
 	logKey string,
 	accountID int64,
 	turn int,
 ) ([]byte, int) {
-	strippedPayload, strippedCount, stripErr := stripOpenAIInvalidEncryptedContentRaw(payload, invalid)
+	strippedPayload, strippedCount, stripErr := scope.stripRaw(payload, invalid)
 	if stripErr != nil {
 		logOpenAIWSModeInfo(
 			"%s_skip account_id=%d turn=%d reason=strip_error cause=%s",

@@ -134,7 +134,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reasoningEffort *string,
 	reqStream bool,
 	startTime time.Time,
-) (_ *OpenAIForwardResult, resultErr error) {
+) (*OpenAIForwardResult, error) {
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
@@ -333,17 +333,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 
-	lineageEntryBody := body
-	lineageGroupID := getOpenAIGroupIDFromContext(c)
-	lineageSessionHash := s.GenerateSessionHash(c, body)
-	if invalid := s.sessionInvalidEncryptedContentDigests(lineageGroupID, lineageSessionHash); len(invalid) > 0 {
-		body, _ = s.stripSessionInvalidEncryptedContentLogged(body, invalid, "invalid_encrypted_lineage_strip", account.ID, 0)
-	}
-	defer func() {
-		if isOpenAIInvalidEncryptedContentError(resultErr) {
-			s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, lineageSessionHash, collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody))
-		}
-	}()
 	// Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
@@ -361,7 +350,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	agentTaskRecoveryTried := false
 	compactModelFallbackRetried := false
-	httpInvalidEncryptedContentRetryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
 	var resp *http.Response
 	var usage *OpenAIUsage
@@ -407,18 +395,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				return nil, err
 			}
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
-			if resp.StatusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(probeBody, extractUpstreamErrorMessage(probeBody)) && !httpInvalidEncryptedContentRetryTried && !smartWSHasDispatched(c) {
-				retryBody, changed, cleanErr := sanitizeOpenAIRejectedEncryptedContent(body)
-				if cleanErr != nil {
-					return nil, cleanErr
-				}
-				if changed {
-					httpInvalidEncryptedContentRetryTried = true
-					s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, lineageSessionHash, collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody))
-					body = retryBody
-					rejectedFieldRetryState.remember(body)
-					continue
-				}
+			// A rejected history identifies neither the bad item nor its decryption
+			// workspace. Do not strip ciphertext, mark session lineage or replay it.
+			if resp.StatusCode == http.StatusBadRequest && isOpenAIInvalidEncryptedContentResponse(probeBody, extractUpstreamErrorMessage(probeBody)) {
+				return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, probeBody)
 			}
 			if isOpenAIContentPolicyRejection(probeBody) {
 				return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, probeBody)
@@ -2152,6 +2132,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
+		// The stream owns both the terminal and its account side effects.
+		if failureDelivered && !clientDisconnected && smartWSHasDispatched(c) {
+			c.Set(smartWSFailureDeliveredKey, true)
+		}
 		return &openaiStreamingResultPassthrough{
 			usage:              usage,
 			firstTokenMs:       firstTokenMs,

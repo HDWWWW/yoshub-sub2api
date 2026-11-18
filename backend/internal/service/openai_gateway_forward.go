@@ -790,12 +790,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// lineage 会话键统一按进场形态的 body 派生：后续重试可能改写 body，
 	// 延迟计算会与下一请求的进场键漂移。
 	lineageGroupID := getOpenAIGroupIDFromContext(c)
+	encryptedScope := openAIExtendedHistory
+	if account.Platform == PlatformOpenAI {
+		encryptedScope = openAIReasoningHistory
+	}
 	lineageEntryBody := body
 	lineageSessionHash := ""
 	if stateStore := s.getOpenAIWSStateStore(); stateStore != nil && stateStore.HasAnySessionInvalidEncryptedContent() {
 		lineageSessionHash = s.GenerateSessionHash(c, body)
 		if invalidDigests := stateStore.GetSessionInvalidEncryptedContentDigests(lineageGroupID, lineageSessionHash); !forcedHTTPWS && len(invalidDigests) > 0 {
-			strippedBody, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
+			strippedBody, strippedCount := encryptedScope.stripSessionInvalidEncryptedContentLogged(
 				body, invalidDigests, "invalid_encrypted_lineage_strip", account.ID, 0,
 			)
 			if strippedCount > 0 {
@@ -895,8 +899,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			// 写入 lineage 后，同一失效密文在后续 turn 进场时被预剥离，不再重复
 			// 触发上游拒绝与重连。摘要取自进场形态的 body（密文项只可能来自
 			// 客户端进场请求，重复摘要幂等）。
-			invalidDigests := collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody)
-			removedReasoningItems := trimOpenAIEncryptedReasoningItems(wsReqBody)
+			invalidDigests := encryptedScope.collectDigests(lineageEntryBody)
+			removedReasoningItems := encryptedScope.editItems(wsReqBody, nil) > 0
 			if !removedReasoningItems {
 				logOpenAIWSModeInfo(
 					"reconnect_invalid_encrypted_content_recovery_skip account_id=%d attempt=%d reason=missing_encrypted_reasoning_items",
@@ -1191,8 +1195,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				if decodeErr != nil {
 					return nil, decodeErr
 				}
-				invalidDigests := collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody)
-				if trimOpenAIEncryptedReasoningItems(decoded) {
+				invalidDigests := encryptedScope.collectDigests(lineageEntryBody)
+				if encryptedScope.editItems(decoded, nil) > 0 {
 					body, err = marshalOpenAIUpstreamJSON(decoded)
 					if err != nil {
 						return nil, fmt.Errorf("serialize invalid_encrypted_content retry body: %w", err)

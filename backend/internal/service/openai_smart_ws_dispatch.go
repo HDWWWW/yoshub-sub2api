@@ -529,7 +529,17 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	payload = openAIPolicyHTTPErrorPayload(payload)
 	payload = s.redactAgentIdentitySensitiveBody(c.Request.Context(), account, payload)
 	if isOpenAICyberAccessDenied(resp.StatusCode, payload) {
-		return writeOpenAICyberAccessDenied(c, account, resp, payload, nil)
+		var writeError compatErrorWriter
+		if stopSmartWSKeepaliveAndCheckSSE(c) {
+			writeError = func(c *gin.Context, status int, _, _ string) {
+				if !writeOpenAICompactSSEBridge(c, status, payload) {
+					writeSmartWSCommittedSSEError(c, status, payload)
+				}
+			}
+		}
+		err := writeOpenAICyberAccessDenied(c, account, resp, payload, writeError)
+		c.Set(smartWSFailureDeliveredKey, true) // The entitlement formatter also owns its uncommitted JSON reply.
+		return err
 	}
 	message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(payload))
 	setOpsUpstreamError(c, resp.StatusCode, message, "")
@@ -623,8 +633,15 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	if isPolicy {
 		downstreamStatus = openAISafetyPolicyHTTPStatus(downstreamStatus)
 	}
+	// A slot-wait ping can commit SSE before SmartWS sees its first frame.
+	// Keep the compact policy writer first; otherwise use the protocol that
+	// is already on the wire, not the upstream response's content type.
 	if !isPolicy || !writeOpenAICompactSSEBridge(c, downstreamStatus, payload) {
-		c.Data(downstreamStatus, contentType, payload)
+		if stopSmartWSKeepaliveAndCheckSSE(c) {
+			writeSmartWSCommittedSSEError(c, downstreamStatus, payload)
+		} else {
+			c.Data(downstreamStatus, contentType, payload)
+		}
 	}
 	c.Set(smartWSFailureDeliveredKey, true)
 	failure := smartWSStopFailure(resp.StatusCode, payload, resp.Header)
@@ -632,4 +649,30 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 		handshake.annotate(failure)
 	}
 	return failure
+}
+
+func stopSmartWSKeepaliveAndCheckSSE(c *gin.Context) bool {
+	StopOpenAICompactSSEKeepaliveCommitted(c)
+	return c.Writer.Written() && strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream")
+}
+
+func writeSmartWSCommittedSSEError(c *gin.Context, status int, payload []byte) {
+	errType, code, message := OpenAIUpstreamErrorFields(status, payload)
+	var frame string
+	switch {
+	case strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/chat/completions"):
+		data, _ := json.Marshal(gin.H{"error": gin.H{"type": errType, "code": code, "message": message, "status_code": status}})
+		frame = "data: " + string(data) + "\n\n"
+	case gjson.GetBytes(payload, "type").Str == "response.failed" && gjson.GetBytes(payload, "response").IsObject() && json.Valid(payload):
+		// Preserve the actual terminal (including ID and usage); SSE data is one line.
+		data, _ := json.Marshal(json.RawMessage(payload))
+		frame = "event: response.failed\ndata: " + string(data) + "\n\n"
+	default:
+		frame = buildOpenAIResponseFailedSSE(smartWSResponseID(payload), "", 0, payload, message)
+	}
+	if _, err := fmt.Fprint(c.Writer, frame); err == nil {
+		c.Writer.Flush()
+	} else {
+		_ = c.Error(err) // A partial terminal must not be followed by another error.
+	}
 }

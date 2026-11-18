@@ -83,3 +83,54 @@ func TestKeepaliveControlFramesPreserveResponseValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestReusedSocketBoundsStaleControlDrain(t *testing.T) {
+	const prior = `{"type":"response.completed","response":{"id":"resp_prior","status":"completed"}}`
+	const late = `{"type":"keepalive","response_id":"resp_prior","usage":{"input_tokens":11}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		if _, _, err := ws.ReadMessage(); err != nil || ws.WriteMessage(websocket.TextMessage, []byte(prior)) != nil {
+			return
+		}
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		for i := 0; i <= maxIgnoredFrames; i++ {
+			if ws.WriteMessage(websocket.TextMessage, []byte(late)) != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+	p := testPool(t)
+	for n := 0; n < 2; n++ {
+		req, err := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(`{"model":"test","input":"hello"}`))
+		require.NoError(t, err)
+		req.Header.Set("Session-Id", "scope")
+		req.Header.Set("Authorization", "Bearer local-test")
+		var observed int
+		r, handled, err := p.TryWithOptions(req, "", "scope", Options{AllowTarget: true, ReadTimeout: time.Second, OnEvent: func([]byte, bool) { observed++ }})
+		require.True(t, handled)
+		require.NoError(t, err)
+		require.NotNil(t, r)
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, r.Body.Close())
+		if n == 0 {
+			require.NoError(t, err)
+			require.Equal(t, 1, observed)
+			continue
+		}
+		require.Equal(t, "true", r.Header.Get("X-Sub2-WS-Reused"))
+		var sent *SentError
+		require.ErrorAs(t, err, &sent)
+		require.Equal(t, "stale_response", sent.Reason)
+		require.False(t, sent.TransportFailure)
+		require.Empty(t, data)
+		require.Zero(t, observed)
+		require.EqualValues(t, maxIgnoredFrames, p.Stats()["stale_frame_ignored"])
+	}
+}
