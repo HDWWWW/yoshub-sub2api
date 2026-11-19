@@ -378,6 +378,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/scheduling-preview", h.Admin.Account.GetAccountSchedulingPreview)
 		accounts.PUT("/refill", h.Admin.Account.UpdateAccountRefill)
 		accounts.POST("/refill/check", h.Admin.Account.CheckAccountRefill)
+		accounts.POST("/refill/notifications/test", h.Admin.Account.TestAccountRefillNotification)
 		accounts.POST("/refill/manual", h.Admin.Account.ManualAccountRefill)
 		accounts.PUT("/refill/fendudu", h.Admin.Account.ConfigureFenduduRefill)
 		accounts.POST("/refill/jobs/:job_id/fendudu-reconcile", h.Admin.Account.ReconcileFenduduRefill)
