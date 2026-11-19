@@ -95,12 +95,15 @@ def generate_config(args):
         data['before'] = {'hooks': []}
         data['builds'] = [{'id': 'sub2api', 'skip': True}]
         data['archives'] = []
-        extra = [{'glob': 'release-input/sub2api_*.tar.gz'}, {'glob': 'release-input/sub2api_*.zip'}]
-        if args.simple:
-            data['checksum'] = {'disable': True}
-        else:
-            data['release']['extra_files'] = extra
-            data['checksum'] = {'name_template': 'checksums.txt', 'algorithm': 'sha256', 'extra_files': extra}
+        extra = [{'glob': 'release-input/sub2api_*.tar.gz'}]
+        if not args.simple:
+            extra.append({'glob': 'release-input/sub2api_*.zip'})
+        data['release']['extra_files'] = extra
+        data['checksum'] = {'name_template': 'checksums.txt', 'algorithm': 'sha256', 'extra_files': extra}
+        # The numbered YosHub suffix is the stable fork revision. Other suffixes
+        # (including RCs) keep GoReleaser's normal prerelease classification.
+        if re.fullmatch(r'\d+\.\d+\.\d+-yoshub\.\d+', os.environ.get('RELEASE_VERSION', '')):
+            data['release']['prerelease'] = False
     Path(args.output).write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
 
 

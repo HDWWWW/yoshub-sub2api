@@ -20,6 +20,7 @@
       <nav ref="tabsNav" class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
         <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="busy" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
       </nav>
+      <ImportSchedulingThreshold v-if="activeTab === 'rules'" :disabled="busy" />
       <form v-admin-read-only-form id="refill-settings" class="space-y-5" @submit.prevent="save">
         <fieldset :disabled="busy" class="space-y-5">
           <div v-show="activeTab === 'connection'" class="space-y-5">
@@ -331,6 +332,7 @@ import { getCodexFingerprintModeOptions } from '@/utils/codexFingerprintMode'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import ImportSchedulingThreshold from './ImportSchedulingThreshold.vue'
 import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT } from '@/components/account/sameAccountRetry'
 import OpenAIPrivacyControl from '@/components/account/OpenAIPrivacyControl.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'

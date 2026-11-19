@@ -3,8 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountRefillModal from '../AccountRefillModal.vue'
 import type { Proxy } from '@/types'
 
-const { get, save, check, retry, manual, download, saveAs, showSuccess, configureFendudu, reconcileFendudu, testNotification } = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn(), configureFendudu: vi.fn(), reconcileFendudu: vi.fn(), testNotification: vi.fn() }))
-vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, save, check, retry, manual, download, configureFendudu, reconcileFendudu, testNotification } }))
+const { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, saveAs, showSuccess, configureFendudu, reconcileFendudu, testNotification } = vi.hoisted(() => ({ getImportThreshold: vi.fn(), setImportThreshold: vi.fn(), get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn(), configureFendudu: vi.fn(), reconcileFendudu: vi.fn(), testNotification: vi.fn() }))
+vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, configureFendudu, reconcileFendudu, testNotification } }))
 vi.mock('file-saver', () => ({ saveAs }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { name: 'TotpStepUpDialog', props: ['controller'], template: '<div />' } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
@@ -43,8 +43,29 @@ async function openProgress() {
  return wrapper
 }
 describe('AccountRefillModal', () => {
- beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
+ beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); getImportThreshold.mockResolvedValue(99); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('saves the site-wide import threshold independently of the selected refill rule', async () => {
+  getImportThreshold.mockResolvedValue(91)
+  setImportThreshold.mockResolvedValue(100)
+  const w = await open()
+  await w.findAll('nav button').find(b => b.text() === 'accountRefill.rules')!.trigger('click')
+  await flushPromises()
+  const input = w.get<HTMLInputElement>('#openai-import-threshold')
+  const button = w.findAll('button').find(b => b.text() === 'accountRefill.saveImportThreshold')!
+  expect(input.element.value).toBe('91')
+  for (const invalid of ['', '0', '92.5', '101']) {
+   await input.setValue(invalid)
+   expect(button.attributes('disabled')).toBeDefined()
+  }
+  await input.setValue('100')
+  await button.trigger('click'); await flushPromises()
+  expect(setImportThreshold).toHaveBeenCalledWith(100)
+  expect(w.text()).toContain('accountRefill.importThresholdSaved')
+  expect(save).not.toHaveBeenCalled()
+  expect(manual).not.toHaveBeenCalled()
+  w.unmount()
+ })
  it('defaults both manual suppliers to Pro20x while preserving a pending Pro5x order', async () => {
   const w = await open()
   await w.findAll('nav button').find(b => b.text() === 'accountRefill.manual')!.trigger('click')

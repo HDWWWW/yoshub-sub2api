@@ -5,7 +5,7 @@ import type { ManualRefillRequest } from '@/api/admin/accountRefill'
 import zh from '@/i18n/locales/zh/accountRefill'
 
 const { get, manual } = vi.hoisted(() => ({ get: vi.fn(), manual: vi.fn() }))
-vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, manual } }))
+vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, manual, getImportThreshold: async () => 99 } }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [{ id: 2, name: 'First', platform: 'openai', status: 'active' }, { id: 3, name: 'Second', platform: 'openai', status: 'active' }] }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn() }) }))

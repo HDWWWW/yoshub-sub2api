@@ -22,6 +22,18 @@ func TestNewAccountQuotaPauseDefaultsPersistOnlyAtCreation(t *testing.T) {
 	require.Equal(t, float64(99), stored.Credentials["account_scheduling_threshold"])
 	require.Equal(t, 7, stored.Priority)
 	require.Equal(t, 50, stored.Concurrency)
+	settings := service.NewSettingService(NewSettingRepository(tx.Client()), nil)
+	for _, threshold := range []int{87, 100} {
+		require.NoError(t, settings.SetOpenAIImportThreshold(ctx, threshold))
+		next := &service.Account{Name: "next-import", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true}
+		require.NoError(t, repo.Create(ctx, next))
+		created, err := repo.GetByID(ctx, next.ID)
+		require.NoError(t, err)
+		require.EqualValues(t, threshold, created.Credentials["account_scheduling_threshold"])
+	}
+	original, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.EqualValues(t, 99, original.Credentials["account_scheduling_threshold"])
 	delete(stored.Credentials, "account_scheduling_threshold")
 	require.NoError(t, repo.Update(ctx, stored))
 	stored, err = repo.GetByID(ctx, account.ID)

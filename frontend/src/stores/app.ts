@@ -41,6 +41,9 @@ export const useAppStore = defineStore('app', () => {
   const currentVersion = ref<string>('')
   const latestVersion = ref<string>('')
   const hasUpdate = ref<boolean>(false)
+  const canUpdate = ref(false)
+  const selfUpdateEnabled = ref(false)
+  const versionWarning = ref('')
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
 
@@ -247,6 +250,9 @@ export const useAppStore = defineStore('app', () => {
         current_version: currentVersion.value,
         latest_version: latestVersion.value,
         has_update: hasUpdate.value,
+        can_update: canUpdate.value,
+        self_update_enabled: selfUpdateEnabled.value,
+        warning: versionWarning.value || undefined,
         build_type: buildType.value,
         release_info: releaseInfo.value || undefined,
         cached: true
@@ -264,12 +270,17 @@ export const useAppStore = defineStore('app', () => {
       currentVersion.value = data.current_version
       latestVersion.value = data.latest_version
       hasUpdate.value = data.has_update
+      canUpdate.value = data.can_update
+      selfUpdateEnabled.value = data.self_update_enabled
+      versionWarning.value = data.warning || ''
       buildType.value = data.build_type || 'source'
       releaseInfo.value = data.release_info || null
-      versionLoaded.value = true
+      versionLoaded.value = !data.warning
       return data
     } catch (error) {
-      console.error('Failed to fetch version:', error)
+      versionWarning.value = (error instanceof Error ? error.message : String(error)) || i18n.global.t('version.checkFailed')
+      versionLoaded.value = false
+      canUpdate.value = false
       return null
     } finally {
       versionLoading.value = false
@@ -281,6 +292,8 @@ export const useAppStore = defineStore('app', () => {
    */
   function clearVersionCache(): void {
     versionLoaded.value = false
+    canUpdate.value = false
+    versionWarning.value = ''
     hasUpdate.value = false
   }
 
@@ -461,6 +474,9 @@ export const useAppStore = defineStore('app', () => {
     currentVersion,
     latestVersion,
     hasUpdate,
+    canUpdate,
+    selfUpdateEnabled,
+    versionWarning,
     buildType,
     releaseInfo,
 

@@ -41,7 +41,7 @@ export default {
       dataExportedSkippedShadows: 'Data exported. Skipped {count} spark shadow account(s): their scheduling config is not included in the backup; recreate and re-tune them after restore.',
       dataExportFailed: 'Failed to export data',
       dataImportTitle: 'Import Data',
-      dataImportHint: 'Upload the exported JSON file to import accounts and proxies. New OpenAI accounts default to 99% for both 5-hour and 7-day quota thresholds when no value is specified.',
+      dataImportHint: 'Upload the exported JSON file to import accounts and proxies. New OpenAI accounts without an explicit scheduling threshold use the site default in Refill Rules.',
       dataImportWarning: 'Import will create new accounts/proxies; groups must be bound manually. Ensure existing data does not conflict.',
       dataImportFile: 'Data file',
       dataImportButton: 'Start Import',

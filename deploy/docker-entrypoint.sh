@@ -20,4 +20,25 @@ if [ "${1#-}" != "$1" ]; then
     set -- /app/sub2api "$@"
 fi
 
+# An update is scoped to the baked binary. Recreating the same image retains it,
+# while explicitly pulling a different image starts that image's own program.
+if [ "${1:-}" = /app/sub2api ] && [ "${SUB2API_DISABLE_SELF_UPDATE:-0}" != 1 ]; then
+    if [ -s /app/sub2api.image-id ]; then
+        IFS= read -r image_id < /app/sub2api.image-id
+    else
+        # Also support custom images that copy this entrypoint without the marker.
+        image_id=$(sha256sum /app/sub2api)
+        image_id=${image_id%% *}
+    fi
+    SUB2API_UPDATE_DIR="/app/data/.yoshub-updates/$image_id"
+    export SUB2API_UPDATE_DIR
+    if [ -x "$SUB2API_UPDATE_DIR/sub2api" ]; then
+        shift
+        set -- "$SUB2API_UPDATE_DIR/sub2api" "$@"
+    fi
+    if ! (umask 077 && mkdir -p "$SUB2API_UPDATE_DIR") || [ ! -w "$SUB2API_UPDATE_DIR" ]; then
+        export SUB2API_DISABLE_SELF_UPDATE=1
+    fi
+fi
+
 exec "$@"

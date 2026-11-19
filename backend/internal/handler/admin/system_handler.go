@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -121,9 +122,10 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 		succeeded = true
 
 		return gin.H{
-			"message":      "Update completed. Please restart the service.",
-			"need_restart": true,
-			"operation_id": lock.OperationID(),
+			"message":        "Update completed. Please restart the service.",
+			"need_restart":   true,
+			"manual_restart": runtime.GOOS != "linux",
+			"operation_id":   lock.OperationID(),
 		}, nil
 	})
 }
@@ -190,10 +192,11 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 		succeeded = true
 
 		return gin.H{
-			"message":      "Rollback completed. Please restart the service.",
-			"need_restart": true,
-			"version":      targetVersion,
-			"operation_id": lock.OperationID(),
+			"message":        "Rollback completed. Please restart the service.",
+			"need_restart":   true,
+			"manual_restart": runtime.GOOS != "linux",
+			"version":        targetVersion,
+			"operation_id":   lock.OperationID(),
 		}, nil
 	})
 }

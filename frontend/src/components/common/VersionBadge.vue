@@ -10,7 +10,7 @@
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
         ]"
-        :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
+        :title="statusText"
       >
         <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
         <span
@@ -89,7 +89,7 @@
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
                   <span
-                    v-if="!hasUpdate"
+                    v-if="appStore.versionLoaded && !hasUpdate"
                     class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
                   >
                     <svg
@@ -106,12 +106,14 @@
                   </span>
                 </div>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-                  {{
-                    hasUpdate
-                      ? t('version.latestVersion') + ': v' + latestVersion
-                      : t('version.upToDate')
-                  }}
+                  {{ statusText }}
                 </p>
+                <a
+                  :href="releasesURL"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-xs text-primary-600 hover:underline dark:text-primary-400"
+                >{{ t('version.updateSource') }}</a>
               </div>
 
               <!-- Priority 1: Update error (must check before hasUpdate) -->
@@ -183,6 +185,7 @@
 
                 <!-- Restart button with countdown -->
                 <button
+                  v-if="!manualRestart"
                   @click="handleRestart"
                   :disabled="restarting"
                   class="flex w-full items-center justify-center gap-2 rounded-lg bg-green-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-50"
@@ -231,8 +234,13 @@
                 </button>
               </div>
 
-              <!-- Priority 3: Update available for source build - show git pull hint -->
-              <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
+              <div v-else-if="appStore.versionWarning" role="status" class="space-y-2 text-xs text-amber-700 dark:text-amber-400">
+                <p class="break-words">{{ appStore.versionWarning }}</p>
+                <button class="font-medium hover:underline" @click="refreshVersion(true)">{{ t('version.retry') }}</button>
+              </div>
+
+              <!-- Source installations and releases without a matching binary use manual updates. -->
+              <div v-else-if="hasUpdate && !appStore.canUpdate" class="space-y-2">
                 <a
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
                   :href="releaseInfo.html_url"
@@ -286,13 +294,13 @@
                     />
                   </svg>
                   <p class="text-xs text-blue-600 dark:text-blue-400">
-                    {{ t('version.sourceModeHint') }}
+                    {{ manualUpdateHint }}
                   </p>
                 </div>
               </div>
 
               <!-- Priority 4: Update available for release build - show update button -->
-              <div v-else-if="hasUpdate && isReleaseBuild" class="space-y-2">
+              <div v-else-if="appStore.canUpdate" class="space-y-2">
                 <!-- Update info card -->
                 <div
                   class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
@@ -373,7 +381,9 @@
                   </svg>
                   {{ t('version.viewRelease') }}
                 </a>
+              </div>
 
+              <div v-if="appStore.versionLoaded && !updating && !updateSuccess && !updateError" class="mt-2">
                 <!-- Version rollback entry -->
                 <div class="border-t border-gray-100 pt-2 dark:border-dark-700">
                   <button
@@ -397,7 +407,7 @@
                     <div v-if="rollbackPanelOpen" class="mt-2 space-y-2">
                       <!-- Source build: online rollback unavailable, use git instead -->
                       <div
-                        v-if="!isReleaseBuild"
+                        v-if="!appStore.selfUpdateEnabled"
                         class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
                       >
                         <svg
@@ -414,7 +424,7 @@
                           />
                         </svg>
                         <p class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400">
-                          {{ t('version.rollbackSourceHint') }}
+                          {{ isReleaseBuild ? t('version.manualUpdate') : t('version.rollbackSourceHint') }}
                         </p>
                       </div>
 
@@ -651,9 +661,9 @@ import {
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
 
-const GITHUB_REPO = 'Wei-Shaw/sub2api'
-// Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
-const DOCKER_IMAGE = 'weishaw/sub2api'
+const GITHUB_REPO = 'HDWWWW/yoshub-sub2api'
+const releasesURL = `https://github.com/${GITHUB_REPO}/releases`
+const DOCKER_IMAGE = 'ghcr.io/hdwwww/yoshub-sub2api'
 
 const { t } = useI18n()
 
@@ -674,6 +684,13 @@ const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
+const statusText = computed(() => {
+  if (appStore.versionWarning) return t('version.checkFailed')
+  if (!appStore.versionLoaded) return t('version.currentVersion')
+  return hasUpdate.value
+    ? `${t('version.latestVersion')}: v${latestVersion.value}`
+    : t('version.upToDate')
+})
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
 
@@ -681,6 +698,7 @@ const buildType = computed(() => appStore.buildType)
 const updating = ref(false)
 const restarting = ref(false)
 const needRestart = ref(false)
+const manualRestart = ref(false)
 const updateError = ref('')
 const updateSuccess = ref(false)
 const restartCountdown = ref(0)
@@ -709,15 +727,16 @@ const manualTabs = computed(() => [
 
 const scriptRollbackCommand = computed(() => {
   if (!selectedRollbackVersion.value) return ''
-  const tag = `v${selectedRollbackVersion.value}`
-  return `curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/deploy/install.sh | sudo bash -s -- rollback ${tag}`
+  const tag = rollbackVersions.value.find((item) => item.version === selectedRollbackVersion.value)?.tag_name
+  if (!tag) return ''
+  return `curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/yoshub/production/deploy/install.sh | sudo bash -s -- rollback ${tag}`
 })
 
 const dockerRollbackCommand = computed(() => {
   if (!selectedRollbackVersion.value) return ''
   return [
     `# ${t('version.dockerEditCompose')}`,
-    `image: ${DOCKER_IMAGE}:${selectedRollbackVersion.value}`,
+    `image: ${DOCKER_IMAGE}:v${selectedRollbackVersion.value}`,
     '',
     `# ${t('version.dockerRecreate')}`,
     'docker compose up -d'
@@ -730,6 +749,11 @@ const activeManualCommand = computed(() =>
 
 // Only show update check for release builds (binary/docker deployment)
 const isReleaseBuild = computed(() => buildType.value === 'release')
+
+const manualUpdateHint = computed(() => {
+  if (!isReleaseBuild.value) return t('version.sourceModeHint')
+  return t(appStore.selfUpdateEnabled ? 'version.noBinary' : 'version.manualUpdate')
+})
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
@@ -752,7 +776,7 @@ async function refreshVersion(force = true) {
 }
 
 async function handleUpdate() {
-  if (updating.value) return
+  if (updating.value || !appStore.canUpdate) return
 
   updating.value = true
   updateError.value = ''
@@ -763,6 +787,7 @@ async function handleUpdate() {
     successKind.value = 'update'
     updateSuccess.value = true
     needRestart.value = result.need_restart
+    manualRestart.value = result.manual_restart === true
     // Clear version cache to reflect update completed
     appStore.clearVersionCache()
   } catch (error: unknown) {
@@ -788,7 +813,7 @@ async function toggleRollbackPanel() {
   // Source builds only show a hint, no version list to fetch
   if (
     rollbackPanelOpen.value &&
-    isReleaseBuild.value &&
+    appStore.selfUpdateEnabled &&
     rollbackVersions.value.length === 0 &&
     !rollbackVersionsLoading.value
   ) {
@@ -837,6 +862,7 @@ async function handleRollback() {
     successKind.value = 'rollback'
     updateSuccess.value = true
     needRestart.value = result.need_restart
+    manualRestart.value = result.manual_restart === true
     rollbackPanelOpen.value = false
     // Clear version cache so the next check reflects the rolled-back version
     appStore.clearVersionCache()

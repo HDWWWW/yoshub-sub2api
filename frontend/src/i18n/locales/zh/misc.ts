@@ -19,6 +19,10 @@ export default {
 
   // Version Badge
   version: {
+    updateSource: '更新源：YosHub',
+    checkFailed: '暂时无法检查更新',
+    noBinary: '这个版本没有适用于当前平台的热更新包，可在发布页查看安装方式。',
+    manualUpdate: '当前安装方式请手动更新。',
     currentVersion: '当前版本',
     latestVersion: '最新版本',
     upToDate: '已是最新版本',

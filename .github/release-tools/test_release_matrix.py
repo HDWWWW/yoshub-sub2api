@@ -80,11 +80,16 @@ class ReleaseMatrixTest(unittest.TestCase):
                 self.assertFalse(data['dockers'])
                 self.assertEqual(data['release']['header'], original['release']['header'])
                 self.assertEqual(data['release']['footer'], original['release']['footer'])
-                if simple:
-                    self.assertTrue(data['checksum']['disable'])
-                    self.assertTrue(data['release']['skip_upload'])
-                else:
-                    self.assertEqual(data['checksum']['extra_files'], data['release']['extra_files'])
+                self.assertFalse(data['release'].get('skip_upload'))
+                self.assertEqual(data['checksum']['name_template'], 'checksums.txt')
+                self.assertEqual(data['checksum']['extra_files'], data['release']['extra_files'])
+                self.assertIn({'glob': 'release-input/sub2api_*.tar.gz'}, data['release']['extra_files'])
+
+    def test_stable_yoshub_revisions_are_published_as_releases(self):
+        for version, expected in [('0.2.23-yoshub.48', False), ('0.2.23-rc.1', 'auto')]:
+            with self.subTest(version=version), patch.dict(os.environ, {'RELEASE_VERSION': version}):
+                release.generate_config(argparse.Namespace(mode='publish', simple=True, output='publisher.yaml'))
+                self.assertEqual(yaml.safe_load(Path('publisher.yaml').read_text())['release']['prerelease'], expected)
 
     def test_collect_and_verify_hash_and_source_binding(self):
         args = self.fixture_artifacts()
@@ -147,7 +152,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         docker.chmod(0o755)
         env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
                'DOCKER_LOG': str(Path('docker.log').resolve()), 'RUNNER_TEMP': self.temp.name,
-               'RELEASE_VERSION': '9.8.7', 'RELEASE_SHA': 'a' * 40, 'GITHUB_REPOSITORY': 'ExampleOwner/sub2api',
+               'RELEASE_VERSION': '9.8.7', 'RELEASE_SHA': 'a' * 40, 'GITHUB_REPOSITORY': 'ExampleOwner/yoshub-sub2api',
                'DRY_RUN': 'true', 'SIMPLE_RELEASE': 'false', 'DOCKERHUB_USERNAME': 'skip'}
         subprocess.run(['bash', str(ROOT / '.github/release-tools/release-images.sh')], env=env, check=True)
         log = Path('docker.log').read_text()
@@ -156,7 +161,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertNotIn('--push', log)
         self.assertNotIn('imagetools', log)
         self.assertNotIn('skip/sub2api', log)
-        self.assertIn('ghcr.io/exampleowner/sub2api', log)
+        self.assertIn('ghcr.io/exampleowner/yoshub-sub2api', log)
 
 
     def test_published_full_and_simple_image_tags(self):
@@ -170,20 +175,21 @@ class ReleaseMatrixTest(unittest.TestCase):
                 log_path = Path(f'docker-{simple}.log').resolve()
                 env = {**os.environ, 'PATH': str(fake_bin.resolve()) + os.pathsep + os.environ['PATH'],
                        'DOCKER_LOG': str(log_path), 'RUNNER_TEMP': self.temp.name,
-                       'RELEASE_VERSION': '9.8.7', 'RELEASE_SHA': 'a' * 40, 'GITHUB_REPOSITORY': 'ExampleOwner/sub2api',
+                       'RELEASE_VERSION': '9.8.7', 'RELEASE_SHA': 'a' * 40, 'GITHUB_REPOSITORY': 'ExampleOwner/yoshub-sub2api',
                        'DRY_RUN': 'false', 'SIMPLE_RELEASE': str(simple).lower(), 'DOCKERHUB_USERNAME': 'fixturehub'}
                 subprocess.run(['bash', str(ROOT / '.github/release-tools/release-images.sh')], env=env, check=True)
                 log = log_path.read_text()
                 self.assertIn('--push', log)
+                self.assertIn('ghcr.io/exampleowner/yoshub-sub2api:v9.8.7 ', log)
                 self.assertEqual(log.count('buildx build'), 1 if simple else 2)
                 if simple:
                     self.assertNotIn('fixturehub', log)
                     self.assertNotIn('imagetools', log)
-                    self.assertIn('ghcr.io/exampleowner/sub2api:latest', log)
+                    self.assertIn('ghcr.io/exampleowner/yoshub-sub2api:latest', log)
                 else:
                     self.assertEqual(log.count('imagetools create'), 2)
                     self.assertIn('fixturehub/sub2api:9.8', log)
-                    self.assertIn('ghcr.io/exampleowner/sub2api:9', log)
+                    self.assertIn('ghcr.io/exampleowner/yoshub-sub2api:9', log)
 
 
 

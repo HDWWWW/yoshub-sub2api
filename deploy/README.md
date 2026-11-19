@@ -2,6 +2,22 @@
 
 This directory contains files for deploying Sub2API on Linux servers and Apple-silicon Macs.
 
+## YosHub 热更新
+
+含 YosHub 更新器的版本会在管理后台的版本菜单显示“更新源：YosHub”。点击“立即更新”后，再点击“立即重启”使新程序生效。使用旧更新器的用户（包括 `0.2.23-yoshub.47`）第一次需要手动安装含新更新器的 YosHub 版本。Docker 镜像地址为 `ghcr.io/hdwwww/yoshub-sub2api`。
+
+Docker 部署请保留可写、允许执行文件的 `/app/data` 挂载和 `restart: unless-stopped`。重建同一基础程序的容器会继续运行已安装的热更新；更换为含不同程序的镜像会启动该镜像自带的版本。需要用镜像统一管理版本的部署可以设置 `SUB2API_DISABLE_SELF_UPDATE=1`。热更新只替换应用程序及其内嵌前端；容器依赖和镜像配置随换镜像更新。源码部署继续用 Git 更新。
+
+### 给自己的 Release 准备更新包
+
+完整和精简发布工作流均会为所构建的平台附上程序包及 `checksums.txt`。使用现有离线镜像发布方式时，也可以从已经构建好的本地镜像生成同一份程序包。在仓库根目录使用 Python 3.11 或以上版本运行以下命令，把 `VERSION` 设置为该镜像的版本号（不含 `v`）。
+
+```sh
+python3 .github/release-tools/package_hot_update.py "ghcr.io/hdwwww/yoshub-sub2api:v${VERSION}" ./hot-update-assets
+```
+
+将生成的 `sub2api_<版本>_linux_<架构>.tar.gz` 和 `checksums.txt` 附到 `HDWWWW/yoshub-sub2api` 的同一个稳定 Release，标签可以是 `v<版本>` 或 `image-v<版本>`。手工发布多个架构时，为每个架构使用单独的输出目录，再把各架构的校验行合并成一个 `checksums.txt`。原来的 Docker 离线镜像包与 `SHA256SUMS` 可以继续一同提供。只有镜像包的历史版本可在发布页下载，后台不会将它们列为可安装的程序。
+
 ## Deployment Methods
 
 | Method | Best For | Setup Wizard |
@@ -56,10 +72,10 @@ Use the automated preparation script for the easiest setup:
 
 ```bash
 # Download and run the preparation script
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
+curl -fsSL https://raw.githubusercontent.com/HDWWWW/yoshub-sub2api/yoshub/production/deploy/docker-deploy.sh | bash
 
 # Or download first, then run
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh -o docker-deploy.sh
+curl -fsSL https://raw.githubusercontent.com/HDWWWW/yoshub-sub2api/yoshub/production/deploy/docker-deploy.sh -o docker-deploy.sh
 chmod +x docker-deploy.sh
 ./docker-deploy.sh
 ```
@@ -92,7 +108,7 @@ If you prefer manual control:
 
 ```bash
 # Clone repository
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/HDWWWW/yoshub-sub2api.git sub2api
 cd sub2api/deploy
 
 # Configure environment
@@ -398,7 +414,7 @@ For production servers using systemd.
 ### One-Line Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/HDWWWW/yoshub-sub2api/yoshub/production/deploy/install.sh | sudo bash
 ```
 
 ### Manual Installation

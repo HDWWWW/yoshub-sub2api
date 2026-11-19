@@ -144,7 +144,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		return service.ErrAccountNilInput
 	}
 	// Central creation path covers JSON/Codex imports, OAuth, batch creation and CRS sync.
-	service.ApplyNewAccountQuotaPauseDefaults(account)
+	if err := service.ApplyNewAccountQuotaPauseDefaults(ctx, account, NewSettingRepository(client)); err != nil {
+		return fmt.Errorf("apply new account scheduling threshold: %w", err)
+	}
 	if service.ShouldStopAccountAtSchedulingThreshold(account, time.Now().UTC()) {
 		account.Schedulable = false
 	}

@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       simple_release:
-        description: 'Simple release: only x86_64 GHCR image, skip other artifacts'
+        description: 'Simple release: x86_64 GHCR image and matching hot-update archive'
         required: false
         type: boolean
         default: false

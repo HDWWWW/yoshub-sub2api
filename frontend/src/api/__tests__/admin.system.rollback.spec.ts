@@ -23,9 +23,10 @@ describe('admin system rollback API', () => {
   it('getRollbackVersions fetches the rollback version list', async () => {
     const versions: RollbackVersionInfo[] = [
       {
-        version: '0.1.146',
+        tag_name: 'image-v0.2.23-yoshub.47',
+        version: '0.2.23-yoshub.47',
         published_at: '2026-07-07T00:00:00Z',
-        html_url: 'https://github.com/Wei-Shaw/sub2api/releases/tag/v0.1.146'
+        html_url: 'https://github.com/HDWWWW/yoshub-sub2api/releases/tag/image-v0.2.23-yoshub.47'
       }
     ]
     get.mockResolvedValue({ data: { versions } })

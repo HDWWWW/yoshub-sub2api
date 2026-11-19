@@ -147,6 +147,12 @@ export interface RefillView {
   import_expiry_offset_minutes: number
 }
 export const accountRefillAPI = {
+  async getImportThreshold() {
+    return (await apiClient.get<{ percent: number }>('/admin/accounts/refill/import-threshold')).data.percent
+  },
+  async setImportThreshold(percent: number) {
+    return (await apiClient.put<{ percent: number }>('/admin/accounts/refill/import-threshold', { percent })).data.percent
+  },
   async configureFendudu(groupID: number, api_token: string, connection_id: string, revision: number) {
     return (await apiClient.put<RefillView>('/admin/accounts/refill/fendudu', { api_token, connection_id, revision }, { params: { group_id: groupID }, timeout: 70000 })).data
   },

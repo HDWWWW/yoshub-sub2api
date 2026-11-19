@@ -19,6 +19,10 @@ export default {
 
   // Version Badge
   version: {
+    updateSource: 'Update source: YosHub',
+    checkFailed: 'Unable to check for updates',
+    noBinary: 'This release has no in-place update package for this platform. See the release for installation options.',
+    manualUpdate: 'Update this installation manually.',
     currentVersion: 'Current Version',
     latestVersion: 'Latest Version',
     upToDate: "You're running the latest version.",

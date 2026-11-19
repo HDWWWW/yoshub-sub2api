@@ -153,7 +153,7 @@ RUN mkdir -p /app/data && chown sub2api:sub2api /app/data
 
 # Copy entrypoint script (fixes volume permissions then drops to sub2api)
 COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh && sha256sum /app/sub2api | cut -d' ' -f1 > /app/sub2api.image-id
 
 # Expose port (can be overridden by SERVER_PORT env var)
 EXPOSE 8080

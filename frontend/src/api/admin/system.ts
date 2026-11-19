@@ -15,6 +15,8 @@ export interface VersionInfo {
   current_version: string
   latest_version: string
   has_update: boolean
+  can_update: boolean
+  self_update_enabled: boolean
   release_info?: ReleaseInfo
   cached: boolean
   warning?: string
@@ -43,9 +45,11 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
 export interface UpdateResult {
   message: string
   need_restart: boolean
+  manual_restart?: boolean
 }
 
 export interface RollbackVersionInfo {
+  tag_name: string
   version: string
   published_at: string
   html_url: string
