@@ -87,10 +87,11 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Config   json.RawMessage `json:"config"`
-		APIToken string          `json:"api_token"`
-		Revision int64           `json:"revision"`
-		Webhook  string          `json:"wecom_webhook"`
+		Config         json.RawMessage `json:"config"`
+		APIToken       string          `json:"api_token"`
+		Revision       int64           `json:"revision"`
+		Webhook        string          `json:"wecom_webhook"`
+		QQClientSecret string          `json:"qq_client_secret"`
 	}
 	current, err := svc.View(c.Request.Context())
 	if err != nil {
@@ -107,7 +108,27 @@ func (h *AccountHandler) UpdateAccountRefill(c *gin.Context) {
 		response.BadRequest(c, "补号设置格式无效")
 		return
 	}
-	if err := svc.Configure(c.Request.Context(), config, req.APIToken, req.Revision, req.Webhook); err != nil {
+	if err := svc.ConfigureWithNotificationSecrets(c.Request.Context(), config, req.APIToken, req.Revision, service.AccountRefillNotificationSecrets{WeComWebhook: req.Webhook, QQClientSecret: req.QQClientSecret}); err != nil {
+		refillResponseError(c, err)
+		return
+	}
+	h.GetAccountRefill(c)
+}
+
+func (h *AccountHandler) TestAccountRefillNotification(c *gin.Context) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Revision int64 `json:"revision"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "测试请求格式无效")
+		return
+	}
+	if err := svc.TestNotification(c.Request.Context(), req.Revision); err != nil {
 		refillResponseError(c, err)
 		return
 	}

@@ -26,7 +26,7 @@ export interface RefillConfig {
   daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string; day_mode?: '' | 'china_workday' }[] | null
 	rotation_enabled: boolean
 	rotation: { plan: string; count: number }[]
-  notifications: { refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
+  notifications: { channel?: '' | 'wecom' | 'qq'; qq_app_id?: string; qq_target_type?: 'group' | 'c2c'; qq_target_openid?: string; refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
   immediate_failure_retry?: boolean | null
@@ -116,6 +116,7 @@ export interface RefillView {
 	rotation_cursor: number
 	next_plan: string
   webhook_configured: boolean
+  qq_secret_configured?: boolean
   notification_status: { at: string | null; message: string }
   lease_sync_at: string | null
   lease_sync_message: string
@@ -183,8 +184,11 @@ export const accountRefillAPI = {
     return data
   },
   async get(groupID?: number) { return (await apiClient.get<RefillView>('/admin/accounts/refill', { params: groupID ? { group_id: groupID } : {} })).data },
-  async save(config: RefillConfig, api_token: string, revision: number, wecom_webhook = '') {
-    return (await apiClient.put<RefillView>('/admin/accounts/refill', { config, api_token, revision, wecom_webhook }, { params: { group_id: config.group_id }, timeout: 100000 })).data
+  async save(config: RefillConfig, api_token: string, revision: number, wecom_webhook = '', qq_client_secret = '') {
+    return (await apiClient.put<RefillView>('/admin/accounts/refill', { config, api_token, revision, wecom_webhook, ...(qq_client_secret ? { qq_client_secret } : {}) }, { params: { group_id: config.group_id }, timeout: 100000 })).data
+  },
+  async testNotification(groupID: number, revision: number) {
+    return (await apiClient.post<RefillView>('/admin/accounts/refill/notifications/test', { revision }, { params: { group_id: groupID }, timeout: 20000 })).data
   },
   async check(groupID?: number) { return (await apiClient.post<RefillView>('/admin/accounts/refill/check', {}, { params: groupID ? { group_id: groupID } : {}, timeout: 100000 })).data },
   async manual(request: ManualRefillRequest) { return (await apiClient.post<RefillView>('/admin/accounts/refill/manual', request, { params: request.group_id ? { group_id: request.group_id } : {}, timeout: 100000 })).data },

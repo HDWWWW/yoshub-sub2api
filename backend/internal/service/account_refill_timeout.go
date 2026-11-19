@@ -140,7 +140,7 @@ func captureRefillTimeoutNotice(state *accountRefillState, now time.Time) *refil
 // Persist the cycle and retry deadline before sending. A failed alert must not
 // block purchasing or flood the robot on every worker tick.
 func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, state *accountRefillState, notice *refillTimeoutNotice, started time.Time, persist func() error) error {
-	if !refillTimeoutNotifyEnabled(state.Config) || state.EncryptedWebhook == "" {
+	if !refillTimeoutNotifyEnabled(state.Config) || !refillNotificationConfigured(state) {
 		return nil
 	}
 	now := time.Now()
@@ -174,12 +174,17 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 			return nil
 		}
 		state.TimeoutNoticeRetryAt = now.Add(5 * time.Minute)
+		if state.Config.Notifications.Channel == "qq" {
+			state.TimeoutNoticeRetryAt = time.Time{}
+		}
 		if err := persist(); err != nil {
 			return err
 		}
 		sent := s.sendRefillNotification(ctx, state, state.TimeoutNoticeContent)
-		if sent {
+		if sent || state.NotificationStatus.NoRetry {
 			state.TimeoutNoticeRetryAt = time.Time{}
+		} else {
+			state.TimeoutNoticeRetryAt = now.Add(5 * time.Minute)
 		}
 		if err := persist(); err != nil || !sent {
 			return err
@@ -228,14 +233,19 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 	}
 	slices.Sort(ids)
 	state.TimeoutNoticeKey, state.TimeoutNoticeRetryAt = strings.Join(ids, ":"), now.Add(5*time.Minute)
+	if state.Config.Notifications.Channel == "qq" {
+		state.TimeoutNoticeRetryAt = time.Time{}
+	}
 	content := fmt.Sprintf("Sub2API 补号超时重试提醒\n监测分组：#%d\n健康储备：%d 个\n超时阈值：%d 分钟\n%s\n处理：超时订单不再阻塞自动补号，也不占补号缺口和在途名额，无需等待原单处理。\n处理结果：%s\n旧单仍会核对，可能后续交付并计费。\n时间：%s",
 		state.Config.GroupID, notice.ready, int(refillTimeoutRetryDuration(state.Config)/time.Minute), strings.Join(details, "\n"), result, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
 	state.TimeoutNoticeContent = content
 	if err := persist(); err != nil {
 		return err
 	}
-	if s.sendRefillNotification(ctx, state, content) {
+	if s.sendRefillNotification(ctx, state, content) || state.NotificationStatus.NoRetry {
 		state.TimeoutNoticeRetryAt = time.Time{}
+	} else {
+		state.TimeoutNoticeRetryAt = now.Add(5 * time.Minute)
 	}
 	return persist()
 }

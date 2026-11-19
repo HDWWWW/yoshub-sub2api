@@ -512,7 +512,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			LoweredTools:  loweredTools,
 		})
 	}
-	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+	if account.Platform != PlatformGrok && isOpenAIResponsesLiteRequest(c, payload) {
 		liteBody, liteChanged, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {
 			return nil, fmt.Errorf("normalize responses Lite payload: %w", liteErr)
@@ -535,7 +535,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+		if account.Platform != PlatformGrok && isOpenAIResponsesLiteRequest(c, payload) {
 			upstreamReq.Header.Set(responsesLiteHeader, "true")
 		}
 		if err := applyMappedGPT55LiteCompatibility(upstreamReq, account, requestBody); err != nil {
