@@ -159,8 +159,21 @@
           </div>
           <div v-show="activeTab === 'notifications'" class="space-y-5">
             <p class="text-sm leading-6 text-gray-500">{{ t('accountRefill.notificationsHint') }}</p>
-            <label class="block"><span class="input-label">{{ t('accountRefill.wecomWebhook') }} <span v-if="view.webhook_configured" class="text-green-600">{{ t('accountRefill.configured') }}</span></span><input v-model="webhook" type="password" autocomplete="new-password" class="input" data-testid="refill-webhook" :placeholder="t('accountRefill.webhookPlaceholder')" /></label>
-            <p class="input-hint">{{ t('accountRefill.webhookHint') }}</p>
+            <label class="block"><span class="input-label">{{ t('accountRefill.notificationChannel') }}</span><select v-model="form.notifications.channel" class="input" data-testid="refill-notification-channel"><option value="wecom">{{ t('accountRefill.wecomChannel') }}</option><option value="qq">{{ t('accountRefill.qqChannel') }}</option></select></label>
+            <template v-if="form.notifications.channel === 'qq'">
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label><span class="input-label">AppID</span><input v-model="form.notifications.qq_app_id" class="input" inputmode="numeric" maxlength="32" autocomplete="off" data-testid="refill-qq-app-id" /></label>
+                <label><span class="input-label">ClientSecret <span v-if="view.qq_secret_configured" class="text-green-600">{{ t('accountRefill.configured') }}</span></span><input v-model="qqSecret" type="password" autocomplete="new-password" maxlength="256" class="input" data-testid="refill-qq-secret" /></label>
+                <label><span class="input-label">{{ t('accountRefill.qqTarget') }}</span><select v-model="form.notifications.qq_target_type" class="input" data-testid="refill-qq-target-type"><option value="group">{{ t('accountRefill.qqGroup') }}</option><option value="c2c">{{ t('accountRefill.qqPrivate') }}</option></select></label>
+                <label><span class="input-label">{{ t(form.notifications.qq_target_type === 'c2c' ? 'accountRefill.qqUserOpenID' : 'accountRefill.qqGroupOpenID') }}</span><input v-model="form.notifications.qq_target_openid" class="input" maxlength="128" autocomplete="off" data-testid="refill-qq-openid" /></label>
+              </div>
+              <p class="input-hint">{{ t('accountRefill.qqSecretHint') }}</p>
+              <p class="input-hint">{{ t('accountRefill.qqOpenIDHint') }}</p>
+            </template>
+            <template v-else>
+              <label class="block"><span class="input-label">{{ t('accountRefill.wecomWebhook') }} <span v-if="view.webhook_configured" class="text-green-600">{{ t('accountRefill.configured') }}</span></span><input v-model="webhook" type="password" autocomplete="new-password" class="input" data-testid="refill-webhook" :placeholder="t('accountRefill.webhookPlaceholder')" /></label>
+              <p class="input-hint">{{ t('accountRefill.webhookHint') }}</p>
+            </template>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.refill_started" type="checkbox" data-testid="refill-notify-start" />{{ t('accountRefill.notifyStarted') }}</label>
             <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('accountRefill.notifyStartedHint') }}</p>
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.refill_needed" type="checkbox" data-testid="refill-notify-needed" />{{ t('accountRefill.notifyNeeded') }}</label>
@@ -168,6 +181,7 @@
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.low_balance" type="checkbox" data-testid="refill-notify-balance" />{{ t('accountRefill.notifyLowBalance') }}</label>
             <label class="block"><span class="input-label">{{ t('accountRefill.lowBalanceThreshold') }}</span><input v-model.number="form.notifications.low_balance_threshold" type="number" min="0" max="10000000" step="0.01" class="input" data-testid="refill-balance-threshold" /></label>
             <p class="input-hint">{{ t('accountRefill.lowBalanceHint') }}</p>
+            <button v-admin-write type="button" class="btn btn-secondary" data-testid="refill-notification-test" :disabled="busy || dirty || conflict || !(form.notifications.channel === 'qq' ? view.qq_secret_configured : view.webhook_configured)" @click="testNotification">{{ t('accountRefill.testNotification') }}</button>
             <div v-if="view.notification_status?.at" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" role="status"><p>{{ view.notification_status.message }}</p><p class="mt-1 text-xs text-gray-500">{{ date(view.notification_status.at) }}</p></div>
           </div>
         </fieldset>
@@ -350,6 +364,7 @@ const jobsPage = ref(1)
 const pagedJobs = computed(() => view.value?.jobs.slice((jobsPage.value - 1) * jobsPageSize, jobsPage.value * jobsPageSize) || [])
 const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
 const webhook = ref('')
+const qqSecret = ref('')
 const fenduduToken = ref(''), fenduduConnectionID = ref('')
 const reconcileIDs = ref<Record<string, string>>({})
 const isFendudu = computed(() => activeTab.value === 'fendudu')
@@ -360,7 +375,7 @@ const manualProviderName = computed(() => t(isFendudu.value ? 'accountRefill.fen
 const manualRequests = ref<ManualRefillRequest[]>([])
 const manualPending = computed(() => manualRequests.value.find(request => request.group_id === selectedGroup.value && (request.provider === 'fendudu') === isFendudu.value))
 const otherProviderPending = computed(() => manualRequests.value.some(request => request.group_id === selectedGroup.value && (request.provider === 'fendudu') !== isFendudu.value))
-const manualPlans = ref({ primary: 'pro5x', fendudu: 'pro5x' })
+const manualPlans = ref({ primary: 'pro20x', fendudu: 'pro20x' })
 const manualPlan = computed({
   get: () => manualPending.value?.plan || manualPlans.value[isFendudu.value ? 'fendudu' : 'primary'],
   set: value => { manualPlans.value[isFendudu.value ? 'fendudu' : 'primary'] = value }
@@ -375,7 +390,7 @@ let timer: ReturnType<typeof setInterval> | undefined
 const openAIGroups = computed(() => groups.value.filter(g => g.platform === 'openai' && g.status === 'active'))
 const ruleGroups = computed(() => groups.value.filter(g => g.platform === 'openai'))
 const rotationPreview = computed(() => form.value?.rotation?.map(step => `${step.plan === 'pro20x' ? 'Pro20x' : 'Pro5x'} × ${step.count}`).join(' → '))
-const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || webhook.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
+const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || webhook.value !== '' || qqSecret.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
 const walletItems = computed(() => [{ key: 'balance', value: view.value?.wallet?.balance }, { key: 'held', value: view.value?.wallet?.held }, { key: 'available', value: view.value?.wallet?.available ?? view.value?.catalog?.available }])
 const usageItems = computed(() => {
   const v = view.value
@@ -460,6 +475,8 @@ function accept(data: RefillView, reset: boolean) {
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}
   data.config.notifications.refill_needed ??= false
+  data.config.notifications.channel ||= 'wecom'
+  data.config.notifications.qq_target_type ||= 'group'
   data.config.plan_import_concurrency ??= {}
   for (const plan of ['pro5x', 'pro20x']) data.config.plan_import_concurrency[plan] ??= data.config.import_concurrency
   if (!reset && data.revision < revision) return
@@ -544,9 +561,18 @@ async function save() {
   try {
     const config = JSON.parse(JSON.stringify(form.value)) as RefillConfig
     config.delivery.model_mapping = parsed as Record<string, string>
-    const data = await accountRefillAPI.save(config, token.value, revision, webhook.value)
-    token.value = ''; webhook.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
+    const data = qqSecret.value
+      ? await accountRefillAPI.save(config, token.value, revision, webhook.value, qqSecret.value)
+      : await accountRefillAPI.save(config, token.value, revision, webhook.value)
+    token.value = ''; webhook.value = ''; qqSecret.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
   } catch (e) { error.value = message(e) }
+  finally { busy.value = false }
+}
+async function testNotification() {
+  if (busy.value || dirty.value || conflict.value || !view.value) return
+  busy.value = true; error.value = ''
+  try { accept(await accountRefillAPI.testNotification(selectedGroup.value, revision), true) }
+  catch (e) { error.value = message(e) }
   finally { busy.value = false }
 }
 async function saveFendudu() {
@@ -625,7 +651,7 @@ watch(() => props.show, async show => {
   const current = ++generation
   if (timer) clearInterval(timer)
   token.value = ''; fenduduToken.value = ''; fenduduConnectionID.value = ''; reconcileIDs.value = {}
-  webhook.value = ''
+  webhook.value = ''; qqSecret.value = ''
   downloadStepUp.onCancel()
   if (!show) return
   loading.value = true; error.value = ''; form.value = null; view.value = null; activeTab.value = props.initialTab || 'connection'
@@ -645,5 +671,5 @@ watch(() => props.show, async show => {
   finally { if (current === generation) loading.value = false }
   if (current === generation) timer = setInterval(() => { now.value = Date.now(); void refresh(false) }, 15000)
 }, { immediate: true })
-onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; fenduduToken.value = ''; webhook.value = ''; if (timer) clearInterval(timer) })
+onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; fenduduToken.value = ''; webhook.value = ''; qqSecret.value = ''; if (timer) clearInterval(timer) })
 </script>

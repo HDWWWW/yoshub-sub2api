@@ -43,6 +43,7 @@ type AccountRefillService struct {
 	ruleGroupID   int64
 	ruleServices  map[int64]*AccountRefillService
 	notifier      refillNotifier
+	qqNotifier    *qqRefillNotifier
 	capacityMu    sync.Mutex
 	capacity      refillCapacityTracker
 	store         AccountRefillStore
@@ -131,6 +132,7 @@ type AccountRefillView struct {
 	RotationCursor            int                                         `json:"rotation_cursor"`
 	NextPlan                  string                                      `json:"next_plan"`
 	WebhookConfigured         bool                                        `json:"webhook_configured"`
+	QQSecretConfigured        bool                                        `json:"qq_secret_configured"`
 	NotificationStatus        AccountRefillNotificationStatus             `json:"notification_status"`
 	LeaseSyncAt               *time.Time                                  `json:"lease_sync_at"`
 	LeaseSyncMessage          string                                      `json:"lease_sync_message"`
@@ -186,7 +188,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	if err != nil {
 		return nil, err
 	}
-	return &AccountRefillView{DailyScheduleStatuses: state.DailyScheduleStatuses, Fendudu: state.Fendudu.view(), DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
+	return &AccountRefillView{DailyScheduleStatuses: state.DailyScheduleStatuses, Fendudu: state.Fendudu.view(), DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", QQSecretConfigured: state.EncryptedQQSecret != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state), WorkdayCalendar: state.WorkdayCalendar.view(),
@@ -212,6 +214,14 @@ func (s *AccountRefillService) validateGroups(ctx context.Context, c AccountRefi
 	return nil
 }
 func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillConfig, token string, revision int64, webhooks ...string) error {
+	secrets := AccountRefillNotificationSecrets{}
+	if len(webhooks) > 0 {
+		secrets.WeComWebhook = webhooks[0]
+	}
+	return s.ConfigureWithNotificationSecrets(ctx, c, token, revision, secrets)
+}
+
+func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Context, c AccountRefillConfig, token string, revision int64, secrets AccountRefillNotificationSecrets) error {
 	defer s.wakeRefillCalendar()
 	if s.ruleGroupID > 0 && c.GroupID != s.ruleGroupID {
 		return errors.New("规则与当前分组不匹配，请重新选择分组")
@@ -219,9 +229,12 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	webhook := ""
-	if len(webhooks) > 0 {
-		webhook = strings.TrimSpace(webhooks[0])
+	webhook := strings.TrimSpace(secrets.WeComWebhook)
+	qqSecret := strings.TrimSpace(secrets.QQClientSecret)
+	if qqSecret != "" {
+		if err := validateRefillQQSecret(qqSecret); err != nil {
+			return err
+		}
 	}
 	if webhook != "" {
 		if err := validateRefillWebhook(webhook); err != nil {
@@ -285,15 +298,27 @@ func (s *AccountRefillService) Configure(ctx context.Context, c AccountRefillCon
 			}
 			state.EncryptedWebhook = cipher
 		}
-		if (c.Notifications.RefillStarted || c.Notifications.RefillNeeded || c.Notifications.LowBalance) && state.EncryptedWebhook == "" {
+		if qqSecret != "" {
+			cipher, err := s.encryptor.Encrypt(qqSecret)
+			if err != nil {
+				return errors.New("QQ 密钥加密失败")
+			}
+			state.EncryptedQQSecret = cipher
+		} else if c.Notifications.QQAppID != state.Config.Notifications.QQAppID {
+			state.EncryptedQQSecret = ""
+		}
+		if c.Notifications.Channel == "qq" && state.EncryptedQQSecret == "" {
+			return errors.New("请先填写 QQ ClientSecret，更换 AppID 时须重新填写")
+		}
+		if c.Notifications.Channel != "qq" && (c.Notifications.RefillStarted || c.Notifications.RefillNeeded || c.Notifications.LowBalance) && state.EncryptedWebhook == "" {
 			return errors.New("启用通知前请配置企业微信群机器人 Webhook")
 		}
-		if webhook != "" || c.Notifications != state.Config.Notifications {
+		if webhook != "" || qqSecret != "" || c.Notifications != state.Config.Notifications {
 			state.LowBalanceAlerted = false
 			state.LowBalanceRequired = 0
 			state.NextBalanceCheckAt = time.Time{}
 		}
-		if c.Enabled != state.Config.Enabled || c.Notifications.RefillNeeded != state.Config.Notifications.RefillNeeded || c.Mode != state.Config.Mode {
+		if c.Enabled != state.Config.Enabled || c.Notifications != state.Config.Notifications || qqSecret != "" || c.Mode != state.Config.Mode {
 			state.RefillNeededAlerted = false
 			state.RefillNeededRetryAt = time.Time{}
 			state.NextNeededIntervalAt = time.Time{}
@@ -505,7 +530,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				return err
 			}
 			// Evaluate locally so supplier backoff cannot hide a due timeout.
-			if state.EncryptedWebhook != "" && refillTimeoutNotifyEnabled(state.Config) && captureRefillTimeoutNotice(&state, now) != nil {
+			if refillNotificationConfigured(&state) && refillTimeoutNotifyEnabled(state.Config) && captureRefillTimeoutNotice(&state, now) != nil {
 				if err := s.evaluate(ctx, &state, now); err == nil {
 					timeoutNotice = captureRefillTimeoutNotice(&state, now)
 				}

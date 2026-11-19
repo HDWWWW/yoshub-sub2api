@@ -15,6 +15,10 @@ import (
 )
 
 type AccountRefillNotificationConfig struct {
+	Channel             string  `json:"channel,omitempty"`
+	QQAppID             string  `json:"qq_app_id,omitempty"`
+	QQTargetType        string  `json:"qq_target_type,omitempty"`
+	QQTargetOpenID      string  `json:"qq_target_openid,omitempty"`
 	RefillStarted       bool    `json:"refill_started"`
 	RefillNeeded        bool    `json:"refill_needed"`
 	LowBalance          bool    `json:"low_balance"`
@@ -23,6 +27,14 @@ type AccountRefillNotificationConfig struct {
 type AccountRefillNotificationStatus struct {
 	At      *time.Time `json:"at"`
 	Message string     `json:"message"`
+	NoRetry bool       `json:"no_retry,omitempty"`
+}
+
+func refillNotificationConfigured(state *accountRefillState) bool {
+	if state.Config.Notifications.Channel == "qq" {
+		return state.EncryptedQQSecret != "" && state.Config.Notifications.QQAppID != "" && state.Config.Notifications.QQTargetOpenID != ""
+	}
+	return state.EncryptedWebhook != ""
 }
 
 // This local monitor never reserves budget or advances purchase/rotation state.
@@ -30,7 +42,7 @@ type AccountRefillNotificationStatus struct {
 // pool shortage while automatic purchases are disabled.
 func (s *AccountRefillService) checkDisabledRefillNotification(ctx context.Context, state *accountRefillState, now time.Time, persist func() error) error {
 	c := state.Config
-	if c.Enabled || !c.MonitorEnabled || !c.Notifications.RefillNeeded || state.EncryptedWebhook == "" || now.Before(state.NextNeededCheckAt) {
+	if c.Enabled || !c.MonitorEnabled || !c.Notifications.RefillNeeded || !refillNotificationConfigured(state) || now.Before(state.NextNeededCheckAt) {
 		return nil
 	}
 	state.NextNeededCheckAt = now.Add(time.Duration(max(accountRefillMinIntervalSeconds, c.CheckSeconds)) * time.Second)
@@ -98,8 +110,13 @@ func (s *AccountRefillService) checkDisabledRefillNotification(ctx context.Conte
 	}
 	state.RefillNeededAlerted = true
 	state.RefillNeededRetryAt = now.Add(5 * time.Minute)
-	// Persist a retry deadline before sending. Failed or interrupted attempts
-	// can retry after a restart, but never on every monitor tick.
+	if c.Notifications.Channel == "qq" {
+		// Persist an at-most-once attempt before QQ I/O; only a confirmed
+		// retryable failure below may arm a new delivery after interruption.
+		state.RefillNeededRetryAt = time.Time{}
+	}
+	// WeCom keeps its bounded retry deadline; QQ only rearms a retry after
+	// an explicit retryable result, never after an interrupted send.
 	if err := persist(); err != nil {
 		return err
 	}
@@ -108,7 +125,7 @@ func (s *AccountRefillService) checkDisabledRefillNotification(ctx context.Conte
 		groupLabel = fmt.Sprintf("%s (#%d)", group.Name, c.GroupID)
 	}
 	content := fmt.Sprintf("Sub2API 补号需求提醒\n已触发自动补号规则，但自动补号已关闭，未自动补号。\n监测分组：%s\n触发原因：%s\n规则详情：%s\n当前待补：%d 个\n下次套餐：%s\n请按需手动补号或开启自动补号。\n时间：%s", groupLabel, e.Reason, accountRefillReasonDetail(c, e), e.Needed, nextRefillPurchasePlan(state), now.In(refillTimezone).Format("2006-01-02 15:04:05"))
-	if s.sendRefillNotification(ctx, state, content) {
+	if s.sendRefillNotification(ctx, state, content) || state.NotificationStatus.NoRetry {
 		state.RefillNeededRetryAt = time.Time{}
 		if c.Mode == "interval" {
 			// A delayed successful retry starts a fresh notification interval.
@@ -116,6 +133,7 @@ func (s *AccountRefillService) checkDisabledRefillNotification(ctx context.Conte
 			state.NextNeededIntervalAt = now.Add(time.Duration(c.IntervalMinutes) * time.Minute)
 		}
 	} else {
+		state.RefillNeededRetryAt = now.Add(5 * time.Minute)
 		state.NotificationStatus.Message = strings.TrimSuffix(state.NotificationStatus.Message, "；补号继续处理") + "；自动补号已关闭，未下单；补号需求仍存在时至少 5 分钟后重试"
 	}
 	return persist()
@@ -171,7 +189,32 @@ func (n weComRefillNotifier) Send(ctx context.Context, webhook, content string) 
 }
 func (s *AccountRefillService) sendRefillNotification(ctx context.Context, state *accountRefillState, content string) bool {
 	now := time.Now()
-	state.NotificationStatus.At = &now
+	state.NotificationStatus = AccountRefillNotificationStatus{At: &now}
+	if state.Config.Notifications.Channel == "qq" {
+		secret, err := s.encryptor.Decrypt(state.EncryptedQQSecret)
+		if err != nil {
+			state.NotificationStatus.Message = "QQ 密钥解密失败，请重新保存"
+			state.NotificationStatus.NoRetry = true
+			return false
+		}
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		root := s.rootService()
+		root.rulesMu.Lock()
+		if root.qqNotifier == nil {
+			root.qqNotifier = &qqRefillNotifier{}
+		}
+		notifier := root.qqNotifier
+		root.rulesMu.Unlock()
+		if err := notifier.Send(ctx, state.Config.Notifications, secret, content); err != nil {
+			state.NotificationStatus.Message = err.Error() + "；补号继续处理"
+			var deliveryErr *qqRefillDeliveryError
+			state.NotificationStatus.NoRetry = errors.As(err, &deliveryErr) && !deliveryErr.retryable
+			return false
+		}
+		state.NotificationStatus.Message = "QQ 已确认接收通知"
+		return true
+	}
 	webhook, err := s.encryptor.Decrypt(state.EncryptedWebhook)
 	if err != nil {
 		state.NotificationStatus.Message = "机器人地址解密失败，请重新保存"
@@ -192,7 +235,7 @@ func (s *AccountRefillService) sendRefillNotification(ctx context.Context, state
 	return false
 }
 func (s *AccountRefillService) notifyRefillStarted(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
-	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" || j.StartedNotificationAt != nil || j.Attempts > 0 || j.SupplierID != "" {
+	if !state.Config.Notifications.RefillStarted || !refillNotificationConfigured(state) || j.StartedNotificationAt != nil || j.Attempts > 0 || j.SupplierID != "" {
 		return nil
 	}
 	now := time.Now()
@@ -208,7 +251,7 @@ func (s *AccountRefillService) notifyRefillStarted(ctx context.Context, state *a
 }
 func (s *AccountRefillService) notifyRefillBalance(ctx context.Context, state *accountRefillState, balance, required float64, persist func() error) error {
 	c := state.Config.Notifications
-	if !c.LowBalance || state.EncryptedWebhook == "" || math.IsNaN(balance) || math.IsInf(balance, 0) {
+	if !c.LowBalance || !refillNotificationConfigured(state) || math.IsNaN(balance) || math.IsInf(balance, 0) {
 		return nil
 	}
 	state.LowBalanceRequired = math.Max(state.LowBalanceRequired, required)
@@ -234,7 +277,7 @@ func (s *AccountRefillService) notifyRefillBalance(ctx context.Context, state *a
 // WeCom, whose API has no idempotency key.
 func (s *AccountRefillService) notifyRefillFailed(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
 	fenduduRejected := j.Provider == refillProviderFendudu && j.SupplierStatus == "rejected"
-	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
+	if !state.Config.Notifications.RefillStarted || !refillNotificationConfigured(state) ||
 		j.FailedNotificationAt != nil || j.Status != "failed" ||
 		(!fenduduRejected && ((j.SupplierStatus != "failed" && (j.Provider != refillProviderFendudu || j.SupplierStatus != "order_stopped")) || j.SupplierID == "")) {
 		return nil
@@ -283,7 +326,7 @@ func refillNotificationMode(j *AccountRefillJob) string {
 }
 
 func (s *AccountRefillService) notifyRefillImported(ctx context.Context, state *accountRefillState, j *AccountRefillJob, persist func() error) error {
-	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" ||
+	if !state.Config.Notifications.RefillStarted || !refillNotificationConfigured(state) ||
 		j.Status != "imported" || j.AccountID == 0 || j.ImportedNotificationAt != nil {
 		return nil
 	}
@@ -303,7 +346,7 @@ func (s *AccountRefillService) notifyRefillImported(ctx context.Context, state *
 const refillDeliveryAlertAfter = 5 * time.Minute
 
 func (s *AccountRefillService) notifyRefillDelayed(ctx context.Context, state *accountRefillState, now time.Time, persist func() error) error {
-	if !state.Config.Notifications.RefillStarted || state.EncryptedWebhook == "" {
+	if !state.Config.Notifications.RefillStarted || !refillNotificationConfigured(state) {
 		return nil
 	}
 	for i := range state.Jobs {
@@ -328,7 +371,7 @@ func (s *AccountRefillService) notifyRefillDelayed(ctx context.Context, state *a
 
 // Notification monitoring works independently of automatic purchases.
 func (s *AccountRefillService) checkRefillNotificationBalance(ctx context.Context, token string, state *accountRefillState, now time.Time, persist func() error) error {
-	if !state.Config.Notifications.LowBalance || state.EncryptedWebhook == "" || token == "" || now.Before(state.NextBalanceCheckAt) {
+	if !state.Config.Notifications.LowBalance || !refillNotificationConfigured(state) || token == "" || now.Before(state.NextBalanceCheckAt) {
 		return nil
 	}
 	state.NextBalanceCheckAt = now.Add(time.Minute)

@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 type openAIResponsesLiteValidationError struct {
@@ -276,4 +280,25 @@ func normalizeOpenAIResponsesLitePayloadForAccount(body []byte, account *Account
 		return normalizeOpenAIResponsesLiteToolsPayload(body)
 	}
 	return normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
+}
+
+// WS upstreams receive Lite's request-scoped header through client_metadata.
+// Project an ingress handshake marker onto every turn without retaining a
+// previous frame's marker when the handshake did not enable Lite.
+func normalizeOpenAIResponsesLiteWebSocketRequest(c *gin.Context, body []byte, account *Account) ([]byte, bool, error) {
+	if account == nil || !account.IsOpenAI() || !isOpenAIResponsesLiteRequest(c, body) {
+		return body, false, nil
+	}
+	normalized, changed, err := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
+	if err != nil || isOpenAIResponsesLiteWebSocketPayload(normalized) {
+		return normalized, changed, err
+	}
+	if metadata := gjson.GetBytes(normalized, "client_metadata"); metadata.Exists() && metadata.Type != gjson.Null && !metadata.IsObject() {
+		return body, false, newOpenAIResponsesLiteValidationError("client_metadata", "responses Lite requires client_metadata to be an object")
+	}
+	normalized, err = sjson.SetBytes(normalized, "client_metadata."+responsesLiteWSMetadataKey, "true")
+	if err != nil {
+		return body, false, fmt.Errorf("project responses Lite handshake header: %w", err)
+	}
+	return normalized, true, nil
 }

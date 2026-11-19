@@ -712,8 +712,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			cancelClient()
 		}
 	}
-	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
-		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(firstClientMessage, account)
+	if isOpenAIResponsesLiteRequest(c, firstClientMessage) {
+		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLiteWebSocketRequest(c, firstClientMessage, account)
 		if liteErr != nil {
 			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
 		}
@@ -1050,7 +1050,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					}
 				}()
 			}
-			responsesLite := isResponseCreate && isOpenAIResponsesLiteWebSocketPayload(payload)
+			responsesLite := isResponseCreate && isOpenAIResponsesLiteRequest(c, payload)
 			if isResponseCreate {
 				if normalized, compatibilityChanged, normalizeErr := normalizeOpenAIResponsesWebSocketCompatibilityBodyWithConfig(s.cfg, payload, account, responsesLite); normalizeErr != nil {
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", normalizeErr)
@@ -1079,7 +1079,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			}
 			if isResponseCreate {
 				if responsesLite {
-					litePayload, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(payload, account)
+					litePayload, _, liteErr := normalizeOpenAIResponsesLiteWebSocketRequest(c, payload, account)
 					if liteErr != nil {
 						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, liteErr.Error(), liteErr)
 					}
