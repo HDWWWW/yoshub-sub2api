@@ -1,19 +1,19 @@
 {
-  "version": "0.2.23-yoshub.48",
+  "version": "0.2.23-yoshub.49",
   "platform": "linux/amd64",
-  "build_revision": "c4491716625c8057deed550d8c1363d9311a0e38",
-  "source_tag": "v0.2.23-yoshub.48",
-  "image": "ghcr.io/hdwwww/yoshub-sub2api:v0.2.23-yoshub.48",
-  "manifest_digest": "sha256:cefa640cae83873d4bc3285f6a4770ab53d27c39b26990e4fdb840e6a9037502",
+  "build_revision": "6c2c970d7330d68f8c291f38762d688a3a9391ad",
+  "source_tag": "v0.2.23-yoshub.49",
+  "image": "ghcr.io/hdwwww/yoshub-sub2api:v0.2.23-yoshub.49",
+  "manifest_digest": "sha256:5d543a62087240b83124becae7c19dc5c965457d621b0d9f2099d580ae7f1af8",
   "archive": {
-    "name": "sub2api-v0.2.23-yoshub.48-linux-amd64.tar.gz",
-    "size": 51399895,
-    "sha256": "2fb24ac719f7da30b23b16e34de42c63c42d7dbb22bff4970f5681e4d2598775"
+    "name": "sub2api-v0.2.23-yoshub.49-linux-amd64.tar.gz",
+    "size": 51420392,
+    "sha256": "fc700a857819509ba56761f8a8a0330347abd860c26434168c1ef50f508ee75a"
   },
   "hot_update": {
-    "name": "sub2api_0.2.23-yoshub.48_linux_amd64.tar.gz",
-    "size": 44366826,
-    "sha256": "36fe406f71fb5883cf7e3d95d196dd75527373094848c1c5ab08a44637bf6017"
+    "name": "sub2api_0.2.23-yoshub.49_linux_amd64.tar.gz",
+    "size": 44377722,
+    "sha256": "03f708d14b6af9e7afdf79bee635f3af7a9485bf1d445db8f3cd712d2996136c"
   },
-  "application_sha256": "cd60eb8c8103ae54b3ecf73fbd1580e54545c92a9c60b7d333dcf167a14b25b8"
+  "application_sha256": "ca9fda2b8840f7a4b9c3d722130e5a0d3bff7fe2ae4b78694208015416d60f80"
 }
