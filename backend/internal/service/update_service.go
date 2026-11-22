@@ -56,6 +56,7 @@ type GitHubReleaseClient interface {
 
 // UpdateService handles software updates
 type UpdateService struct {
+	upstreamNotice upstreamReleaseCache
 	platform       string // GOOS_GOARCH of this installation
 	cache          UpdateCache
 	githubClient   GitHubReleaseClient

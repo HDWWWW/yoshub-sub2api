@@ -19,6 +19,12 @@ export default {
 
   // Version Badge
   version: {
+    upstreamTitle: 'Original Sub2API',
+    upstreamChecking: 'Checking the upstream release…',
+    upstreamAvailable: 'Upstream update available: {version}',
+    upstreamCurrent: 'Up to date with upstream (latest {version})',
+    upstreamUnavailable: 'Upstream version unavailable',
+    upstreamBase: 'This build is based on {version}',
     updateSource: 'Update source: YosHub',
     checkFailed: 'Unable to check for updates',
     noBinary: 'This release has no in-place update package for this platform. See the release for installation options.',

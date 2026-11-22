@@ -22,6 +22,7 @@ type systemHandlerUpdateServiceStub struct {
 	updateInfo            *service.UpdateInfo
 	checkErr              error
 	checkForces           []bool
+	upstreamForces        []bool
 	performCall           int
 	performCtxErr         error
 	performHasDeadline    bool
@@ -39,6 +40,11 @@ type systemHandlerUpdateServiceStub struct {
 func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bool) (*service.UpdateInfo, error) {
 	s.checkForces = append(s.checkForces, force)
 	return s.updateInfo, s.checkErr
+}
+
+func (s *systemHandlerUpdateServiceStub) CheckUpstreamRelease(_ context.Context, force bool) service.UpstreamReleaseNotice {
+	s.upstreamForces = append(s.upstreamForces, force)
+	return service.UpstreamReleaseNotice{Status: "available", BaseVersion: "v0.2.24", LatestVersion: "v0.2.25"}
 }
 
 func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) error {
@@ -98,6 +104,7 @@ func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServ
 	handler := NewSystemHandler(updateSvc, lockSvc)
 
 	router := gin.New()
+	router.GET("/api/v1/admin/system/upstream-release", handler.CheckUpstreamRelease)
 	router.POST("/api/v1/admin/system/update", handler.PerformUpdate)
 	router.POST("/api/v1/admin/system/rollback", handler.Rollback)
 	router.GET("/api/v1/admin/system/rollback-versions", handler.GetRollbackVersions)
@@ -321,4 +328,28 @@ func TestSystemHandlerGetRollbackVersionsError(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestUpstreamNoticeIsReadOnly(t *testing.T) {
+	svc := &systemHandlerUpdateServiceStub{}
+	router := newSystemHandlerTestRouter(t, svc, &memoryIdempotencyRepoStub{})
+	const path = "/api/v1/admin/system/upstream-release"
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(method, path+"?force=true", nil))
+		if method == http.MethodGet {
+			require.Equal(t, http.StatusOK, w.Code)
+			var resp struct {
+				Data json.RawMessage `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			require.JSONEq(t, `{"base_version":"v0.2.24","latest_version":"v0.2.25","status":"available"}`, string(resp.Data))
+		} else {
+			require.Equal(t, http.StatusNotFound, w.Code)
+		}
+	}
+	require.Equal(t, []bool{true}, svc.upstreamForces)
+	require.Empty(t, svc.checkForces)
+	require.Zero(t, svc.performCall)
+	require.Zero(t, svc.rollbackCall)
 }

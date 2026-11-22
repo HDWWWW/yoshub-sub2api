@@ -31,7 +31,7 @@
         <div
           v-if="dropdownOpen"
           ref="dropdownRef"
-          class="absolute left-0 z-50 mt-2 overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
+          class="absolute left-0 z-50 mt-2 max-h-[calc(100dvh-5rem)] overflow-y-auto whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
           :class="rollbackPanelOpen && isReleaseBuild ? 'w-80' : 'w-64'"
         >
           <!-- Header with refresh button -->
@@ -636,6 +636,19 @@
               </div>
             </template>
           </div>
+
+          <section
+            class="border-t border-gray-100 px-4 py-3 text-xs dark:border-dark-700"
+            :aria-label="t('version.upstreamTitle')"
+          >
+            <h3 class="font-semibold text-gray-700 dark:text-dark-200">{{ t('version.upstreamTitle') }}</h3>
+            <p class="mt-1" aria-live="polite" :class="upstreamNotice?.status === 'available' ? 'text-amber-700 dark:text-amber-400' : 'text-gray-600 dark:text-dark-300'">
+              {{ upstreamStatusText }}
+            </p>
+            <p v-if="upstreamNotice?.base_version" class="mt-1 text-gray-500 dark:text-dark-400">
+              {{ t('version.upstreamBase', { version: upstreamNotice.base_version }) }}
+            </p>
+          </section>
         </div>
       </transition>
     </template>
@@ -652,6 +665,8 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
+  checkUpstreamRelease,
+  type UpstreamReleaseNotice,
   performUpdate,
   restartService,
   getRollbackVersions,
@@ -755,8 +770,31 @@ const manualUpdateHint = computed(() => {
   return t(appStore.selfUpdateEnabled ? 'version.noBinary' : 'version.manualUpdate')
 })
 
+const upstreamNotice = ref<UpstreamReleaseNotice | null>(null)
+const upstreamLoading = ref(false)
+const upstreamStatusText = computed(() => {
+  if (upstreamLoading.value) return t('version.upstreamChecking')
+  const notice = upstreamNotice.value
+  if (notice?.status === 'available') return t('version.upstreamAvailable', { version: notice.latest_version })
+  if (notice?.status === 'current') return t('version.upstreamCurrent', { version: notice.latest_version })
+  return t('version.upstreamUnavailable')
+})
+
+async function loadUpstreamNotice(force = false) {
+  if (!isAdmin.value || upstreamLoading.value) return
+  upstreamLoading.value = true
+  try {
+    upstreamNotice.value = await checkUpstreamRelease(force)
+  } catch {
+    upstreamNotice.value = null
+  } finally {
+    upstreamLoading.value = false
+  }
+}
+
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
+  if (dropdownOpen.value) void loadUpstreamNotice()
 }
 
 function closeDropdown() {
@@ -772,7 +810,7 @@ async function refreshVersion(force = true) {
   needRestart.value = false
   resetRollbackState()
 
-  await appStore.fetchVersion(force)
+  await Promise.all([appStore.fetchVersion(force), loadUpstreamNotice(force)])
 }
 
 async function handleUpdate() {

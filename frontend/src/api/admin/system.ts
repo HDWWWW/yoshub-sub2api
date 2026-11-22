@@ -42,6 +42,19 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
   return data
 }
 
+export interface UpstreamReleaseNotice {
+  base_version?: string
+  latest_version?: string
+  status: 'current' | 'available' | 'unavailable'
+}
+
+export async function checkUpstreamRelease(force = false): Promise<UpstreamReleaseNotice> {
+  const { data } = await apiClient.get<UpstreamReleaseNotice>('/admin/system/upstream-release', {
+    params: force ? { force: 'true' } : undefined
+  })
+  return data
+}
+
 export interface UpdateResult {
   message: string
   need_restart: boolean
@@ -108,6 +121,7 @@ export async function restartService(): Promise<{ message: string }> {
 export const systemAPI = {
   getVersion,
   checkUpdates,
+  checkUpstreamRelease,
   performUpdate,
   getRollbackVersions,
   rollback,

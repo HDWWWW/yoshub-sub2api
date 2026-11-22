@@ -19,6 +19,12 @@ export default {
 
   // Version Badge
   version: {
+    upstreamTitle: '原版 Sub2API',
+    upstreamChecking: '正在检查原版更新…',
+    upstreamAvailable: '原版有更新：{version}',
+    upstreamCurrent: '已跟上原版（最新 {version}）',
+    upstreamUnavailable: '暂时无法确认原版版本',
+    upstreamBase: '本版基于 {version}',
     updateSource: '更新源：YosHub',
     checkFailed: '暂时无法检查更新',
     noBinary: '这个版本没有适用于当前平台的热更新包，可在发布页查看安装方式。',

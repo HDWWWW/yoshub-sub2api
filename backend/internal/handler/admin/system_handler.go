@@ -45,6 +45,7 @@ func systemUpdateContext(ctx context.Context) (context.Context, context.CancelFu
 }
 
 type systemUpdateService interface {
+	CheckUpstreamRelease(ctx context.Context, force bool) service.UpstreamReleaseNotice
 	CheckUpdate(ctx context.Context, force bool) (*service.UpdateInfo, error)
 	PerformUpdate(ctx context.Context) error
 	Rollback() error
@@ -79,6 +80,11 @@ func (h *SystemHandler) CheckUpdates(c *gin.Context) {
 		return
 	}
 	response.Success(c, info)
+}
+
+// CheckUpstreamRelease reports the original project's latest stable version.
+func (h *SystemHandler) CheckUpstreamRelease(c *gin.Context) {
+	response.Success(c, h.updateSvc.CheckUpstreamRelease(c.Request.Context(), c.Query("force") == "true"))
 }
 
 // PerformUpdate downloads and applies the update
