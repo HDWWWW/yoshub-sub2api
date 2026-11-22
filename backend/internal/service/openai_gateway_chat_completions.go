@@ -253,6 +253,22 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		}
 	}
 
+	if account.IsOpenAI() {
+		outputBody, _, outputErr := normalizeOpenAIResponseOutputFormat(responsesBody)
+		if outputErr != nil {
+			var validation *openAIOutputFormatValidationError
+			if !isResponsesShape && errors.As(outputErr, &validation) {
+				outputErr = &openAIOutputFormatValidationError{
+					param:   strings.Replace(validation.param, "text.format", "response_format.json_schema", 1),
+					message: validation.message,
+				}
+			}
+			writeOpenAIOutputFormatError(c, outputErr)
+			return nil, outputErr
+		}
+		responsesBody = outputBody
+	}
+
 	logFields := []zap.Field{
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),

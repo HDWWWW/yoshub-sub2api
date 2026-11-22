@@ -771,6 +771,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	firstMessageResponsesLite := isOpenAIResponsesLiteWebSocketPayload(firstClientMessage)
 	if normalized, compatibilityChanged, normalizeErr := normalizeOpenAIResponsesWebSocketCompatibilityBodyWithConfig(s.cfg, firstClientMessage, account, firstMessageResponsesLite); normalizeErr != nil {
+		var outputErr *openAIOutputFormatValidationError
+		if errors.As(normalizeErr, &outputErr) {
+			return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, outputErr.Error(), outputErr)
+		}
 		return fmt.Errorf("normalize first websocket response.create: %w", normalizeErr)
 	} else if compatibilityChanged {
 		firstClientMessage = normalized
@@ -1053,6 +1057,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			responsesLite := isResponseCreate && isOpenAIResponsesLiteRequest(c, payload)
 			if isResponseCreate {
 				if normalized, compatibilityChanged, normalizeErr := normalizeOpenAIResponsesWebSocketCompatibilityBodyWithConfig(s.cfg, payload, account, responsesLite); normalizeErr != nil {
+					var outputErr *openAIOutputFormatValidationError
+					if errors.As(normalizeErr, &outputErr) {
+						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, outputErr.Error(), outputErr)
+					}
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", normalizeErr)
 				} else if compatibilityChanged {
 					payload = normalized

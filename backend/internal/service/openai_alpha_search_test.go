@@ -104,6 +104,25 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	require.JSONEq(t, string(body), string(upstream.lastBody))
 }
 
+func TestForwardAlphaSearchOAuthStripsServiceTier(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","service_tier":"priority","commands":{"search_query":[{"q":"news"}]},"future_field":{"service_tier":"keep"}}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", bytes.NewReader(body))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"output":"result"}`)),
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "test-token"}}
+	_, err := svc.ForwardAlphaSearch(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 1)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "service_tier").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(upstream.lastBody, "future_field.service_tier").String())
+	require.Equal(t, "priority", gjson.GetBytes(body, "service_tier").String())
+}
+
 func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{
@@ -637,12 +656,13 @@ func TestOpenAIAlphaSearchSchedulingModelUsesCanonicalAccountMapping(t *testing.
 }
 
 func TestSanitizeOpenAIAlphaSearchBody_RemovesResponsesOnlyFields(t *testing.T) {
-	body := []byte(`{"id":"search-session","store":false,"prompt_cache_key":"cache","commands":{"search_query":[{"q":"news"}]}}`)
+	body := []byte(`{"id":"search-session","store":false,"service_tier":"priority","prompt_cache_key":"cache","commands":{"search_query":[{"q":"news"}]}}`)
 
 	normalized, err := sanitizeOpenAIAlphaSearchBody(body)
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(normalized, "store").Exists())
 	require.False(t, gjson.GetBytes(normalized, "prompt_cache_key").Exists())
+	require.False(t, gjson.GetBytes(normalized, "service_tier").Exists())
 	require.Equal(t, "news", gjson.GetBytes(normalized, "commands.search_query.0.q").String())
 }
 
