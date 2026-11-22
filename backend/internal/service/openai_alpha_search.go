@@ -468,6 +468,7 @@ var openAIAlphaSearchUnsupportedBodyFields = [...]string{
 	"prompt_cache_key",
 	"prompt_cache_retention",
 	"store",
+	"service_tier",
 }
 
 func sanitizeOpenAIAlphaSearchBody(body []byte) ([]byte, error) {

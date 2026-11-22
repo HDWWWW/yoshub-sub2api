@@ -2602,6 +2602,10 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 		return false
 	}
 	if !success && len(observedErr) > 0 {
+		var outputFormatErr *openAIOutputFormatValidationError
+		if errors.As(observedErr[0], &outputFormatErr) {
+			return false
+		}
 		var failover *UpstreamFailoverError
 		if errors.Is(observedErr[0], errExcelBPSProxyUnavailable) || (errors.As(observedErr[0], &failover) && (failover.Reason == ExcelBPSRateLimitedReason || failover.IsExcelBPSImageAdmissionRejection())) {
 			return false

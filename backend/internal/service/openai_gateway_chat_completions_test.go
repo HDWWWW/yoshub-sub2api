@@ -975,6 +975,24 @@ func TestForwardAsChatCompletions_OAuthJsonObjectKeepsSystemMessageInInput(t *te
 	require.Equal(t, 2, strings.Count(string(upstreamBody), systemPrompt))
 }
 
+func TestForwardAsChatCompletions_OAuthJsonObjectAddsMissingInstruction(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"symbol data"}],"response_format":{"type":"json_object"},"stream":false}`)
+	upstreamBody := forwardOAuthChatCompletionsForUpstreamBody(t, body)
+	require.Equal(t, "json_object", gjson.GetBytes(upstreamBody, "text.format.type").Str)
+	require.Equal(t, "Be concise.", gjson.GetBytes(upstreamBody, "instructions").Str)
+	require.Equal(t, "Return a valid JSON object.", gjson.GetBytes(upstreamBody, "input.0.content.0.text").Str)
+	require.EqualValues(t, 3, gjson.GetBytes(upstreamBody, "input.#").Int())
+}
+
+func TestForwardAsChatCompletions_OAuthSchemaPreservesNonStrictDefault(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"symbol data"}],"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object","properties":{"optional":{"type":"string"}},"additionalProperties":true}}},"stream":false}`)
+	upstreamBody := forwardOAuthChatCompletionsForUpstreamBody(t, body)
+	require.Equal(t, "response_schema", gjson.GetBytes(upstreamBody, "text.format.name").Str)
+	require.Equal(t, "false", gjson.GetBytes(upstreamBody, "text.format.strict").Raw)
+	require.False(t, gjson.GetBytes(upstreamBody, "text.format.schema.required").Exists())
+	require.True(t, gjson.GetBytes(upstreamBody, "text.format.schema.additionalProperties").Bool())
+}
+
 func TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput(t *testing.T) {
 	const systemPrompt = "Inspect this reference image."
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":[{"type":"text","text":"` + systemPrompt + `"},{"type":"image_url","image_url":{"url":"https://example.com/reference.png"}}]},{"role":"user","content":"hello"}],"stream":false}`)

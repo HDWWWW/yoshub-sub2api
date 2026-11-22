@@ -324,6 +324,22 @@ func TestOpenAIAccountCancellationDoesNotAffectSchedulerScore(t *testing.T) {
 	require.Greater(t, timeoutRate, canceledRate, "an actual upstream timeout still affects scheduling")
 }
 
+func TestOpenAIOutputFormatValidationDoesNotAffectSchedulerScore(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	svc := &OpenAIGatewayService{rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("true")}
+	account := &Account{ID: 102, Platform: PlatformOpenAI}
+	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.4", true, nil)
+	require.NotNil(t, svc.openaiAccountStats)
+	initialRate, _, _ := svc.openaiAccountStats.snapshot(account.ID)
+	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.4", false, nil,
+		fmt.Errorf("invalid request: %w", outputFormatError("text.format.schema.required", "missing property")))
+	currentRate, _, _ := svc.openaiAccountStats.snapshot(account.ID)
+	require.Equal(t, initialRate, currentRate)
+	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.4", false, nil, context.DeadlineExceeded)
+	timeoutRate, _, _ := svc.openaiAccountStats.snapshot(account.ID)
+	require.Greater(t, timeoutRate, currentRate)
+}
+
 func TestOpenAIHTTP2CancellationOnlyClosesCanceledStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	firstCanceled := make(chan error, 1)

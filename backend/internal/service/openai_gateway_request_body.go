@@ -1830,6 +1830,14 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			changed = true
 		}
 	}
+	if !opts.Compact {
+		outputBody, outputChanged, err := normalizeOpenAIResponseOutputFormat(normalized)
+		if err != nil {
+			return body, false, err
+		}
+		normalized = outputBody
+		changed = changed || outputChanged
+	}
 	if schemaBody, schemaChanged, err := normalizeOpenAIResponseFormatSchemasBody(normalized); err != nil {
 		return body, false, err
 	} else if schemaChanged {
