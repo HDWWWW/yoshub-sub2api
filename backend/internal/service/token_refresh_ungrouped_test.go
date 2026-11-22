@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -80,6 +81,25 @@ func (r *ungroupedRefreshRepo) UpdateCredentials(_ context.Context, id int64, cr
 	defer r.mu.Unlock()
 	r.accounts[id].Credentials = shallowCopyMap(credentials)
 	return nil
+}
+
+// Match the atomic write used by the production account repository after an
+// upstream rotation. A stale scan must never overwrite a newer credential set.
+func (r *ungroupedRefreshRepo) UpdateOpenAIOAuthCredentialsIfUnchanged(
+	ctx context.Context, id int64, expected map[string]any, proxyID *int64, replacement map[string]any,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	account := r.accounts[id]
+	if account == nil || !account.IsOpenAIOAuth() || account.IsCredentialShadow() ||
+		!reflect.DeepEqual(account.Credentials, expected) || !reflect.DeepEqual(account.ProxyID, proxyID) {
+		return false, nil
+	}
+	account.Credentials = shallowCopyMap(replacement)
+	return true, nil
 }
 
 func (r *ungroupedRefreshRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
