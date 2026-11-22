@@ -20,7 +20,7 @@ func TestOVHIPv6BulkRealRepositoryAllocatesAndRotates(t *testing.T) {
 	_, err := db.Exec(`CREATE TABLE scheduler_outbox(id BIGSERIAL PRIMARY KEY,event_type TEXT NOT NULL,account_id BIGINT,group_id BIGINT,payload JSONB,dedup_key TEXT); CREATE UNIQUE INDEX scheduler_outbox_dedup ON scheduler_outbox(dedup_key) WHERE dedup_key IS NOT NULL`)
 	require.NoError(t, err)
 	accounts := newAccountRepositoryWithSQL(client, db, nil)
-	admin := service.NewAdminService(nil, nil, NewAdminGroupRepository(client, db), accounts, proxies, nil, nil, nil, nil, nil, nil, nil, nil, client, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	admin := service.NewAdminService(nil, nil, NewAdminGroupRepository(client, db), accounts, proxies, nil, nil, nil, nil, nil, nil, nil, nil, client, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	ids := []int64{}
 	for _, name := range []string{"first", "second"} {
 		a, err := client.Account.Create().SetName(name).SetPlatform(service.PlatformOpenAI).SetType(service.AccountTypeOAuth).SetCredentials(map[string]any{"access_token": "fixture"}).SetExtra(map[string]any{}).Save(ctx)
