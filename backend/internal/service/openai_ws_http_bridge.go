@@ -928,7 +928,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		// server_is_overloaded / slow_down 判致命并终止会话，改写后走客户端内置
 		// 重试。账号状态与终止事件判定（下方 handleOpenAIWSTerminalTransientFailure）
 		// 仍使用未改写的 upstreamMessage。
-		clientMessage := rewriteOpenAIResponseServiceTier(upstreamMessage, account, extractOpenAIServiceTierFromBody(body))
+		clientMessage := upstreamMessage
 		if eventType == "error" || eventType == "response.failed" {
 			if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 				clientMessage = rewritten

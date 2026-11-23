@@ -430,6 +430,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			markClientDisconnected("request_context_canceled")
 		}
 	}
+	outboundServiceTier := extractOpenAIServiceTier(reqBody)
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
 			RequestID:                     responseID,
@@ -490,7 +491,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if clientDisconnected {
 			return
 		}
-		message = rewriteOpenAIResponseServiceTier(message, account, extractOpenAIServiceTier(reqBody))
+		message = rewriteOpenAIResponseServiceTier(message, account, outboundServiceTier)
 		frame := make([]byte, 0, len(message)+8)
 		frame = append(frame, "data: "...)
 		frame = append(frame, message...)
@@ -704,7 +705,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 			markOpenAICyberPolicyEvent(c, failurePayload, http.StatusOK, usage)
 			mergeSmartWSCyberPolicyUsage(c, usage)
-			clientMessage := rewriteOpenAIResponseServiceTier(message, account, extractOpenAIServiceTier(reqBody))
+			clientMessage := rewriteOpenAIResponseServiceTier(message, account, outboundServiceTier)
 			if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", clientMessage); err != nil {
 				clientDisconnected = true
 				return resultWithUsage(), err
@@ -857,7 +858,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			responseID = strings.TrimSpace(gjson.GetBytes(finalResponse, "id").String())
 		}
 
-		finalResponse = rewriteOpenAIResponseServiceTier(finalResponse, account, extractOpenAIServiceTier(reqBody))
+		finalResponse = rewriteOpenAIResponseServiceTier(finalResponse, account, outboundServiceTier)
 		c.Data(http.StatusOK, "application/json", finalResponse)
 	} else {
 		flushStreamWriter(true)
