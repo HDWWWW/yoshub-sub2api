@@ -1277,7 +1277,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				failureTerminal = eventType
 				imageCounter.AddSSEData(upstreamMessage)
-				if writeErr := writeClientMessage(upstreamMessage); writeErr != nil {
+				if writeErr := writeClientMessage(rewriteOpenAIResponseServiceTier(upstreamMessage, account, extractOpenAIServiceTierFromBody(payload))); writeErr != nil {
 					return nil, context.Canceled
 				}
 				markOpenAIWSClientVisibleFailure(c, eventType, upstreamMessage)
@@ -1291,7 +1291,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					if id := gjson.GetBytes(tail, "response.id").String(); id != "" {
 						responseID = id
 					}
-					if writeErr := writeClientMessage(tail); writeErr != nil {
+					if writeErr := writeClientMessage(rewriteOpenAIResponseServiceTier(tail, account, extractOpenAIServiceTierFromBody(payload))); writeErr != nil {
 						return nil, context.Canceled
 					}
 				}
@@ -1439,7 +1439,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				// markOpenAIWSClientVisibleFailure 与 handleOpenAIWSTerminalTransientFailure
 				// 仍要按未改写的原始 payload 判定账号状态，这正是
 				// sanitizeOpenAICapacityShedErrorCodeForClient 注释里写明的前提。
-				clientMessage := upstreamMessage
+				clientMessage := rewriteOpenAIResponseServiceTier(upstreamMessage, account, extractOpenAIServiceTierFromBody(payload))
 				if eventType == "error" || eventType == "response.failed" {
 					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 						clientMessage = rewritten

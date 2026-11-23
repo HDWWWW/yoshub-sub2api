@@ -490,6 +490,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if clientDisconnected {
 			return
 		}
+		message = rewriteOpenAIResponseServiceTier(message, account, extractOpenAIServiceTier(reqBody))
 		frame := make([]byte, 0, len(message)+8)
 		frame = append(frame, "data: "...)
 		frame = append(frame, message...)
@@ -703,7 +704,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 			markOpenAICyberPolicyEvent(c, failurePayload, http.StatusOK, usage)
 			mergeSmartWSCyberPolicyUsage(c, usage)
-			if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", message); err != nil {
+			clientMessage := rewriteOpenAIResponseServiceTier(message, account, extractOpenAIServiceTier(reqBody))
+			if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", clientMessage); err != nil {
 				clientDisconnected = true
 				return resultWithUsage(), err
 			}
@@ -855,6 +857,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			responseID = strings.TrimSpace(gjson.GetBytes(finalResponse, "id").String())
 		}
 
+		finalResponse = rewriteOpenAIResponseServiceTier(finalResponse, account, extractOpenAIServiceTier(reqBody))
 		c.Data(http.StatusOK, "application/json", finalResponse)
 	} else {
 		flushStreamWriter(true)
