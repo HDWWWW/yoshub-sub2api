@@ -191,7 +191,45 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 		changed = append(changed, a.ID)
 		return true, nil
 	}
-	if err = fn(state, service.AccountRiskScheduling{Stop: stop, Pause: pause, Resume: resume}); err != nil {
+	apply401 := func(groupID int64, source, owner *service.Account, reason string, until *time.Time) (bool, error) {
+		token, _ := source.Extra[service.AccountRiskCapacityPauseExtraKey].(string)
+		// Lock the membership, source and credential owner through commit. A shadow
+		// may use its parent's credentials without sharing the parent's group.
+		result, err := tx.ExecContext(ctx, `WITH source AS (
+          SELECT src.id FROM accounts src JOIN account_groups ag ON ag.account_id=src.id
+          JOIN groups g ON g.id=ag.group_id
+          WHERE src.id=$1 AND src.updated_at=$2 AND src.deleted_at IS NULL AND src.status='active'
+          AND COALESCE(src.parent_account_id,src.id)=$3 AND ag.group_id=$5 AND g.deleted_at IS NULL AND g.status='active'
+          AND ((src.schedulable AND $6='') OR (NOT src.schedulable AND $6<>'' AND src.extra->>'yoshub_risk_capacity_pause'=$6))
+          FOR NO KEY UPDATE OF src FOR SHARE OF ag,g
+        ) UPDATE accounts a SET
+          status=CASE WHEN $7::timestamptz IS NULL THEN 'error' ELSE a.status END,
+          schedulable=CASE WHEN $7::timestamptz IS NULL THEN false ELSE a.schedulable END,
+          error_message=CASE WHEN $7::timestamptz IS NULL THEN $8 ELSE a.error_message END,
+          extra=CASE WHEN $7::timestamptz IS NULL THEN COALESCE(a.extra,'{}'::jsonb)-'yoshub_risk_capacity_pause' ELSE a.extra END,
+          temp_unschedulable_until=COALESCE($7,a.temp_unschedulable_until),
+          temp_unschedulable_reason=CASE WHEN $7::timestamptz IS NULL THEN a.temp_unschedulable_reason ELSE $8 END, updated_at=NOW()
+          WHERE EXISTS (SELECT 1 FROM source) AND a.id=$3 AND a.updated_at=$4 AND a.deleted_at IS NULL
+          AND a.parent_account_id IS NULL AND a.status='active' AND (a.schedulable OR a.id=$1 AND $6<>'')
+          AND ($7::timestamptz IS NULL OR a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until<=NOW())`,
+			source.ID, source.UpdatedAt, owner.ID, owner.UpdatedAt, groupID, token, until, reason)
+		if err != nil {
+			return false, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil || n == 0 {
+			return false, err
+		}
+		if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &owner.ID, nil, nil); err != nil {
+			return false, err
+		}
+		if until == nil {
+			delete(state.CapacityPauses, owner.ID)
+		}
+		changed = append(changed, owner.ID)
+		return true, nil
+	}
+	if err = fn(state, service.AccountRiskScheduling{ApplyProbe401: apply401, Stop: stop, Pause: pause, Resume: resume}); err != nil {
 		return err
 	}
 	syncAccountRiskLegacyGuard(state)

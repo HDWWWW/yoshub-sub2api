@@ -15,8 +15,9 @@ import (
 
 type riskProbeContextKey struct{}
 type riskProbeCall struct {
-	config AccountRiskConfig
-	result AccountRiskProbeResult
+	config          AccountRiskConfig
+	credentialOwner *Account
+	result          AccountRiskProbeResult
 }
 
 func riskProbeForContext(ctx context.Context) *riskProbeCall {
@@ -25,8 +26,8 @@ func riskProbeForContext(ctx context.Context) *riskProbeCall {
 }
 
 // Uses the existing account-test authentication, endpoint, proxy and TLS path.
-// Risk probes do not update quota/auth errors or retry a generation. Like admin
-// connectivity tests, their usage belongs to the operator, not a downstream user.
+// Upstream I/O only collects evidence. The automatic runner owns scheduling
+// changes after reservation validation. Probe usage belongs to the operator.
 func (s *AccountTestService) RunRiskProbe(ctx context.Context, a *Account, c AccountRiskConfig) (AccountRiskProbeResult, error) {
 	call := &riskProbeCall{config: c}
 	if a == nil || a.Platform != PlatformOpenAI || a.IsExcelOAuth() || a.IsExcelBPSEnabledForModel(c.Model) || isOpenAIImageModel(a.GetMappedModel(c.Model)) {
@@ -47,6 +48,9 @@ func (s *AccountTestService) RunRiskProbe(ctx context.Context, a *Account, c Acc
 
 func finishRiskProbeResponse(call *riskProbeCall, resp *http.Response, chat bool) error {
 	call.result.UpstreamStatus = resp.StatusCode
+	if resp.StatusCode == http.StatusUnauthorized && call.config.Probe401Enabled {
+		call.result.auth401 = readRiskProbe401(call.credentialOwner, call.config.Model, resp.Body)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("risk probe upstream rejected request")
 	}

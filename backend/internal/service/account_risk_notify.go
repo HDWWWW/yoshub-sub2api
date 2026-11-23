@@ -155,6 +155,8 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 	}
 	action := "已关闭此账号调度，现有请求继续完成。"
 	switch event.Action {
+	case "cooldown":
+		action = "已暂停接收新请求，等待凭据刷新。冷却截止时间见上方原因。"
 	case "notify_only":
 		action = "仅通知，未因本次异常停止账号调度。"
 	case "pause":

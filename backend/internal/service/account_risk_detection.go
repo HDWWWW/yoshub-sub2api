@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -40,6 +41,7 @@ type AccountRiskConfig struct {
 	ProbeScope                string `json:"probe_scope"`
 	ProbeNotifyOnly           bool   `json:"probe_notify_only"`
 	ProbeMismatchMaxRetries   int    `json:"probe_mismatch_max_retries"`
+	Probe401Enabled           bool   `json:"probe_401_enabled"`
 	Probe429StopEnabled       bool   `json:"probe_429_stop_enabled"`
 	Probe429MaxRetries        int    `json:"probe_429_max_retries"`
 	ModelMismatchAction       string `json:"model_mismatch_action"`
@@ -203,9 +205,10 @@ type AccountRiskState struct {
 }
 
 type AccountRiskScheduling struct {
-	Stop   func(groupID int64, account *Account) (bool, error)
-	Pause  func(groupID int64, account *Account, token string) (bool, error)
-	Resume func(groupID int64, account *Account, token string) (bool, error)
+	ApplyProbe401 func(groupID int64, source, owner *Account, reason string, cooldownUntil *time.Time) (bool, error)
+	Stop          func(groupID int64, account *Account) (bool, error)
+	Pause         func(groupID int64, account *Account, token string) (bool, error)
+	Resume        func(groupID int64, account *Account, token string) (bool, error)
 }
 type AccountRiskStore interface {
 	Read(context.Context) (*AccountRiskState, error)
@@ -229,8 +232,9 @@ type AccountRiskProbeResult struct {
 	InputTokens  int
 	OutputTokens int
 	// Only an actual HTTP response can populate UpstreamStatus. Local slot
-	// exhaustion, transport errors and error text must never count as a 429.
+	// exhaustion, transport errors and error text never count as a 401 or 429.
 	UpstreamStatus        int
+	auth401               *riskProbe401Evidence
 	Consecutive429        int
 	ConsecutiveMismatches int
 	MismatchRetry429      bool
@@ -240,20 +244,21 @@ type accountRiskProber interface {
 }
 
 type AccountRiskService struct {
-	counter429       AccountRisk429Counter
-	store            AccountRiskStore
-	accounts         accountRiskAccounts
-	groups           accountRiskGroups
-	loads            accountRiskLoads
-	probe            accountRiskProber
-	notifier         accountRiskNotifier
-	notificationWake chan struct{}
-	cfg              *config.Config
-	worker           string
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	startOnce        sync.Once
-	stopOnce         sync.Once
+	onProbe401Committed func(context.Context, *Account, time.Time, bool)
+	counter429          AccountRisk429Counter
+	store               AccountRiskStore
+	accounts            accountRiskAccounts
+	groups              accountRiskGroups
+	loads               accountRiskLoads
+	probe               accountRiskProber
+	notifier            accountRiskNotifier
+	notificationWake    chan struct{}
+	cfg                 *config.Config
+	worker              string
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
+	startOnce           sync.Once
+	stopOnce            sync.Once
 }
 
 func NewAccountRiskService(store AccountRiskStore, accounts AccountRepository, groups GroupRepository, loads *ConcurrencyService, probe *AccountTestService, cfg *config.Config) *AccountRiskService {
@@ -352,6 +357,20 @@ func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision in
 		}
 		if r.Revision != revision {
 			return ErrAccountRiskConflict
+		}
+		// An auth-policy-only edit invalidates in-flight probes as usual, but it
+		// must not strand accounts already waiting for a capacity recheck.
+		previous := r.Config
+		previous.Probe401Enabled = c.Probe401Enabled
+		if r.Revision > 0 && previous == c && r.Config.Probe401Enabled != c.Probe401Enabled {
+			for _, p := range state.CapacityPauses {
+				if p.GroupID == groupID && p.Revision == revision {
+					p.Revision++
+				}
+			}
+			r.Config = c
+			r.Revision++
+			return nil
 		}
 		r.Config = c
 		r.Revision++
@@ -632,12 +651,11 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 
 func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJob, result AccountRiskProbeResult, probeErr error, now time.Time) error {
 	recorded := false
+	var authOwner *Account
+	var cooldownUntil time.Time
 	err := s.store.Update(ctx, func(state *AccountRiskState, stop AccountRiskScheduling) error {
 		if !releaseRiskProbe(state, job.pending) {
 			return nil
-		}
-		if job.pauseToken != "" {
-			return s.finishCapacityPause(ctx, state, stop, job, result, probeErr, now)
 		}
 		r := state.Rules[job.pending.GroupID]
 		if r == nil || !r.Config.Enabled || r.Revision != job.pending.Revision {
@@ -646,6 +664,18 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		o := &r.Observation
 		if isScheduledRiskProbe(job.pending.Kind) && !r.Config.ProbeEnabled {
 			return nil
+		}
+		auth401 := r.Config.Probe401Enabled && job.config.Probe401Enabled && result.UpstreamStatus == http.StatusUnauthorized && result.auth401 != nil && job.pending.ExpiresAt.After(now)
+		if job.pauseToken != "" {
+			if !auth401 {
+				return s.finishCapacityPause(ctx, state, stop, job, result, probeErr, now)
+			}
+			p := state.CapacityPauses[job.account.ID]
+			if p == nil || p.Token != job.pauseToken || p.Revision != r.Revision || r.Config.CapacityNotifyOnly {
+				return nil
+			}
+			p.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
+			o.NextProbeAt = p.NextProbeAt
 		}
 		o.LastProbeAt = &now
 		if o.ProbeSignature == job.signature {
@@ -662,6 +692,12 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		}
 		o.InputTokens = result.InputTokens
 		o.OutputTokens = result.OutputTokens
+		if auth401 {
+			var applyErr error
+			authOwner, cooldownUntil, applyErr = s.applyProbe401(ctx, r, stop, job, result.auth401, now)
+			recorded = authOwner != nil
+			return applyErr
+		}
 		exhausted429 := isScheduledRiskProbe(job.pending.Kind) && r.Config.Probe429StopEnabled &&
 			r.Config.Probe429MaxRetries > 0 && result.Consecutive429 > r.Config.Probe429MaxRetries && result.UpstreamStatus == 429 && probeErr != nil
 		mismatchRetry429 := isScheduledRiskProbe(job.pending.Kind) && r.Config.ProbeMismatchMaxRetries > 0 &&
@@ -721,6 +757,10 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		return nil
 	})
 	if err == nil && recorded {
+		if authOwner != nil && s.onProbe401Committed != nil {
+			invalidate := result.auth401.failure == credential401Refreshable || result.auth401.failure == credential401MissingRefresh
+			s.onProbe401Committed(ctx, authOwner, cooldownUntil, invalidate)
+		}
 		s.wakeNotifications()
 	}
 	return err

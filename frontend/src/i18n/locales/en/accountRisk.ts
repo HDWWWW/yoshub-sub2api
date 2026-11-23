@@ -1,4 +1,6 @@
 export default {
+  probe401Title: 'Suspend scheduling and alert WeCom on an automatic probe credential 401',
+  probe401Hint: 'Applies to scheduled probes and capacity checks. Revoked or invalid credentials stop scheduling immediately. Refreshable OAuth credentials enter the usual cooldown. This switch sends its own group WeCom alert. Manual previews only show the result.',
   rateLimit429Title: "Stop scheduling after excessive upstream 429s",
   rateLimit429Window: "Rolling window (seconds)",
   rateLimit429Threshold: "Stop after more than this many 429s",
@@ -21,7 +23,7 @@ export default {
   modelMismatchStop: 'Stop scheduling immediately and notify',
   modelMismatchNotifyOnly: 'Notify immediately and keep scheduling',
   modelMismatchHint: 'Requires group risk detection. Compares the actual mapped outbound model with the upstream response model and acts on the first mismatch, without waiting for a capacity threshold or scheduled test. Both actions notify this group’s WeCom robot independently of the notification switch above. Notify-only events for the same account are coalesced for one minute. Other risk rules remain independent. A missing response model is not a mismatch.',
-  action: { pause: 'Action: paused pending verification', resume: 'Action: verification passed; scheduling restored', stop: 'Action: scheduling stopped', notify_only: 'Action: notification only; this event did not stop scheduling' },
+  action: { cooldown: 'Action: temporarily suspended for credential refresh', pause: 'Action: paused pending verification', resume: 'Action: verification passed; scheduling restored', stop: 'Action: scheduling stopped', notify_only: 'Action: notification only; this event did not stop scheduling' },
   occurrences: '{count} anomalies coalesced within one minute',
   notifyHint: 'Reuses the robot configured in this group’s Automatic refill rules. Sends once after a capacity pause, excessive 429s or a scheduled-test stop. Unsent pause alerts are cancelled on recovery. Notify-only options send independently. Prompts, replies and credentials are excluded.',
   webhook: { ready: 'WeCom robot configured', missing: 'No robot configured. Save the notification connection in this group’s Automatic refill rules first.', unavailable: 'Could not read the robot configuration. Refresh later.' },

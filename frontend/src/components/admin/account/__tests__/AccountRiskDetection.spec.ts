@@ -8,7 +8,7 @@ vi.mock('@/api/admin/accountRisk', () => ({ accountRiskAPI: { get, save, test } 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const baseline: AccountRiskRule = {
   group_id: 7, revision: 3, test_accounts: [{ id: 1, name: 'Stopped account', schedulable: false }],
-  config: { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_mismatch_max_retries: 0, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
+  config: { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_mismatch_max_retries: 0, probe_401_enabled: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
@@ -39,6 +39,19 @@ describe('account risk detection', () => {
     expect(pairs[1]?.text()).not.toContain('accountRisk.nextProbe')
     w.unmount()
   })
+  it('defaults legacy probe 401 rules off and saves credential alerts independently', async () => {
+    const legacy = structuredClone(baseline)
+    Reflect.deleteProperty(legacy.config, 'probe_401_enabled')
+    get.mockResolvedValue(legacy)
+    const w = await open()
+    const toggle = w.get<HTMLInputElement>('[data-testid="risk-probe-401-enabled"]')
+    expect(toggle.element.checked).toBe(false)
+    await toggle.setValue(true)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save).toHaveBeenCalledWith(7, 3, expect.objectContaining({ probe_401_enabled: true, notify_enabled: false }))
+    expect(toggle.element.checked).toBe(true)
+    w.unmount()
+  })
   it('loads selected OpenAI group and saves every custom control with revision', async () => {
     const w = await open()
     expect(get).toHaveBeenCalledWith(7)
@@ -47,7 +60,7 @@ describe('account risk detection', () => {
     await w.get('[data-testid="risk-notify-enabled"]').setValue(true)
     for (const [field, value] of Object.entries({ first: 55, second: 95, duration: 17, interval: 420, model: 'gpt-6-astra', effort: 'xhigh', prompt: 'Compute three times seven', expected: '21' })) await w.get(`[data-testid="risk-${field}"]`).setValue(value)
     await w.get('form').trigger('submit'); await flushPromises()
-    expect(save).toHaveBeenCalledWith(7, 3, { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: true, notify_enabled: true, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_mismatch_max_retries: 0, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
+    expect(save).toHaveBeenCalledWith(7, 3, { rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: true, notify_enabled: true, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_mismatch_max_retries: 0, probe_401_enabled: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 55, second_at_least_percent: 95, sustain_seconds: 17, probe_interval_seconds: 420, model: 'gpt-6-astra', reasoning_effort: 'xhigh', probe_prompt: 'Compute three times seven', expected_text: '21' })
     expect(w.get('[role="status"]').text()).toContain('saved'); w.unmount()
   })
   it.each([['first', 0], ['second', 101], ['duration', 0], ['interval', 9], ['prompt', ''], ['expected', ''], ['model', '']])('blocks invalid %s', async (field, value) => {

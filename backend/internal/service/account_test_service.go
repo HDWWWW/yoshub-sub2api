@@ -862,6 +862,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		credentialAccount = resolved
 	}
 
+	if risk := riskProbeForContext(ctx); risk != nil {
+		risk.credentialOwner = credentialAccount
+	}
+
 	// Determine authentication method and API URL
 	var authToken string
 	var apiURL string

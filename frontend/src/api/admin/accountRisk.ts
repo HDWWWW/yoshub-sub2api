@@ -11,6 +11,7 @@ export interface AccountRiskConfig {
   probe_scope: 'single' | 'all'
   probe_notify_only: boolean
   probe_mismatch_max_retries: number
+  probe_401_enabled: boolean
   probe_429_stop_enabled: boolean
   probe_429_max_retries: number
   model_mismatch_action: 'off' | 'stop' | 'notify_only'
@@ -66,7 +67,7 @@ export interface AccountRiskRule {
     input_tokens: number
     output_tokens: number
   }
-  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'stop' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
+  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'stop' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
 }
 export interface AccountRiskManualResult {
   account_id: number

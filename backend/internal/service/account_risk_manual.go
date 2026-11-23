@@ -61,6 +61,8 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 	if err != nil {
 		return nil, err
 	}
+	// The manual preview uses draft settings but never requests credential actions.
+	config.Probe401Enabled = false
 	id, now := uuid.NewString(), time.Now().UTC()
 	err = s.store.Update(ctx, func(state *AccountRiskState, _ AccountRiskScheduling) error {
 		r := state.Rules[groupID]

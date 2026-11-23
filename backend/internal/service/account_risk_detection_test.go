@@ -102,7 +102,26 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 		}
 		return false, nil
 	}
-	return fn(s.state, AccountRiskScheduling{Stop: stop, Pause: pause, Resume: resume})
+	apply401 := func(_ int64, _, a *Account, reason string, until *time.Time) (bool, error) {
+		s.accounts.mu.Lock()
+		defer s.accounts.mu.Unlock()
+		for i := range s.accounts.pool {
+			current := &s.accounts.pool[i]
+			if !s.cas || current.ID != a.ID || !current.IsActive() {
+				continue
+			}
+			if until == nil {
+				current.Status, current.Schedulable, current.ErrorMessage = StatusError, false, reason
+				delete(s.state.CapacityPauses, a.ID)
+				delete(current.Extra, AccountRiskCapacityPauseExtraKey)
+			} else {
+				current.TempUnschedulableUntil = until
+			}
+			return true, nil
+		}
+		return false, nil
+	}
+	return fn(s.state, AccountRiskScheduling{ApplyProbe401: apply401, Stop: stop, Pause: pause, Resume: resume})
 }
 
 type riskTestAccounts struct {

@@ -284,3 +284,60 @@ func TestAccountRiskStoreInvalidQueueFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestAccountRiskStoreProbe401AndAlertCommitTogether(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		matched, fail bool
+	}{{"success", true, false}, {"stale", false, false}, {"outbox failure", true, true}, {"settings failure", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, m, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+			a := &service.Account{ID: 19, UpdatedAt: time.Now()}
+			m.ExpectBegin()
+			m.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+			for _, key := range []string{service.AccountRiskSettingKey, accountRiskCapacityPausesSettingKey, accountRiskActiveProbesSettingKey} {
+				m.ExpectQuery("SELECT value FROM settings").WithArgs(key).WillReturnRows(sqlmock.NewRows([]string{"value"}))
+			}
+			count := int64(0)
+			if tc.matched {
+				count = 1
+			}
+			m.ExpectExec("WITH source AS").WithArgs(a.ID, a.UpdatedAt, a.ID, a.UpdatedAt, int64(7), "", nil, "401").WillReturnResult(sqlmock.NewResult(0, count))
+			if tc.matched {
+				e := m.ExpectExec("INSERT INTO scheduler_outbox")
+				if tc.name == "outbox failure" {
+					e.WillReturnError(errors.New("unavailable"))
+				} else {
+					e.WillReturnResult(sqlmock.NewResult(1, 1))
+					e = m.ExpectExec("INSERT INTO settings")
+					if tc.fail {
+						e.WillReturnError(errors.New("unavailable"))
+					} else {
+						e.WillReturnResult(sqlmock.NewResult(1, 1))
+					}
+				}
+			}
+			if tc.fail {
+				m.ExpectRollback()
+			} else {
+				m.ExpectCommit()
+			}
+			err = NewAccountRiskStore(db, nil).Update(context.Background(), func(state *service.AccountRiskState, scheduling service.AccountRiskScheduling) error {
+				changed, err := scheduling.ApplyProbe401(7, a, a, "401", nil)
+				if err != nil || !changed {
+					return err
+				}
+				state.Rules[7] = &service.AccountRiskRule{GroupID: 7, Config: service.DefaultAccountRiskConfig(), Events: []service.AccountRiskEvent{{Kind: "probe_401", AccountID: a.ID, Notification: "pending"}}}
+				return nil
+			})
+			if tc.fail {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, m.ExpectationsWereMet())
+		})
+	}
+}
