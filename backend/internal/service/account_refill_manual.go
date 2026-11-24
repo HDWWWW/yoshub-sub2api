@@ -157,11 +157,13 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			return invalidManualRefill(err.Error())
 		}
 		persist := func() error { return saveRefillState(&state, save) }
-		route := refillRoute{provider: request.Provider, plan: request.Plan}
+		var quote *RefillQuote
+		var connectionID string
 		if request.Provider == refillProviderMuze {
-			route.plan, route.muzeProductID = muzeTier(request.Plan), request.Plan
+			quote, connectionID, err = s.singleMuzeQuote(ctx, &state, request.Plan, true, persist)
+		} else {
+			quote, connectionID, err = s.routedQuote(ctx, &state, request.Provider, request.Plan, persist)
 		}
-		quote, connectionID, err := s.routedQuote(ctx, &state, route, persist)
 		if err != nil {
 			return err
 		}

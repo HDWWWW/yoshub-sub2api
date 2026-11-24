@@ -73,7 +73,7 @@ func nextRefillPurchasePlan(state *accountRefillState) string {
 
 func nextRefillPurchaseRoute(state *accountRefillState) refillRoute {
 	if index := nextRefillFailureReplacement(state); index >= 0 {
-		return state.Jobs[index].purchaseRoute()
+		return refillRoute{state.Jobs[index].Provider, state.Jobs[index].Plan}
 	}
 	return refillNextRoute(state.Config, state.RotationCursor)
 }

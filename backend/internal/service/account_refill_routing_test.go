@@ -151,7 +151,7 @@ func TestRefillPrimaryLocalReservationsDoNotTriggerFailover(t *testing.T) {
 			v.Catalog = &RefillCatalog{Available: 60, Items: []RefillQuote{{Service: "refill", Plan: "pro20x", Price: 60, Enabled: true}}}
 			v.Jobs = []AccountRefillJob{{ID: "reserved", Provider: v.Config.automaticProvider(), Plan: "pro20x", Price: 60, Status: "submitting"}}
 			v.MuzeFallback.Shortage = &refillSupplyShortage{Plan: "pro20x", FirstAt: time.Now().Add(-time.Hour), Checks: 2}
-			_, _, backup, err := s.automaticQuote(ctx, &v, refillRoute{provider: v.Config.automaticProvider(), plan: "pro20x"}, time.Now(), func() error { return nil })
+			_, _, backup, err := s.automaticQuote(ctx, &v, refillRoute{v.Config.automaticProvider(), "pro20x"}, time.Now(), func() error { return nil })
 			require.ErrorContains(t, err, "本地预占")
 			require.False(t, backup)
 			require.Nil(t, v.MuzeFallback.Shortage)
