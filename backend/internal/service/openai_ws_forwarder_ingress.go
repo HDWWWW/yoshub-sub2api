@@ -1106,6 +1106,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 	var rejectedFieldRetryState *openAIResponsesRejectedFieldRetryState
 	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string, requestedReasoningEffort *string) (turnResult *OpenAIForwardResult, turnErr error) {
+		outboundServiceTier := extractOpenAIServiceTierFromBody(payload)
 		responseModelObserver := s.newAccountRiskModelObserver(ctx, c, account, gjson.GetBytes(payload, "model").String())
 		if lease == nil {
 			return nil, errors.New("upstream websocket lease is nil")
@@ -1277,7 +1278,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				failureTerminal = eventType
 				imageCounter.AddSSEData(upstreamMessage)
-				if writeErr := writeClientMessage(upstreamMessage); writeErr != nil {
+				if writeErr := writeClientMessage(rewriteOpenAIResponseServiceTier(upstreamMessage, account, outboundServiceTier)); writeErr != nil {
 					return nil, context.Canceled
 				}
 				markOpenAIWSClientVisibleFailure(c, eventType, upstreamMessage)
@@ -1291,7 +1292,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					if id := gjson.GetBytes(tail, "response.id").String(); id != "" {
 						responseID = id
 					}
-					if writeErr := writeClientMessage(tail); writeErr != nil {
+					if writeErr := writeClientMessage(rewriteOpenAIResponseServiceTier(tail, account, outboundServiceTier)); writeErr != nil {
 						return nil, context.Canceled
 					}
 				}
@@ -1439,7 +1440,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				// markOpenAIWSClientVisibleFailure 与 handleOpenAIWSTerminalTransientFailure
 				// 仍要按未改写的原始 payload 判定账号状态，这正是
 				// sanitizeOpenAICapacityShedErrorCodeForClient 注释里写明的前提。
-				clientMessage := upstreamMessage
+				clientMessage := rewriteOpenAIResponseServiceTier(upstreamMessage, account, outboundServiceTier)
 				if eventType == "error" || eventType == "response.failed" {
 					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 						clientMessage = rewritten
