@@ -14,6 +14,7 @@ type AccountRefillRuleSummary struct {
 	Enabled         bool   `json:"enabled"`
 	MonitorEnabled  bool   `json:"monitor_enabled"`
 	RotationEnabled bool   `json:"rotation_enabled"`
+	NextProvider    string `json:"next_provider"`
 	NextPlan        string `json:"next_plan"`
 }
 
@@ -176,7 +177,7 @@ func (s *AccountRefillService) ListRules(ctx context.Context) ([]AccountRefillRu
 		}
 		c := state.Config
 		if c.GroupID > 0 {
-			out = append(out, AccountRefillRuleSummary{GroupID: c.GroupID, Enabled: c.Enabled, MonitorEnabled: c.MonitorEnabled, RotationEnabled: c.RotationEnabled, NextPlan: nextRefillPurchasePlan(&state)})
+			out = append(out, AccountRefillRuleSummary{GroupID: c.GroupID, Enabled: c.Enabled, MonitorEnabled: c.MonitorEnabled, RotationEnabled: c.RotationEnabled, NextPlan: nextRefillPurchasePlan(&state), NextProvider: refillPublicProvider(nextRefillPurchaseRoute(&state).provider)})
 		}
 	}
 	slices.SortFunc(out, func(a, b AccountRefillRuleSummary) int {

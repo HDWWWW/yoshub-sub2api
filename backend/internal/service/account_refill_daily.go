@@ -245,33 +245,45 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		status.NextAt = nextRefillDailyTime(schedule, now, status.LastAt, state.WorkdayCalendar)
 		return false, persist()
 	}
-	provider := c.automaticProvider()
-	if now.Before(state.providerBackoff(provider)) {
-		return blocked("号商限流或暂不可用，等待退避结束")
-	}
 	if err := s.validateGroups(ctx, c); err != nil {
 		return blocked(err.Error())
 	}
 	if _, err := s.selectProxy(ctx, c.Delivery); err != nil {
 		return blocked(err.Error())
 	}
-	plans := make([]string, schedule.Quantity)
-	for i := range plans {
-		plans[i] = schedule.Plan
-		if plans[i] == "" {
-			plans[i] = refillNextPlan(c, state.RotationCursor+i)
+	routes := make([]refillRoute, schedule.Quantity)
+	var walletSlots, muzeSlots []int
+	var muzePlans []string
+	for i := range routes {
+		route := refillRoute{c.automaticProvider(), schedule.Plan}
+		if schedule.Plan == "" {
+			route = refillNextRoute(c, state.RotationCursor+i)
+		}
+		if now.Before(state.providerBackoff(route.provider)) {
+			return blocked(refillProviderName(route.provider) + " 正在退避")
+		}
+		routes[i] = route
+		if route.provider == refillProviderMuze {
+			muzeSlots = append(muzeSlots, i)
+			muzePlans = append(muzePlans, route.plan)
+		} else {
+			walletSlots = append(walletSlots, i)
 		}
 	}
+	quotes := make([]RefillQuote, len(routes))
 	var connectionID string
-	var quotes []RefillQuote
 	var total float64
-	if provider == refillProviderMuze {
-		var err error
-		quotes, connectionID, err = s.muzePurchaseQuote(ctx, state, plans, false, persist)
+	if len(muzeSlots) > 0 {
+		batch, id, err := s.muzePurchaseQuote(ctx, state, muzePlans, false, persist)
 		if err != nil {
 			return blocked(err.Error())
 		}
-	} else {
+		connectionID = id
+		for j, i := range muzeSlots {
+			quotes[i] = batch[j]
+		}
+	}
+	if len(walletSlots) > 0 {
 		if state.EncryptedToken == "" {
 			return blocked("请配置 1208 API Key")
 		}
@@ -294,7 +306,8 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		if key.Revoked || (!key.ExpiresAt.IsZero() && !key.ExpiresAt.After(time.Now())) {
 			return blocked("号商 API Key 已失效")
 		}
-		for _, plan := range plans {
+		for _, i := range walletSlots {
+			plan := routes[i].plan
 			index := slices.IndexFunc(catalog.Items, func(q RefillQuote) bool { return q.Service == "refill" && q.Plan == plan && q.Enabled })
 			if index < 0 {
 				return blocked("所选补号套餐暂不可用")
@@ -303,7 +316,7 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 			if math.IsNaN(quote.Price) || math.IsInf(quote.Price, 0) || quote.Price <= 0 || quote.Price > c.MaxUnitPrice {
 				return blocked("当前单价超过允许上限或报价无效")
 			}
-			quotes = append(quotes, quote)
+			quotes[i] = quote
 			total += quote.Price
 		}
 		unsubmitted, err := s.unsubmittedPoints(ctx, state)
@@ -323,8 +336,13 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	batchID := uuid.NewString()
 	jobs := make([]AccountRefillJob, 0, len(quotes))
 	grace := c.ImportExpiryGraceMinutes
-	for _, quote := range quotes {
-		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), Provider: provider, MuzeConnectionID: connectionID, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, DailyBatchID: batchID, Force: true,
+	for i, quote := range quotes {
+		provider := routes[i].provider
+		connection := ""
+		if provider == refillProviderMuze {
+			connection = connectionID
+		}
+		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), Provider: provider, MuzeConnectionID: connection, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, DailyBatchID: batchID, Force: true,
 			Status: "submitting", Mode: "daily", Reason: "每日定时强制补号", Plan: quote.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ConfigRevision: state.Revision, RotationGeneration: state.RotationGeneration,
 			ReasonDetail:       fmt.Sprintf("北京时间 %s 定时补号，共 %d 个；忽略健康储备、待核对、在途上限和普通冷却。", due.Format("2006-01-02 15:04"), len(quotes)),

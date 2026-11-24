@@ -277,7 +277,7 @@ func (s *OpenAIGatewayService) getOpenAIWSConnPool() *openAIWSConnPool {
 		if s.openaiWSPool == nil {
 			s.openaiWSPool = newOpenAIWSConnPool(s.cfg)
 		}
-		s.openaiWSPool.onHandshakeStatus = s.observeBusiness401
+		s.openaiWSPool.onHandshakeStatus = s.observeRiskHandshake
 	})
 	return s.openaiWSPool
 }

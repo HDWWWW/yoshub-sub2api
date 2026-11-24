@@ -19,11 +19,17 @@ func (c AccountRefillConfig) automaticProvider() string {
 	}
 	return ""
 }
-func (c AccountRefillConfig) backupProvider() string {
-	if c.automaticProvider() == refillProviderMuze {
+func otherRefillProvider(primary string) string {
+	if primary == refillProviderMuze {
 		return ""
 	}
 	return refillProviderMuze
+}
+func refillPublicProvider(provider string) string {
+	if provider == refillProviderMuze {
+		return refillProviderMuze
+	}
+	return "1208"
 }
 func refillProviderName(provider string) string {
 	if provider == refillProviderMuze {
@@ -106,6 +112,7 @@ func supplyUnavailable(message string) error {
 }
 
 type refillSupplyShortage struct {
+	Provider    string    `json:"provider,omitempty"`
 	BackupJobID string    `json:"backup_job_id,omitempty"`
 	Plan        string    `json:"plan"`
 	FirstAt     time.Time `json:"first_at"`
@@ -113,8 +120,8 @@ type refillSupplyShortage struct {
 	Checks      int       `json:"checks"`
 }
 
-func (s *AccountRefillService) automaticPrimaryQuote(ctx context.Context, state *accountRefillState, plan string, persist func() error) (*RefillQuote, string, error) {
-	if state.Config.automaticProvider() == refillProviderMuze {
+func (s *AccountRefillService) automaticPrimaryQuote(ctx context.Context, state *accountRefillState, primary, plan string, persist func() error) (*RefillQuote, string, error) {
+	if primary == refillProviderMuze {
 		return s.routedQuote(ctx, state, refillProviderMuze, plan, persist)
 	}
 	if state.Catalog == nil {
@@ -153,11 +160,16 @@ func (s *AccountRefillService) automaticPrimaryQuote(ctx context.Context, state 
 	return nil, "", supplyUnavailable("1208 所选补号套餐暂不可用")
 }
 
-func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accountRefillState, plan string, now time.Time, persist func() error) (*RefillQuote, string, bool, error) {
-	q, connection, err := s.automaticPrimaryQuote(ctx, state, plan, persist)
+func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accountRefillState, route refillRoute, now time.Time, persist func() error) (*RefillQuote, string, bool, error) {
+	primary, plan := route.provider, route.plan
+	q, connection, err := s.automaticPrimaryQuote(ctx, state, primary, plan, persist)
 	rule := state.Config.MuzeFallback
 	var unavailable *refillSupplyUnavailable
 	shortage := state.MuzeFallback.Shortage
+	if shortage != nil && shortage.Provider == "" { // Receipts written before per-step suppliers.
+		shortage.Provider = refillPublicProvider(state.Config.automaticProvider())
+	}
+	supplier := refillPublicProvider(primary)
 	if !rule.enabled() || !errors.As(err, &unavailable) {
 		// Only uninterrupted observations of supplier shortage count. A failed
 		// balance read cannot release an already funded backup for another POST.
@@ -166,7 +178,7 @@ func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accoun
 		}
 		return q, connection, false, err
 	}
-	if shortage != nil && shortage.Plan == plan && shortage.BackupJobID != "" {
+	if shortage != nil && shortage.Provider == supplier && shortage.Plan == plan && shortage.BackupJobID != "" {
 		delivered := slices.ContainsFunc(state.Jobs, func(j AccountRefillJob) bool {
 			return j.ID == shortage.BackupJobID && j.Status == "imported" && j.AccountID > 0
 		})
@@ -175,8 +187,8 @@ func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accoun
 		}
 		shortage = nil // A delivered backup covers its slot. Re-evaluate any remaining gap.
 	}
-	if shortage == nil || shortage.Plan != plan {
-		shortage = &refillSupplyShortage{Plan: plan, FirstAt: now}
+	if shortage == nil || shortage.Provider != supplier || shortage.Plan != plan {
+		shortage = &refillSupplyShortage{Provider: supplier, Plan: plan, FirstAt: now}
 		state.MuzeFallback.Shortage = shortage
 	}
 	if shortage.Checks == 0 || now.Sub(shortage.LastAt) >= time.Duration(state.Config.CheckSeconds)*time.Second {
@@ -191,7 +203,7 @@ func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accoun
 			return nil, "", false, errors.New("等待在途备用订单完成")
 		}
 	}
-	q, connection, err = s.routedQuote(ctx, state, state.Config.backupProvider(), "pro20x", persist)
+	q, connection, err = s.routedQuote(ctx, state, otherRefillProvider(primary), "pro20x", persist)
 	return q, connection, true, err
 }
 func (j AccountRefillJob) isBackup() bool { return j.FallbackForJobID != "" || j.SupplyFallback }

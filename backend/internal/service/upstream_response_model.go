@@ -27,11 +27,12 @@ const (
 // separate from the final outbound request tier until usage recording resolves
 // the billable tier for the selected credential protocol.
 type upstreamResponseModelObserver struct {
-	first    string
-	terminal string
-	conflict bool
-	onModel  func(string)
-	on401    func()
+	first         string
+	terminal      string
+	conflict      bool
+	onModel       func(string)
+	on401         func()
+	onCustomError func([]byte)
 
 	// firstTier holds the first non-terminal tier declaration; it is discarded
 	// when later non-terminal declarations disagree. terminalTier comes from a
@@ -75,8 +76,11 @@ func normalizeObservedUpstreamResponseModel(model string) string {
 }
 
 func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType string) {
-	if o.on401 != nil && (eventType == "error" || eventType == "response.failed") && explicitStream401(payload) {
-		o.on401()
+	if o == nil {
+		return
+	}
+	if eventType == "error" || eventType == "response.failed" || (eventType == "" && (o.on401 != nil || o.onCustomError != nil) && gjson.GetBytes(payload, "error").IsObject()) {
+		o.observeRiskError(payload)
 	}
 	model := firstValidTrimmedGJSONString(payload, "response.model", "model")
 	terminal := isUpstreamResponseModelTerminalEvent(eventType)
@@ -96,7 +100,22 @@ func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType 
 	o.ObserveServiceTier(tier, terminal)
 }
 
+func (o *upstreamResponseModelObserver) observeRiskError(payload []byte) {
+	if o.onCustomError != nil {
+		o.onCustomError(payload)
+	}
+	if o.on401 != nil && explicitStream401(payload) {
+		o.on401()
+	}
+}
+
 func (o *upstreamResponseModelObserver) ObserveAnthropic(payload []byte) {
+	if o == nil {
+		return
+	}
+	if (o.on401 != nil || o.onCustomError != nil) && gjson.GetBytes(payload, "type").Str == "error" {
+		o.observeRiskError(payload)
+	}
 	model := firstValidTrimmedGJSONString(payload, "message.model", "model")
 	o.Observe(model, false)
 	// usage.speed travels with the message object (message_start in streams,
@@ -199,6 +218,9 @@ func beginUpstreamResponseModelObservation(c *gin.Context) *upstreamResponseMode
 	if c != nil {
 		if callback, ok := c.Get(accountRiskModelObserverKey); ok {
 			observer.onModel, _ = callback.(func(string))
+		}
+		if cb, ok := c.Get(accountRiskCustomStreamKey); ok {
+			observer.onCustomError, _ = cb.(func([]byte))
 		}
 		if callback, ok := c.Get(accountRiskBusiness401); ok {
 			observer.on401, _ = callback.(func())

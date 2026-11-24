@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -30,7 +31,17 @@ const (
 var ErrAccountRiskBusy = errors.New("风控检测正在更新，请稍后重试")
 var ErrAccountRiskConflict = errors.New("配置已被修改，请刷新后重试")
 
+type AccountRiskErrorMatch struct {
+	Status  int    `json:"status,omitempty"`
+	Keyword string `json:"keyword,omitempty"`
+}
+
 type AccountRiskConfig struct {
+	CustomErrorEnabled       bool                    `json:"custom_error_enabled"`
+	CustomErrorWindowSeconds int                     `json:"custom_error_window_seconds"`
+	CustomErrorThreshold     int                     `json:"custom_error_threshold"`
+	CustomErrorRules         []AccountRiskErrorMatch `json:"custom_error_rules,omitempty"`
+
 	RateLimit429Enabled       bool   `json:"rate_limit_429_enabled"`
 	RateLimit429WindowSeconds int    `json:"rate_limit_429_window_seconds"`
 	RateLimit429Threshold     int    `json:"rate_limit_429_threshold"`
@@ -57,7 +68,7 @@ type AccountRiskConfig struct {
 }
 
 func DefaultAccountRiskConfig() AccountRiskConfig {
-	return AccountRiskConfig{RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, ProbeEnabled: true, ProbeScope: "single", Probe429MaxRetries: 3, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
+	return AccountRiskConfig{CustomErrorWindowSeconds: 60, CustomErrorThreshold: 20, RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, ProbeEnabled: true, ProbeScope: "single", Probe429MaxRetries: 3, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
 		ProbePrompt: "请只回复数字 21，不要输出其他内容。", ExpectedText: "21", Model: "gpt-6.1-sol", ReasoningEffort: "high"}
 }
 
@@ -85,6 +96,18 @@ func (c *AccountRiskConfig) UnmarshalJSON(data []byte) error {
 }
 
 func (c *AccountRiskConfig) Normalize429() {
+	if c.CustomErrorWindowSeconds == 0 {
+		c.CustomErrorWindowSeconds = 60
+	}
+	if c.CustomErrorThreshold == 0 {
+		c.CustomErrorThreshold = 20
+	}
+	if len(c.CustomErrorRules) == 0 {
+		c.CustomErrorRules = nil
+	}
+	for i := range c.CustomErrorRules {
+		c.CustomErrorRules[i].Keyword = strings.TrimSpace(c.CustomErrorRules[i].Keyword)
+	}
 	if c.ProbeScope == "" {
 		c.ProbeScope = "single"
 	}
@@ -100,6 +123,9 @@ func (c *AccountRiskConfig) Normalize429() {
 }
 
 func (c AccountRiskConfig) Validate() error {
+	if err := c.validateCustomErrors(); err != nil {
+		return err
+	}
 	if c.ProbeMismatchMaxRetries < 0 || c.ProbeMismatchMaxRetries > 20 {
 		return errors.New("定时测试回复不匹配最大重试次数须为 0–20")
 	}
@@ -257,6 +283,7 @@ type accountRiskProber interface {
 
 type AccountRiskService struct {
 	onProbe401Committed func(context.Context, *Account, time.Time, bool)
+	customErrorCache    accountRiskCustomCache
 	counter429          AccountRisk429Counter
 	store               AccountRiskStore
 	accounts            accountRiskAccounts
@@ -355,6 +382,7 @@ func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision in
 		return err
 	}
 	c.Normalize429()
+	defer s.customErrorCache.invalidate()
 	g, err := s.groups.GetByID(ctx, groupID)
 	if err != nil || g == nil || g.Platform != PlatformOpenAI || (c.Enabled && g.Status != StatusActive) {
 		return errors.New("请选择有效的 OpenAI 分组")
@@ -375,7 +403,7 @@ func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision in
 		previous := r.Config
 		previous.Probe401Enabled = c.Probe401Enabled
 		previous.Notify401Enabled = c.Notify401Enabled
-		if r.Revision > 0 && previous == c && r.Config != c {
+		if r.Revision > 0 && reflect.DeepEqual(previous, c) && !reflect.DeepEqual(r.Config, c) {
 			for _, p := range state.CapacityPauses {
 				if p.GroupID == groupID && p.Revision == revision {
 					p.Revision++

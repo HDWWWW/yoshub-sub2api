@@ -13,7 +13,7 @@ func refillImmediateFailureRetryEnabled(c AccountRefillConfig) bool {
 // A confirmed failure supplies the plan for an existing demand slot. It never
 // adds demand or submits from a second worker. Old terminal jobs are not replayed.
 func markRefillFailureReplacement(state *accountRefillState, job *AccountRefillJob) {
-	if job.Provider != state.Config.automaticProvider() || job.isBackup() || job.MuzeFallbackJobID != "" || job.ManualRequestID != "" || job.DailyBatchID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
+	if job.Provider != "" && job.Provider != refillProviderMuze || job.isBackup() || job.MuzeFallbackJobID != "" || job.ManualRequestID != "" || job.DailyBatchID != "" || job.Reason == "手动补号" || job.AccountID != 0 {
 		return
 	}
 	if job.TimeoutIgnoredAt != nil {
@@ -54,7 +54,7 @@ func nextRefillFailureReplacement(state *accountRefillState) int {
 	selected := -1
 	for i, j := range state.Jobs {
 		if !j.ReplacementPending || j.ReplacementJobID != "" || j.isBackup() || j.MuzeFallbackJobID != "" ||
-			j.Provider != state.Config.automaticProvider() || !confirmedRefillFailure(j) ||
+			j.Provider != "" && j.Provider != refillProviderMuze || !confirmedRefillFailure(j) ||
 			j.ManualRequestID != "" || j.Reason == "手动补号" || j.AccountID != 0 ||
 			j.GroupID != state.Config.GroupID || j.Mode != state.Config.Mode ||
 			j.RotationGeneration != state.RotationGeneration {
@@ -68,10 +68,14 @@ func nextRefillFailureReplacement(state *accountRefillState) int {
 }
 
 func nextRefillPurchasePlan(state *accountRefillState) string {
+	return nextRefillPurchaseRoute(state).plan
+}
+
+func nextRefillPurchaseRoute(state *accountRefillState) refillRoute {
 	if index := nextRefillFailureReplacement(state); index >= 0 {
-		return state.Jobs[index].Plan
+		return refillRoute{state.Jobs[index].Provider, state.Jobs[index].Plan}
 	}
-	return refillNextPlan(state.Config, state.RotationCursor)
+	return refillNextRoute(state.Config, state.RotationCursor)
 }
 
 // A load dip pauses purchasing, but cannot complete an unsuccessful rotation

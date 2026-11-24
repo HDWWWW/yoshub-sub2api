@@ -907,7 +907,7 @@ type openAIWSPoolMetrics struct {
 }
 
 type openAIWSConnPool struct {
-	onHandshakeStatus func(context.Context, *Account, int, string)
+	onHandshakeStatus func(context.Context, *Account, int, []byte)
 	cfg               *config.Config
 	// 通过接口解耦底层 WS 客户端实现，默认使用 coder/websocket。
 	clientDialer openAIWSClientDialer

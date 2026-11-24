@@ -918,7 +918,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		pool.smartMetrics.handshakes.Add(1)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
 		finishDial()
-		s.observeBusiness401(ctx, account, statusCode, "WebSocket 握手")
+		if statusCode >= 400 {
+			var body []byte
+			var handshakeErr *openAIWSHandshakeError
+			if errors.As(err, &handshakeErr) {
+				body = handshakeErr.Body
+			}
+			s.observeRiskHandshake(ctx, account, statusCode, body)
+		}
 		if err == nil && upstreamConn == nil {
 			err = errors.New("upstream websocket dial returned no connection")
 		}

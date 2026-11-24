@@ -59,6 +59,10 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		readTimeout = time.Duration(s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds) * time.Second
 	}
 	dispatch.readTimeout = readTimeout
+	var customError func([]byte)
+	if cb, ok := c.Get(accountRiskCustomStreamKey); ok {
+		customError, _ = cb.(func([]byte))
+	}
 	var alert401 func()
 	if cb, ok := c.Get(accountRiskBusiness401); ok {
 		alert401, _ = cb.(func())
@@ -116,8 +120,13 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 				createdModel = gjson.GetBytes(payload, "response.model").Str
 				createdAt = gjson.GetBytes(payload, "response.created_at").Int()
 			}
-			if (typ == "error" || typ == "response.failed") && alert401 != nil && explicitStream401(payload) {
-				alert401()
+			if typ == "error" || typ == "response.failed" {
+				if customError != nil {
+					customError(payload)
+				}
+				if alert401 != nil && explicitStream401(payload) {
+					alert401()
+				}
 			}
 			if response != nil {
 				rememberSmartWSHTTPUsage(c, response.Header, raw, payload, observation.start, true)

@@ -86,7 +86,7 @@ func (s *OpenAIGatewayService) doExcelBPSHTTP(req *http.Request, proxy string, a
 func (s *OpenAIGatewayService) doExcelBPSHTTPResponse(req *http.Request, proxy string, account *Account) (*http.Response, error) {
 	resp, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
 	if err == nil && resp != nil {
-		s.observeBusiness401(req.Context(), account, resp.StatusCode, "HTTP")
+		s.observeRiskHTTP(req.Context(), account, resp)
 	}
 	return resp, err
 }

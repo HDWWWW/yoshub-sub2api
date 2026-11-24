@@ -22,15 +22,22 @@ func (s *OpenAIGatewayService) observeAccountRisk429(ctx context.Context, a *Acc
 	if s == nil || s.accountRisk == nil || status != http.StatusTooManyRequests {
 		return false
 	}
+	return s.observeRiskBurst(ctx, a, status, nil, false, uuid.NewString())
+}
+
+func (s *OpenAIGatewayService) observeRiskBurst(ctx context.Context, a *Account, status int, message []byte, custom bool, token string) bool {
 	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
-	token := uuid.NewString()
 	var err error
 	for attempt := 0; attempt < 5; attempt++ {
 		var stopped bool
-		stopped, err = s.accountRisk.Handle429(persist, a, token, time.Now().UTC())
+		stopped, err = s.accountRisk.handleRiskBurst(persist, a, token, time.Now().UTC(), status, message, custom)
 		if stopped {
-			s.BlockAccountScheduling(a, time.Time{}, "account_risk_429")
+			reason := "account_risk_429"
+			if custom {
+				reason = "account_risk_custom_error"
+			}
+			s.BlockAccountScheduling(a, time.Time{}, reason)
 			return true
 		}
 		if !errors.Is(err, ErrAccountRiskBusy) && !errors.Is(err, errAccountRiskModelAccountChanged) {
@@ -43,7 +50,7 @@ func (s *OpenAIGatewayService) observeAccountRisk429(ctx context.Context, a *Acc
 		}
 	}
 	if err != nil {
-		slog.Warn("account 429 risk action failed", "error", err)
+		slog.Warn("account upstream error risk action failed", "status", status, "error", err)
 	}
 	return false
 }
@@ -51,6 +58,10 @@ func (s *OpenAIGatewayService) observeAccountRisk429(ctx context.Context, a *Acc
 func risk429Enabled(c AccountRiskConfig) bool { return c.Enabled && c.RateLimit429Enabled }
 
 func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, token string, now time.Time) (bool, error) {
+	return s.handleRiskBurst(ctx, account, token, now, http.StatusTooManyRequests, nil, false)
+}
+
+func (s *AccountRiskService) handleRiskBurst(ctx context.Context, account *Account, token string, now time.Time, status int, message []byte, custom bool) (bool, error) {
 	if s == nil || s.counter429 == nil || account == nil || account.Platform != PlatformOpenAI {
 		return false, nil
 	}
@@ -65,7 +76,16 @@ func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, to
 	slices.Sort(ids)
 	for _, id := range ids {
 		r := state.Rules[id]
-		if !risk429Enabled(r.Config) || !slices.Contains(account.GroupIDs, id) {
+		if r == nil || !slices.Contains(account.GroupIDs, id) {
+			continue
+		}
+		window, threshold, kind, label := r.Config.RateLimit429WindowSeconds, r.Config.RateLimit429Threshold, "rate_limit_429", "上游 429"
+		if custom {
+			if !r.Config.Enabled || !r.Config.CustomErrorEnabled || !matchesCustomError(r.Config.CustomErrorRules, status, message) {
+				continue
+			}
+			window, threshold, kind, label = r.Config.CustomErrorWindowSeconds, r.Config.CustomErrorThreshold, "custom_error", "自定义上游错误"
+		} else if !risk429Enabled(r.Config) {
 			continue
 		}
 		// A stop starts a new counting epoch for a later manual re-enable.
@@ -77,17 +97,20 @@ func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, to
 			}
 		}
 		key := fmt.Sprintf("%d:%d:%d:%x:%s", id, r.Revision, account.ID, riskModelAccountIdentity(account), epoch)
-		count, err := s.counter429.Increment(ctx, key, token, r.Config.RateLimit429WindowSeconds, r.Config.RateLimit429Threshold+1)
+		if custom {
+			key = "custom:" + key
+		}
+		count, err := s.counter429.Increment(ctx, key, token, window, threshold+1)
 		if err != nil {
 			return false, err
 		}
-		if count <= int64(r.Config.RateLimit429Threshold) {
+		if count <= int64(threshold) {
 			continue
 		}
 		stopped := false
 		err = s.store.Update(ctx, func(currentState *AccountRiskState, stop AccountRiskScheduling) error {
 			currentRule := currentState.Rules[id]
-			if currentRule == nil || currentRule.Revision != r.Revision || !risk429Enabled(currentRule.Config) {
+			if currentRule == nil || currentRule.Revision != r.Revision || !currentRule.Config.Enabled || (custom && !currentRule.Config.CustomErrorEnabled) || (!custom && !currentRule.Config.RateLimit429Enabled) {
 				return nil
 			}
 			g, err := s.groups.GetByID(ctx, id)
@@ -111,9 +134,9 @@ func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, to
 			if !stopped {
 				return errAccountRiskModelAccountChanged
 			}
-			reason := fmt.Sprintf("%d 秒内上游 429 超过 %d 次，已关闭账号调度；可使用测试消息手动复测", r.Config.RateLimit429WindowSeconds, r.Config.RateLimit429Threshold)
+			reason := fmt.Sprintf("%d 秒内%s超过 %d 次，已关闭账号调度，可使用测试消息手动复测", window, label, threshold)
 			riskRecordStop(currentRule, current, now, reason)
-			currentRule.Events[0].Kind, currentRule.Events[0].Action = "rate_limit_429", "stop"
+			currentRule.Events[0].Kind, currentRule.Events[0].Action = kind, "stop"
 			currentRule.Events[0].Occurrences = int(count)
 			return nil
 		})

@@ -56,6 +56,22 @@
             </div>
             <p class="text-xs text-gray-500">{{ t('accountRisk.rateLimit429Hint') }}</p>
           </section>
+          <section class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600" data-testid="risk-custom-errors">
+            <label class="flex items-center gap-3"><input v-model="draft.custom_error_enabled" type="checkbox" class="rounded" data-testid="risk-custom-enabled" @change="initializeErrorMatch" /><span class="text-sm font-semibold">{{ t('accountRisk.customTitle') }}</span></label>
+            <template v-if="draft.custom_error_enabled">
+              <div class="grid gap-3 sm:grid-cols-2">
+                <label><span class="input-label">{{ t('accountRisk.rateLimit429Window') }}</span><input v-model.number="draft.custom_error_window_seconds" class="input" type="number" min="1" max="3600" required data-testid="risk-custom-window" /></label>
+                <label><span class="input-label">{{ t('accountRisk.rateLimit429Threshold') }}</span><input v-model.number="draft.custom_error_threshold" class="input" type="number" min="1" max="10000" required data-testid="risk-custom-threshold" /></label>
+              </div>
+              <div v-for="(rule, i) in draft.custom_error_rules" :key="i" class="flex flex-wrap items-end gap-2">
+                <label class="w-36"><span class="input-label">{{ t('accountRisk.customStatus') }}</span><input :value="rule.status" class="input" type="number" min="400" max="599" placeholder="503" :data-testid="`risk-custom-status-${i}`" @input="rule.status = ($event.target as HTMLInputElement).valueAsNumber || undefined" /></label>
+                <label class="min-w-40 flex-1"><span class="input-label">{{ t('accountRisk.customKeyword') }}</span><input v-model.trim="rule.keyword" class="input" maxlength="128" placeholder="overload" :data-testid="`risk-custom-keyword-${i}`" /></label>
+                <button type="button" class="btn btn-secondary" @click="draft.custom_error_rules.splice(i, 1)">{{ t('accountRisk.customRemove') }}</button>
+              </div>
+              <button type="button" class="btn btn-secondary" data-testid="risk-custom-add" :disabled="draft.custom_error_rules.length >= 20" @click="draft.custom_error_rules.push({})">{{ t('accountRisk.customAdd') }}</button>
+              <p class="text-xs text-gray-500">{{ t('accountRisk.customHint') }}</p>
+            </template>
+          </section>
           <section class="space-y-3">
             <h3 class="text-sm font-semibold">{{ t('accountRisk.multiTitle') }}</h3>
             <p class="text-xs text-gray-500">{{ t('accountRisk.multiHint') }}</p>
@@ -193,9 +209,18 @@ const scheduledChecks = computed(() => Object.values(view.value?.observation.sch
 const capacityAnomalies = computed(() => Object.values(view.value?.observation.capacity_checks ?? {})
   .filter(check => check.reference && check.anomaly_since)
   .sort((a, b) => Date.parse(a.anomaly_since!) - Date.parse(b.anomaly_since!) || a.target.account_id - b.target.account_id))
+function initializeErrorMatch() {
+  const c = draft.value
+  if (c?.custom_error_enabled && !c.custom_error_rules.length) c.custom_error_rules.push({})
+  if (c && !c.custom_error_enabled) c.custom_error_rules = c.custom_error_rules.filter(r => r.status || r.keyword?.trim())
+}
 const valid = computed(() => {
   const c = draft.value
   return !!c && Number.isInteger(c.rate_limit_429_window_seconds) && c.rate_limit_429_window_seconds >= 1 && c.rate_limit_429_window_seconds <= 3600 &&
+    (!c.custom_error_enabled || (c.custom_error_rules.length > 0 &&
+      Number.isInteger(c.custom_error_window_seconds) && c.custom_error_window_seconds >= 1 && c.custom_error_window_seconds <= 3600 &&
+      Number.isInteger(c.custom_error_threshold) && c.custom_error_threshold >= 1 && c.custom_error_threshold <= 10000 &&
+      c.custom_error_rules.every(r => (!r.status || (Number.isInteger(r.status) && r.status >= 400 && r.status <= 599)) && (r.status || r.keyword?.trim())))) &&
     ['single', 'all'].includes(c.probe_scope) &&
     Number.isInteger(c.probe_mismatch_max_retries) && c.probe_mismatch_max_retries >= 0 && c.probe_mismatch_max_retries <= 20 &&
     (!c.probe_429_stop_enabled || (Number.isInteger(c.probe_429_max_retries) && c.probe_429_max_retries >= 1 && c.probe_429_max_retries <= 20)) &&
@@ -220,7 +245,10 @@ async function load() {
   view.value = null; draft.value = null; testResult.value = null; testAccountID.value = 0; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_mismatch_max_retries: data.config.probe_mismatch_max_retries ?? 0, probe_401_enabled: data.config.probe_401_enabled ?? false, notify_401_enabled: data.config.notify_401_enabled ?? data.config.probe_401_enabled ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config,
+    custom_error_enabled: data.config.custom_error_enabled ?? false, custom_error_window_seconds: data.config.custom_error_window_seconds || 60,
+    custom_error_threshold: data.config.custom_error_threshold || 20, custom_error_rules: (data.config.custom_error_rules ?? []).map(r => ({ ...r })),
+    rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_mismatch_max_retries: data.config.probe_mismatch_max_retries ?? 0, probe_401_enabled: data.config.probe_401_enabled ?? false, notify_401_enabled: data.config.notify_401_enabled ?? data.config.probe_401_enabled ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { if (current === generation) loading.value = false }
 }

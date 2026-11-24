@@ -1,6 +1,10 @@
 import { apiClient } from '../client'
 
 export interface AccountRiskConfig {
+  custom_error_enabled: boolean
+  custom_error_window_seconds: number
+  custom_error_threshold: number
+  custom_error_rules: { status?: number; keyword?: string }[]
   rate_limit_429_enabled: boolean
   rate_limit_429_window_seconds: number
   rate_limit_429_threshold: number

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -45,7 +46,7 @@ func (s *OpenAIGatewayService) recordBusiness401(ctx context.Context, groupID in
 		queued := false
 		err := risk.store.Update(persist, func(state *AccountRiskState, _ AccountRiskScheduling) error {
 			rule := state.Rules[groupID]
-			if rule == nil || !rule.Config.Enabled || !rule.Config.Notify401Enabled {
+			if rule == nil || !rule.Config.Notify401Enabled {
 				return nil
 			}
 			appendRisk401Event(rule, account.ID, account.Name, time.Now().UTC(), accountRiskBusiness401, "gateway", "业务请求收到上游 401（"+source+"）")
@@ -88,11 +89,23 @@ func (s *OpenAIGatewayService) accountRiskStream401(ctx context.Context, c *gin.
 	})
 }
 
-func explicitStream401(payload []byte) bool {
+func explicitStreamStatus(payload []byte) int {
 	for _, path := range openAIStreamErrorStatusPaths {
-		if v := gjson.GetBytes(payload, path); (v.Type == gjson.Number && v.Num == http.StatusUnauthorized) || (v.Type == gjson.String && v.Str == "401") {
-			return true
+		v := gjson.GetBytes(payload, path)
+		if v.Type != gjson.Number && v.Type != gjson.String {
+			continue
+		}
+		if n, err := strconv.Atoi(v.String()); err == nil && n >= 400 && n <= 599 {
+			return n
 		}
 	}
-	return false
+	return 0
+}
+
+func explicitStream401(payload []byte) bool {
+	if status := explicitStreamStatus(payload); status != 0 {
+		return status == http.StatusUnauthorized
+	}
+	// A typed authentication rejection is the stream equivalent of HTTP 401.
+	return openAIStreamCredentialAuthFailure(payload)
 }

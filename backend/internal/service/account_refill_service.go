@@ -130,6 +130,7 @@ type AccountRefillView struct {
 	DailyScheduleStatus       AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`
 	Rules                     []AccountRefillRuleSummary                  `json:"rules"`
 	RotationCursor            int                                         `json:"rotation_cursor"`
+	NextProvider              string                                      `json:"next_provider"`
 	NextPlan                  string                                      `json:"next_plan"`
 	WebhookConfigured         bool                                        `json:"webhook_configured"`
 	QQSecretConfigured        bool                                        `json:"qq_secret_configured"`
@@ -191,7 +192,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	return &AccountRefillView{DailyScheduleStatuses: state.DailyScheduleStatuses, Muze: state.Muze.view(), DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", QQSecretConfigured: state.EncryptedQQSecret != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
-		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state), WorkdayCalendar: state.WorkdayCalendar.view(),
+		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state), NextProvider: refillPublicProvider(nextRefillPurchaseRoute(&state).provider), WorkdayCalendar: state.WorkdayCalendar.view(),
 		MuzeFallbackStatus:  refillMuzeFallbackStatus(&state),
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),
 		ForecastObservation: s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
@@ -379,10 +380,10 @@ func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Cont
 			state.Catalog = nil
 			state.CatalogAt = nil
 		}
-		if c.automaticProvider() == refillProviderMuze && (c.Enabled || refillDailyScheduleEnabled(c)) && state.Muze.EncryptedToken == "" {
+		if c.needsAutomaticProvider(refillProviderMuze) && state.Muze.EncryptedToken == "" {
 			return errors.New("请先配置 Muze API Key")
 		}
-		if c.automaticProvider() == "" && (c.Enabled || refillDailyScheduleEnabled(c)) && state.EncryptedToken == "" {
+		if c.needsAutomaticProvider("") && state.EncryptedToken == "" {
 			return errors.New("启用前请配置号商 API Key")
 		}
 		if c.Mode != state.Config.Mode || c.IntervalMinutes != state.Config.IntervalMinutes || c.IntervalQuantity != state.Config.IntervalQuantity {
@@ -419,7 +420,7 @@ func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Cont
 			return errors.New("启用备用补号前请先保存muze连接设置")
 		}
 		roleChanged := c.automaticProvider() != state.Config.automaticProvider()
-		if roleChanged || !c.MuzeFallback.enabled() {
+		if roleChanged || !c.MuzeFallback.enabled() || !slices.Equal(c.Rotation, state.Config.Rotation) || c.RotationEnabled != state.Config.RotationEnabled {
 			state.MuzeFallback.Shortage = nil
 		}
 		if roleChanged {
@@ -570,9 +571,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			token, err = s.encryptor.Decrypt(state.EncryptedToken)
 			if err != nil {
 				state.Message = "密钥解密失败，请重新保存 API Key"
-				if state.Config.automaticProvider() == "" && !state.Config.MuzeFallback.enabled() {
-					return persist()
-				}
+				// Continue reconciliation and any independent Muze step.
 				token = ""
 			}
 		}
@@ -600,19 +599,9 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 				return err
 			}
 		}
-		primary := state.Config.automaticProvider()
-		if time.Now().Before(state.providerBackoff(primary)) {
-			if timeoutNotice != nil {
-				state.Message = "号商限流或暂不可用，等待退避结束后重试"
-			}
-			return nil
-		}
 		if !preview && !time.Now().Before(state.ProviderRetryAt) {
 			if err := s.checkRefillNotificationBalance(ctx, token, &state, now, persist); err != nil {
 				return err
-			}
-			if time.Now().Before(state.providerBackoff(primary)) {
-				return nil
 			}
 		}
 		if !preview && ((now.Before(state.NextCheckAt) && !refillTimeoutCheckDue(&state, now)) || !state.Config.MonitorEnabled) {
@@ -628,8 +617,13 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			timeoutNotice = captureRefillTimeoutNotice(&state, now)
 		}
 		reconcileRefillFailureReplacements(&state)
+		route := nextRefillPurchaseRoute(&state)
+		if state.Evaluation.TimeoutRetryJobID != "" {
+			route = refillRoute{state.Evaluation.TimeoutRetryProvider, state.Evaluation.TimeoutRetryPlan}
+		}
+		primary := route.provider
 		if time.Now().Before(state.providerBackoff(primary)) {
-			state.Message = "号商限流，等待重试后继续同步"
+			state.Message = "号商限流，等待退避结束后继续同步"
 			return persist()
 		}
 		// A read-only refresh also supplies the manual 1208 quote when Muze is primary.
@@ -733,18 +727,15 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			state.Message = "补号冷却中，等待下次检查"
 			return persist()
 		}
-		plan := nextRefillPurchasePlan(&state)
-		if timeoutRetry {
-			plan = state.Evaluation.TimeoutRetryPlan
-		}
-		quote, connectionID, supplyFallback, err := s.automaticQuote(ctx, &state, plan, now, persist)
+		plan := route.plan
+		quote, connectionID, supplyFallback, err := s.automaticQuote(ctx, &state, route, now, persist)
 		if err != nil {
 			state.Message = err.Error()
 			return persist()
 		}
 		orderProvider := primary
 		if supplyFallback {
-			orderProvider = state.Config.backupProvider()
+			orderProvider = otherRefillProvider(primary)
 			plan = quote.Plan
 		}
 		day := now.In(refillTimezone).Format("2006-01-02")
@@ -826,7 +817,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 		}
 		state.LastSubmitAt = now
-		if replacement < 0 && !timeoutRetry && !supplyFallback {
+		if replacement < 0 && !timeoutRetry {
 			advanceRefillRotation(&state)
 		}
 		if state.Config.Mode == "interval" && !timeoutRetry {
