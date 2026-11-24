@@ -706,6 +706,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			restoredData = restoreCodexToolNamesFromSSEContext(c, restoredData, eventType)
 			restoredData = restoreOpenAIResponsesInstructionsEchoInEvent(c, restoredData)
+			restoredData = rewriteOpenAIResponseServiceTierFromContext(c, account, restoredData)
 			if !bytes.Equal(restoredData, dataBytes) {
 				dataBytes = restoredData
 				data = string(restoredData)
@@ -1839,6 +1840,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 	body = restoreCodexToolNamesFromContext(c, body)
 	body = restoreOpenAIResponsesInstructionsEchoInResponse(c, body)
+	body = rewriteOpenAIResponseServiceTierFromContext(c, account, body)
 	body = ensureOpenAIResponseObjectCreatedAt(body)
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	// Codex 协议要求 /responses/compact JSON 响应携带 x-codex-turn-state
@@ -1952,6 +1954,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		restoredBody = restoreCodexToolNamesFromContext(c, restoredBody)
 		restoredBody = restoreOpenAIResponsesInstructionsEchoInResponse(c, restoredBody)
 		body = ensureOpenAIResponseObjectCreatedAt(restoredBody)
+		body = rewriteOpenAIResponseServiceTierFromContext(c, account, body)
 	} else {
 		if originalModel != mappedModel {
 			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)

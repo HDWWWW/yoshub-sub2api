@@ -23,9 +23,12 @@ func TestForwardOpenAIWSV2_KeepsOutboundAndObservedServiceTiersSeparate(t *testi
 		name        string
 		requestTier string
 		stream      bool
+		oauth       bool
 	}{
 		{name: "priority_nonstream", requestTier: "priority", stream: false},
 		{name: "fast_stream", requestTier: "fast", stream: true},
+		{name: "oauth_ultrafast_stream", requestTier: "ultrafast", stream: true, oauth: true},
+		{name: "oauth_ultrafast_nonstream", requestTier: "ultrafast", stream: false, oauth: true},
 	}
 
 	for _, tc := range cases {
@@ -40,6 +43,7 @@ func TestForwardOpenAIWSV2_KeepsOutboundAndObservedServiceTiersSeparate(t *testi
 			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
 			cfg.Gateway.OpenAIWS.Enabled = true
 			cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+			cfg.Gateway.OpenAIWS.OAuthEnabled = true
 			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
 			cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
@@ -77,6 +81,11 @@ func TestForwardOpenAIWSV2_KeepsOutboundAndObservedServiceTiersSeparate(t *testi
 				Credentials: map[string]any{"api_key": "sk-test"},
 				Extra:       map[string]any{"responses_websockets_v2_enabled": true},
 			}
+			if tc.oauth {
+				account.Type = AccountTypeOAuth
+				account.Credentials = map[string]any{"access_token": "test", "chatgpt_account_id": "test"}
+				account.Extra["openai_passthrough"] = false
+			}
 
 			body := []byte(fmt.Sprintf(
 				`{"model":"gpt-5.5","stream":%t,"service_tier":%q,"input":[{"type":"input_text","text":"hi"}]}`,
@@ -89,10 +98,25 @@ func TestForwardOpenAIWSV2_KeepsOutboundAndObservedServiceTiersSeparate(t *testi
 			require.Equal(t, tc.stream, result.Stream)
 			require.Equal(t, "resp_tier_v2", result.RequestID)
 			require.NotNil(t, result.ServiceTier)
-			require.Equal(t, "priority", *result.ServiceTier)
+			wantRequestTier := "priority"
+			if tc.oauth {
+				wantRequestTier = "ultrafast"
+			}
+			require.Equal(t, wantRequestTier, *result.ServiceTier)
 			require.Equal(t, "default", result.UpstreamResponseServiceTier)
-			require.Equal(t, "priority", captureConn.lastWrite["service_tier"],
+			require.Equal(t, wantRequestTier, captureConn.lastWrite["service_tier"],
 				"outbound WS payload still carries the requested Fast tier")
+			wire := rec.Body.Bytes()
+			path := "service_tier"
+			if tc.stream {
+				_, wire, _ = extractOpenAISSETerminalEvent(rec.Body.String())
+				path = "response.service_tier"
+			}
+			wantResponseTier := "default"
+			if tc.oauth {
+				wantResponseTier = "ultrafast"
+			}
+			require.Equal(t, wantResponseTier, gjson.GetBytes(wire, path).String())
 		})
 	}
 }

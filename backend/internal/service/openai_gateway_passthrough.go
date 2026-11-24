@@ -461,6 +461,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			s.noteOpenAICodexTurnStateProvenance(c, account)
 		}
 
+		setOpenAIResponseServiceTier(c, extractOpenAIServiceTierFromBody(body))
 		if reqStream {
 			result, handleErr := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
@@ -2428,6 +2429,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 				restoredData = restoreCodexToolNamesFromSSEContext(c, restoredData, rawEventType)
 				restoredData = restoreOpenAIResponsesInstructionsEchoInEvent(c, restoredData)
+				restoredData = rewriteOpenAIResponseServiceTierFromContext(c, account, restoredData)
 				if !bytes.Equal(restoredData, dataBytes) {
 					dataBytes = restoredData
 					trimmedData = strings.TrimSpace(string(restoredData))
@@ -2750,6 +2752,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	}
 	body = restoreCodexToolNamesFromContext(c, body)
 	body = restoreOpenAIResponsesInstructionsEchoInResponse(c, body)
+	body = rewriteOpenAIResponseServiceTierFromContext(c, account, body)
 	body, err = restoreOpenAIResponsesClientToolPayload(c, body)
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
@@ -2821,6 +2824,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 		restoredBody = restoreCodexToolNamesFromContext(c, restoredBody)
 		body = restoreOpenAIResponsesInstructionsEchoInResponse(c, restoredBody)
+		body = rewriteOpenAIResponseServiceTierFromContext(c, account, body)
 	} else {
 		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 			bodyText = s.replaceModelInSSEBody(bodyText, mappedModel, originalModel)

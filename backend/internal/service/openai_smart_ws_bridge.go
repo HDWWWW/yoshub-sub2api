@@ -180,6 +180,7 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 				clientPayload = stamped
 			}
 		}
+		clientPayload = rewriteOpenAIResponseServiceTier(clientPayload, account, result.ServiceTier)
 		if err := write(clientPayload); err != nil {
 			result.ClientDisconnect = true
 			return result, fmt.Errorf("write client websocket event: %w", err)

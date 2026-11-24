@@ -31,6 +31,7 @@ type openAIWSClientFrameConn struct {
 	// model identifier they supplied for the current turn.
 	restoreResponseModel func([]byte) []byte
 	restoreToolNames     func([]byte) []byte
+	rewriteServiceTier   func([]byte) []byte
 }
 
 // openAIWSPolicyEnforcingFrameConn wraps a client-side FrameConn and runs
@@ -655,6 +656,9 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 		if c.restoreToolNames != nil {
 			payload = c.restoreToolNames(payload)
 		}
+		if c.rewriteServiceTier != nil {
+			payload = c.rewriteServiceTier(payload)
+		}
 	}
 	return c.conn.Write(ctx, msgType, payload)
 }
@@ -1027,6 +1031,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 		restoreToolNames: func(payload []byte) []byte {
 			return restoreCodexToolNamesFromContext(c, payload)
+		},
+		rewriteServiceTier: func(payload []byte) []byte {
+			return rewriteOpenAIResponseServiceTier(payload, account, usageMeta.serviceTier.Load())
 		},
 	}
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{
