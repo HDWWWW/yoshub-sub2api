@@ -143,34 +143,34 @@ func TestRefillPollingDeliveryDisconnectUsesSameTwentySecondInterval(t *testing.
 	})
 }
 
-type fenduduPollingProvider struct {
-	*fenduduTestProvider
+type muzePollingProvider struct {
+	*muzeTestProvider
 	err        error
 	delay      time.Duration
 	queryCalls int
 }
 
-func (p *fenduduPollingProvider) Cycle(ctx context.Context, token, id string) (*fenduduCycle, error) {
+func (p *muzePollingProvider) Cycle(ctx context.Context, token, id string) (*muzeCycle, error) {
 	p.queryCalls++
 	time.Sleep(p.delay)
 	if p.err != nil {
 		return nil, p.err
 	}
-	return p.fenduduTestProvider.Cycle(ctx, token, id)
+	return p.muzeTestProvider.Cycle(ctx, token, id)
 }
 
-func TestFenduduPollingFixedIntervalAndRateLimit(t *testing.T) {
+func TestMuzePollingFixedIntervalAndRateLimit(t *testing.T) {
 	for _, scenario := range []string{"pending", "disconnect", "slow timeout", "rate limit"} {
 		t.Run(scenario, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				// Manual request IDs require a 13-digit Unix millisecond timestamp.
 				time.Sleep(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Sub(time.Now()))
-				s, store, base, accounts := fenduduHarness(t)
+				s, store, base, accounts := muzeHarness(t)
 				ctx := context.Background()
-				require.NoError(t, s.Manual(ctx, fenduduRequest()))
+				require.NoError(t, s.Manual(ctx, muzeRequest()))
 				require.NoError(t, s.run(ctx, false))
-				provider := &fenduduPollingProvider{fenduduTestProvider: base}
-				s.fendudu = provider
+				provider := &muzePollingProvider{muzeTestProvider: base}
+				s.muze = provider
 				store.mutate(t, func(state *accountRefillState) { state.Jobs[0].Attempts = 100 })
 				want := 20 * time.Second
 				switch scenario {
@@ -179,7 +179,7 @@ func TestFenduduPollingFixedIntervalAndRateLimit(t *testing.T) {
 				case "slow timeout":
 					provider.err, provider.delay = context.DeadlineExceeded, 25*time.Second
 				case "rate limit":
-					provider.err = &fenduduHTTPError{remote: &refillProviderError{code: 429, retryAfter: 90 * time.Second}, message: "rate limited"}
+					provider.err = &muzeHTTPError{remote: &refillProviderError{code: 429, retryAfter: 90 * time.Second}, message: "rate limited"}
 					want = 90 * time.Second
 				}
 				time.Sleep(20 * time.Second)
@@ -189,7 +189,7 @@ func TestFenduduPollingFixedIntervalAndRateLimit(t *testing.T) {
 				require.Equal(t, 1, provider.queryCalls)
 				require.WithinDuration(t, time.Now().Add(want), state.Jobs[0].NextAttemptAt, 0)
 				if scenario == "rate limit" {
-					require.Equal(t, state.Jobs[0].NextAttemptAt, state.Fendudu.RetryAt)
+					require.Equal(t, state.Jobs[0].NextAttemptAt, state.Muze.RetryAt)
 				}
 				time.Sleep(want - time.Nanosecond)
 				require.NoError(t, s.run(ctx, false))
@@ -204,16 +204,16 @@ func TestFenduduPollingFixedIntervalAndRateLimit(t *testing.T) {
 	}
 }
 
-func TestFenduduPollingLostReceiptRecoveryDoesNotBackOffOrResubmit(t *testing.T) {
+func TestMuzePollingLostReceiptRecoveryDoesNotBackOffOrResubmit(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		// Manual request IDs require a 13-digit Unix millisecond timestamp.
 		time.Sleep(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Sub(time.Now()))
-		s, store, base, accounts := fenduduHarness(t)
+		s, store, base, accounts := muzeHarness(t)
 		ctx := context.Background()
 		base.orderError = errors.New("lost response")
-		require.NoError(t, s.Manual(ctx, fenduduRequest()))
+		require.NoError(t, s.Manual(ctx, muzeRequest()))
 		require.NoError(t, s.run(ctx, false))
-		s.fendudu = &fenduduRecoveryProvider{fenduduTestProvider: base, readError: &refillProviderTemporaryError{"query interrupted"}}
+		s.muze = &muzeRecoveryProvider{muzeTestProvider: base, readError: &refillProviderTemporaryError{"query interrupted"}}
 		store.mutate(t, func(state *accountRefillState) { state.Jobs[0].Attempts = 100 })
 		for i := 0; i < 3; i++ {
 			time.Sleep(20 * time.Second)

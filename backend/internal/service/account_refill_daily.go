@@ -245,15 +245,9 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		status.NextAt = nextRefillDailyTime(schedule, now, status.LastAt, state.WorkdayCalendar)
 		return false, persist()
 	}
-	if now.Before(state.ProviderRetryAt) {
+	provider := c.automaticProvider()
+	if now.Before(state.providerBackoff(provider)) {
 		return blocked("号商限流或暂不可用，等待退避结束")
-	}
-	if state.EncryptedToken == "" {
-		return blocked("请配置号商 API Key")
-	}
-	token, err := s.encryptor.Decrypt(state.EncryptedToken)
-	if err != nil {
-		return blocked("密钥解密失败，请重新保存 API Key")
 	}
 	if err := s.validateGroups(ctx, c); err != nil {
 		return blocked(err.Error())
@@ -261,57 +255,79 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	if _, err := s.selectProxy(ctx, c.Delivery); err != nil {
 		return blocked(err.Error())
 	}
-	catalog, err := s.provider.Catalog(ctx, token)
-	if err != nil || catalog == nil {
-		state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
-		return blocked("无法读取号商报价")
-	}
-	wallet, key, err := s.provider.Identity(ctx, token)
-	if err != nil || wallet == nil || key == nil {
-		state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
-		return blocked("无法验证号商余额和 API Key")
-	}
-	state.Catalog, state.Wallet, state.Key = catalog, wallet, key
-	state.CatalogAt, state.IdentityAt = &now, &now
-	if key.Revoked || (!key.ExpiresAt.IsZero() && !key.ExpiresAt.After(time.Now())) {
-		return blocked("号商 API Key 已失效")
-	}
-	quotes := make([]RefillQuote, 0, schedule.Quantity)
-	total := 0.0
-	for i := 0; i < schedule.Quantity; i++ {
-		plan := refillNextPlan(c, state.RotationCursor+i)
-		if schedule.Plan != "" {
-			plan = schedule.Plan
+	plans := make([]string, schedule.Quantity)
+	for i := range plans {
+		plans[i] = schedule.Plan
+		if plans[i] == "" {
+			plans[i] = refillNextPlan(c, state.RotationCursor+i)
 		}
-		index := slices.IndexFunc(catalog.Items, func(q RefillQuote) bool { return q.Service == "refill" && q.Plan == plan && q.Enabled })
-		if index < 0 {
-			return blocked("所选补号套餐暂不可用")
+	}
+	var connectionID string
+	var quotes []RefillQuote
+	var total float64
+	if provider == refillProviderMuze {
+		var err error
+		connectionID, err = s.muzePurchaseQuote(ctx, state, plans, persist)
+		if err != nil {
+			return blocked(err.Error())
 		}
-		quote := catalog.Items[index]
-		if math.IsNaN(quote.Price) || math.IsInf(quote.Price, 0) || quote.Price <= 0 || quote.Price > c.MaxUnitPrice {
-			return blocked("当前单价超过允许上限或报价无效")
+		for _, plan := range plans {
+			quotes = append(quotes, RefillQuote{Plan: plan, Enabled: true, Service: "refill"})
 		}
-		quotes = append(quotes, quote)
-		total += quote.Price
+	} else {
+		if state.EncryptedToken == "" {
+			return blocked("请配置 1208 API Key")
+		}
+		token, err := s.encryptor.Decrypt(state.EncryptedToken)
+		if err != nil {
+			return blocked("密钥解密失败，请重新保存 API Key")
+		}
+		catalog, err := s.provider.Catalog(ctx, token)
+		if err != nil || catalog == nil {
+			state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
+			return blocked("无法读取号商报价")
+		}
+		wallet, key, err := s.provider.Identity(ctx, token)
+		if err != nil || wallet == nil || key == nil {
+			state.ProviderRetryAt = now.Add(refillRetryDelay(err, 1))
+			return blocked("无法验证号商余额和 API Key")
+		}
+		state.Catalog, state.Wallet, state.Key = catalog, wallet, key
+		state.CatalogAt, state.IdentityAt = &now, &now
+		if key.Revoked || (!key.ExpiresAt.IsZero() && !key.ExpiresAt.After(time.Now())) {
+			return blocked("号商 API Key 已失效")
+		}
+		for _, plan := range plans {
+			index := slices.IndexFunc(catalog.Items, func(q RefillQuote) bool { return q.Service == "refill" && q.Plan == plan && q.Enabled })
+			if index < 0 {
+				return blocked("所选补号套餐暂不可用")
+			}
+			quote := catalog.Items[index]
+			if math.IsNaN(quote.Price) || math.IsInf(quote.Price, 0) || quote.Price <= 0 || quote.Price > c.MaxUnitPrice {
+				return blocked("当前单价超过允许上限或报价无效")
+			}
+			quotes = append(quotes, quote)
+			total += quote.Price
+		}
+		unsubmitted, err := s.unsubmittedPoints(ctx, state)
+		if err != nil {
+			return blocked(err.Error())
+		}
+		available := math.Min(catalog.Available, wallet.Available)
+		if math.IsNaN(available) || math.IsInf(available, 0) || available+1e-8 < total+unsubmitted {
+			return blocked("号商可用积分不足以创建整批任务（含本地预占）")
+		}
 	}
 	day := now.In(refillTimezone).Format("2006-01-02")
 	usage := state.Usage[day]
 	if usage.Count+len(quotes) > c.DailyMaxCount || usage.Points+total > c.DailyMaxPoints+1e-8 {
 		return blocked("本日数量或积分预算不足以创建整批任务")
 	}
-	unsubmitted, err := s.unsubmittedPoints(ctx, state)
-	if err != nil {
-		return blocked(err.Error())
-	}
-	available := math.Min(catalog.Available, wallet.Available)
-	if math.IsNaN(available) || math.IsInf(available, 0) || available+1e-8 < total+unsubmitted {
-		return blocked("号商可用积分不足以创建整批任务（含本地预占）")
-	}
 	batchID := uuid.NewString()
 	jobs := make([]AccountRefillJob, 0, len(quotes))
 	grace := c.ImportExpiryGraceMinutes
 	for _, quote := range quotes {
-		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), DailyBatchID: batchID, Force: true,
+		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), Provider: provider, MuzeConnectionID: connectionID, DailyBatchID: batchID, Force: true,
 			Status: "submitting", Mode: "daily", Reason: "每日定时强制补号", Plan: quote.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ConfigRevision: state.Revision, RotationGeneration: state.RotationGeneration,
 			ReasonDetail:       fmt.Sprintf("北京时间 %s 定时补号，共 %d 个；忽略健康储备、待核对、在途上限和普通冷却。", due.Format("2006-01-02 15:04"), len(quotes)),

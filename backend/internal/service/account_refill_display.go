@@ -30,6 +30,10 @@ func refillJobsForDisplay(jobs []AccountRefillJob) []AccountRefillJob {
 	result := slices.Clone(jobs)
 	for i := range result {
 		job := &result[i]
+		// Historical 1208 jobs used expires_at for the timestamp returned by 1208.
+		if job.Provider == "" && job.SupplierExpiresAt == nil && job.ExpiresAt != nil && *job.ExpiresAt > 0 && *job.ExpiresAt <= 253402214399 {
+			job.SupplierExpiresAt = job.ExpiresAt
+		}
 		if job.ReplacesJobID != "" {
 			job.ReasonDetail = strings.Replace(job.ReasonDetail,
 				"号商已确认原任务 "+job.ReplacesJobID+" 失败",

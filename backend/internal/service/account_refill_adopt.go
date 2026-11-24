@@ -9,18 +9,18 @@ import (
 	"time"
 )
 
-// SyncFenduduAccountLease also repairs identity lost by an older edit form.
+// SyncMuzeAccountLease also repairs identity lost by an older edit form.
 // Verify the delivered account under the same lock as the metadata write;
 // never reapply import settings, allocate proxies, or reactivate the account.
-func (s *adminServiceImpl) SyncFenduduAccountLease(ctx context.Context, j AccountRefillJob, cycle *fenduduCycle, now time.Time) (*int64, error) {
-	if j.Provider != refillProviderFendudu || j.ID == "" || j.AccountID <= 0 || (j.Status != "imported" && j.Status != "delivery_expired") {
-		return nil, errors.New("粉嘟嘟账号尚未完成交付核对")
+func (s *adminServiceImpl) SyncMuzeAccountLease(ctx context.Context, j AccountRefillJob, cycle *muzeCycle, now time.Time) (*int64, error) {
+	if j.Provider != refillProviderMuze || j.ID == "" || j.AccountID <= 0 || (j.Status != "imported" && j.Status != "delivery_expired") {
+		return nil, errors.New("muze账号尚未完成交付核对")
 	}
-	if err := validateFenduduCycle(cycle, j); err != nil {
+	if err := validateMuzeCycle(cycle, j); err != nil {
 		return nil, err
 	}
-	if !cycle.Pushed || cycle.AccountID != strconv.FormatInt(j.AccountID, 10) {
-		return nil, errors.New("粉嘟嘟订单与已交付账号不匹配")
+	if !cycle.Pushed || (cycle.AccountID != "" && cycle.AccountID != strconv.FormatInt(j.AccountID, 10)) {
+		return nil, errors.New("muze订单与已交付账号不匹配")
 	}
 	var expires *int64
 	_, err := s.scopedAdminTransaction(ctx, j.AccountID, false, func(txctx context.Context) (*Account, error) {
@@ -28,18 +28,18 @@ func (s *adminServiceImpl) SyncFenduduAccountLease(ctx context.Context, j Accoun
 		if err != nil {
 			return nil, err
 		}
-		if err := validateFenduduPushedAccount(a, &j, cycle, now); err != nil {
+		if err := validateMuzePushedAccount(a, &j, cycle, now); err != nil {
 			return nil, err
 		}
 		a.Extra = maps.Clone(a.Extra)
 		if a.Extra == nil {
 			a.Extra = map[string]any{}
 		}
-		a.Extra["import_source"] = "fendudu_api"
-		expires = fenduduSourceExpiry(cycle, a)
-		updates := fenduduLeaseUpdates(&j, a, *expires, now)
+		lease := muzeEffectiveLease(&j, cycle, a)
+		expires = &lease
+		updates := muzeLeaseUpdates(&j, a, *expires, now)
 		updates["refill_job_id"], updates["refill_supplier_id"] = j.ID, j.SupplierID
-		updates["refill_plan"], updates["import_source"] = j.Plan, "fendudu_api"
+		updates["refill_plan"], updates["import_source"] = j.Plan, "muze_api"
 		if err := s.accountRepo.UpdateExtra(txctx, a.ID, updates); err != nil {
 			return nil, err
 		}
@@ -54,6 +54,12 @@ func validateRefillAdoption(account *Account, input *CreateAccountInput) error {
 	marker, _ := input.Extra["refill_job_id"].(string)
 	if !account.IsOpenAIOAuth() || account.IsShadow() || marker == "" || expected == "" || !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(expected)) {
 		return errors.New("推送账号身份不匹配")
+	}
+	if expectedSubject, _ := input.Credentials["chatgpt_account_id"].(string); expectedSubject != "" && expectedSubject != account.Credentials["chatgpt_account_id"] {
+		return errors.New("推送账号标识已变更")
+	}
+	if supplier, _ := account.Extra["refill_supplier_id"].(string); supplier != "" && supplier != input.Extra["refill_supplier_id"] {
+		return errors.New("账号已关联其他号商订单")
 	}
 	if old, _ := account.Extra["refill_job_id"].(string); old != "" && old != marker {
 		return errors.New("账号已关联其他补号任务")

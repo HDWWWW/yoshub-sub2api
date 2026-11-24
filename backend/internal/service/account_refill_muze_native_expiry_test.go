@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFenduduManualLeaseSyncSurvivesLostIdentityAndPrimaryHistory(t *testing.T) {
-	s, store, p, accounts := fenduduHarness(t)
-	s.accounts = &fenduduExpiryAccounts{accounts.refillTestAccounts}
+func TestMuzeManualLeaseSyncSurvivesLostIdentityAndPrimaryHistory(t *testing.T) {
+	s, store, p, accounts := muzeHarness(t)
+	s.accounts = &muzeExpiryAccounts{accounts.refillTestAccounts}
 	ctx := context.Background()
-	require.NoError(t, s.Manual(ctx, fenduduRequest()))
+	require.NoError(t, s.Manual(ctx, muzeRequest()))
 	require.NoError(t, s.run(ctx, false))
-	created := pushFenduduFixture(p, accounts)
+	created := pushMuzeFixture(p, accounts)
 	refillDue(t, store)
 	require.NoError(t, s.run(ctx, false))
 	a := &accounts.accounts[0]
@@ -27,7 +27,7 @@ func TestFenduduManualLeaseSyncSurvivesLostIdentityAndPrimaryHistory(t *testing.
 	manual := created.Add(50 * time.Minute).Unix()
 	ApplyAccountExpiryWrite(ctx, a, manual)
 	want := created.Add(180 * time.Minute).Unix()
-	p.cycle.RevokeAt = time.Unix(want, 0).Format(time.RFC3339)
+	p.cycle.RefundDueAt = time.Unix(want, 0).Format(time.RFC3339)
 	store.mutate(t, func(v *accountRefillState) {
 		job := v.Jobs[0]
 		require.Nil(t, job.SupplierExpiresAt)
@@ -54,9 +54,9 @@ func TestFenduduManualLeaseSyncSurvivesLostIdentityAndPrimaryHistory(t *testing.
 	require.Equal(t, 1, p.orders, "background lease synchronization must not buy again")
 }
 
-type fenduduExpiryAccounts struct{ *refillTestAccounts }
+type muzeExpiryAccounts struct{ *refillTestAccounts }
 
-func (a *fenduduExpiryAccounts) UpdateExtra(_ context.Context, id int64, values map[string]any) error {
+func (a *muzeExpiryAccounts) UpdateExtra(_ context.Context, id int64, values map[string]any) error {
 	for i := range a.accounts {
 		if a.accounts[i].ID == id {
 			ApplyAccountExpiryExtra(&a.accounts[i], values)
@@ -66,63 +66,37 @@ func (a *fenduduExpiryAccounts) UpdateExtra(_ context.Context, id int64, values 
 	return ErrAccountNotFound
 }
 
-func TestFenduduNativeExpiryOverridesHundredMinuteFallback(t *testing.T) {
-	for _, mode := range []string{"revoke", "deadline", "invalid-revoke", "both-missing", "both-invalid", "expired-revoke"} {
-		t.Run(mode, func(t *testing.T) {
-			s, store, p, accounts := fenduduHarness(t)
-			store.mutate(t, func(v *accountRefillState) { v.Config.ImportExpiryGraceMinutes = 10 })
-			ctx := context.Background()
-			require.NoError(t, s.Manual(ctx, fenduduRequest()))
-			require.NoError(t, s.run(ctx, false))
-			created := pushFenduduFixture(p, accounts)
-			want := created.Add(240 * time.Minute).Unix()
-			p.cycle.RevokeAt = time.Unix(want, 0).Format(time.RFC3339)
-			p.cycle.DeadlineAt = time.Unix(want+60, 0).Format(time.RFC3339)
-			switch mode {
-			case "deadline", "invalid-revoke":
-				p.cycle.RevokeAt = ""
-				if mode == "invalid-revoke" {
-					p.cycle.RevokeAt = "invalid"
-				}
-				want += 60
-			case "both-missing", "both-invalid":
-				p.cycle.RevokeAt, p.cycle.DeadlineAt = "", ""
-				if mode == "both-invalid" {
-					p.cycle.RevokeAt, p.cycle.DeadlineAt = "invalid", "invalid"
-				}
-				want = created.Add(100 * time.Minute).Unix()
-			case "expired-revoke":
-				want = created.Add(-time.Minute).Unix()
-				p.cycle.RevokeAt = time.Unix(want, 0).Format(time.RFC3339)
-			}
-			refillDue(t, store)
-			require.NoError(t, s.run(ctx, false))
-			v, err := s.View(ctx)
-			require.NoError(t, err)
-			require.Equal(t, want, *v.Jobs[0].ExpiresAt)
-			if mode == "both-missing" || mode == "both-invalid" {
-				require.Nil(t, v.Jobs[0].SupplierExpiresAt, "fallback must not be displayed as a supplier-confirmed timestamp")
-			} else {
-				require.Equal(t, want, *v.Jobs[0].SupplierExpiresAt)
-			}
-			require.Equal(t, want, accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
-			require.Equal(t, want+600, accounts.accounts[0].ExpiresAt.Unix())
-			if mode == "expired-revoke" {
-				require.Equal(t, "delivery_expired", v.Jobs[0].Status)
-				require.False(t, accounts.accounts[0].Schedulable)
-			} else {
-				require.Equal(t, "imported", v.Jobs[0].Status)
-			}
-			require.Equal(t, 1, p.orders)
-		})
+func TestMuzeRefundTimeAndLocalFallback(t *testing.T) {
+	for _, value := range []string{"", "invalid", time.Now().Add(45 * time.Minute).UTC().Format(time.RFC3339)} {
+		s, store, p, accounts := muzeHarness(t)
+		ctx := context.Background()
+		require.NoError(t, s.Manual(ctx, muzeRequest()))
+		require.NoError(t, s.run(ctx, false))
+		created := pushMuzeFixture(p, accounts)
+		p.cycle.RefundDueAt = value
+		refillDue(t, store)
+		require.NoError(t, s.run(ctx, false))
+		v, err := s.View(ctx)
+		require.NoError(t, err)
+		job := v.Jobs[0]
+		require.Equal(t, "imported", job.Status)
+		require.Equal(t, p.cycle.expiresAt(), job.SupplierExpiresAt)
+		meta := SchedulingMetadata(&accounts.accounts[0])
+		if job.SupplierExpiresAt == nil {
+			require.Nil(t, meta.SourceExpiresAt)
+			require.Equal(t, "supplier_pending", meta.SourceExpiryOrigin)
+			require.Equal(t, created.Add(muzeLeaseDuration).Unix(), *job.ExpiresAt)
+		} else {
+			require.Equal(t, *job.SupplierExpiresAt, meta.SourceExpiresAt.Unix())
+		}
 	}
 }
 
-func TestFenduduNativeLeaseSyncRespectsCutoffManualExpiryAndRetention(t *testing.T) {
+func TestMuzeNativeLeaseSyncRespectsCutoffManualExpiryAndRetention(t *testing.T) {
 	for _, mode := range []string{"rental", "fixed", "manual", "new-retention", "expired-delivery"} {
 		t.Run(mode, func(t *testing.T) {
-			s, store, p, accounts := fenduduHarness(t)
-			s.accounts = &fenduduExpiryAccounts{accounts.refillTestAccounts}
+			s, store, p, accounts := muzeHarness(t)
+			s.accounts = &muzeExpiryAccounts{accounts.refillTestAccounts}
 			fixed := time.Now().Add(45 * time.Minute).Unix()
 			store.mutate(t, func(v *accountRefillState) {
 				v.Config.ImportExpiryGraceMinutes = 10
@@ -131,9 +105,9 @@ func TestFenduduNativeLeaseSyncRespectsCutoffManualExpiryAndRetention(t *testing
 				}
 			})
 			ctx := context.Background()
-			require.NoError(t, s.Manual(ctx, fenduduRequest()))
+			require.NoError(t, s.Manual(ctx, muzeRequest()))
 			require.NoError(t, s.run(ctx, false))
-			created := pushFenduduFixture(p, accounts)
+			created := pushMuzeFixture(p, accounts)
 			refillDue(t, store)
 			require.NoError(t, s.run(ctx, false))
 			a := &accounts.accounts[0]
@@ -153,9 +127,9 @@ func TestFenduduNativeLeaseSyncRespectsCutoffManualExpiryAndRetention(t *testing
 				if phase == "native-earlier" {
 					want = created.Add(30 * time.Minute).Unix()
 				}
-				p.cycle.RevokeAt = time.Unix(want, 0).Format(time.RFC3339)
+				p.cycle.RefundDueAt = time.Unix(want, 0).Format(time.RFC3339)
 				if phase == "missing-again" {
-					p.cycle.RevokeAt = ""
+					p.cycle.RefundDueAt = ""
 				}
 				require.NoError(t, s.Check(ctx))
 				require.Equal(t, want, a.Extra[AccountSourceExpiryExtraKey])

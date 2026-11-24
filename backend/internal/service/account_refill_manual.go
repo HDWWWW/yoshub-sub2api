@@ -33,7 +33,7 @@ func invalidManualRefill(message string) error {
 
 func validateManualRefillRequest(r ManualAccountRefillRequest, now time.Time) error {
 	parts := strings.Split(r.RequestID, ":")
-	if (r.Provider != "" && r.Provider != refillProviderFendudu) || len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !slices.Contains([]string{"pro5x", "pro20x"}, r.Plan) {
+	if (r.Provider != "" && r.Provider != refillProviderMuze) || len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !slices.Contains([]string{"pro5x", "pro20x"}, r.Plan) {
 		return invalidManualRefill("手动补号参数无效")
 	}
 	stamp, err := strconv.ParseInt(parts[0], 10, 64)
@@ -62,12 +62,18 @@ func trimAccountRefillJobs(jobs []AccountRefillJob, now time.Time) []AccountRefi
 // worker submits and imports it, even with monitoring and automation disabled.
 // This endpoint never makes a paid request before its durable reservation.
 func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccountRefillRequest) error {
+	if request.Provider == "1208" {
+		request.Provider = "" // Historical receipts encode 1208 as an empty provider.
+	}
 	if err := validateManualRefillRequest(request, time.Now()); err != nil {
 		return err
 	}
 	jobID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("sub2api:manual-refill:"+request.RequestID)).String()
 	return s.store.WithLock(ctx, func(raw string, save func(string) error) error {
 		state, err := decodeAccountRefillState(raw)
+		if err == nil && request.Provider == refillProviderMuze {
+			state, err = s.decodeRefillWithMuze(ctx, raw)
+		}
 		if err != nil {
 			return err
 		}
@@ -118,7 +124,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		if c.Delivery.ExpiryMode == "fixed" && *c.Delivery.FixedExpiresAt <= now.Unix() {
 			return invalidManualRefill("指定截止时间已过，请修改推送设置并保存")
 		}
-		if (request.Provider == "" && now.Before(state.ProviderRetryAt)) || (request.Provider == refillProviderFendudu && now.Before(state.Fendudu.RetryAt)) {
+		if (request.Provider == "" && now.Before(state.ProviderRetryAt)) || (request.Provider == refillProviderMuze && now.Before(state.Muze.RetryAt)) {
 			return invalidManualRefill("号商暂不可用或正在限流，请稍后再试")
 		}
 		pending := 0
@@ -143,12 +149,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			return invalidManualRefill(err.Error())
 		}
 		persist := func() error { return saveRefillState(&state, save) }
-		var quote *RefillQuote
-		if request.Provider == refillProviderFendudu {
-			quote, err = s.fenduduManualQuote(ctx, &state, request.Plan, persist)
-		} else {
-			quote, err = s.manualRefillQuote(ctx, &state, request.Plan, persist)
-		}
+		quote, connectionID, err := s.routedQuote(ctx, &state, request.Provider, request.Plan, persist)
 		if err != nil {
 			return err
 		}
@@ -168,10 +169,10 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			job.Reason = "强制手动补号"
 			job.ReasonDetail = "管理员强制购买 1 个账号，忽略原任务待核对和在途上限；原订单继续核对，可能仍会交付并计费。"
 		}
-		if request.Provider == refillProviderFendudu {
-			job.FenduduConnectionID = state.Fendudu.ConnectionID
-			job.Reason = "粉嘟嘟" + job.Reason
-			job.ReasonDetail += " 粉嘟嘟扣减 1 次预购次数，不折算原号商积分；推号后按本单保存的设置应用。"
+		if request.Provider == refillProviderMuze {
+			job.MuzeConnectionID = connectionID
+			job.Reason = "muze" + job.Reason
+			job.ReasonDetail += " muze扣减 1 次预购次数，不折算原号商积分；推号后按本单保存的设置应用。"
 		}
 		state.Jobs = trimAccountRefillJobs(append([]AccountRefillJob{job}, state.Jobs...), now)
 		usage.Count++

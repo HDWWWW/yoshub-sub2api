@@ -21,7 +21,8 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
-  fendudu_fallback?: { enabled: boolean; failure_threshold: number; timeout_minutes: number } | null
+  primary_provider?: '1208' | 'muze'
+  muze_fallback?: { enabled: boolean; failure_threshold: number; timeout_minutes: number } | null
   daily_schedule?: { enabled: boolean; time: string; quantity: number; plan?: string; day_mode?: '' | 'china_workday' }
   daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string; day_mode?: '' | 'china_workday' }[] | null
 	rotation_enabled: boolean
@@ -64,7 +65,8 @@ export interface RefillConfig {
   delivery: RefillDeliveryConfig
 }
 export interface RefillJob {
-  provider?: 'fendudu'
+  provider?: 'muze' | 'fendudu'
+  supplier_refund_phase?: string
   submission_started_at?: string
   daily_batch_id?: string
   force?: boolean
@@ -94,7 +96,7 @@ export interface RefillJob {
   next_attempt_at: string
 }
 export interface ManualRefillRequest {
-  provider?: 'fendudu'
+  provider?: 'muze'
 	force?: boolean
 	group_id?: number
   request_id: string
@@ -107,9 +109,9 @@ export interface RefillCapacityObservation {
   no_capacity?: boolean
 }
 export interface RefillView {
-  fendudu_fallback_status?: { consecutive_failures: number; last_at: string | null; message: string }
+  muze_fallback_status?: { consecutive_failures: number; last_at: string | null; message: string }
   workday_calendar?: { years: number[]; synced_at: string; checked_at: string; message: string }
-  fendudu?: { token_configured: boolean; connection_id: string; products: { product: string; label: string; available_now: number; blocked_reason: string; expired: boolean }[] | null; checked_at: string | null }
+  muze?: { token_configured: boolean; connection_id: string; products: { product: string; label: string; available_now: number; remaining?: number; stock?: number; blocked_reason: string; expired: boolean }[] | null; checked_at: string | null }
   daily_schedule_status?: { next_at: string; last_at: string; last_quantity: number; last_batch_id?: string; retry_at: string; message: string }
   daily_schedule_statuses?: Record<string, { next_at: string; last_at: string; last_quantity: number; message: string }>
 	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_plan: string }[]
@@ -153,11 +155,11 @@ export const accountRefillAPI = {
   async setImportThreshold(percent: number) {
     return (await apiClient.put<{ percent: number }>('/admin/accounts/refill/import-threshold', { percent })).data.percent
   },
-  async configureFendudu(groupID: number, api_token: string, connection_id: string, revision: number) {
-    return (await apiClient.put<RefillView>('/admin/accounts/refill/fendudu', { api_token, connection_id, revision }, { params: { group_id: groupID }, timeout: 70000 })).data
+  async configureMuze(groupID: number, api_token: string, connection_id: string, revision: number) {
+    return (await apiClient.put<RefillView>('/admin/accounts/refill/muze', { api_token, connection_id, revision }, { params: { group_id: groupID }, timeout: 70000 })).data
   },
-  async reconcileFendudu(id: string, groupID: number, supplier_id: string) {
-    return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/fendudu-reconcile`, { supplier_id }, { params: { group_id: groupID }, timeout: 40000 })).data
+  async reconcileMuze(id: string, groupID: number, supplier_id: string) {
+    return (await apiClient.post<RefillView>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/muze-reconcile`, { supplier_id }, { params: { group_id: groupID }, timeout: 40000 })).data
   },
   async download(id: string, groupID: number) {
     const { data } = await apiClient.get<string>(`/admin/accounts/refill/jobs/${encodeURIComponent(id)}/delivery`, {

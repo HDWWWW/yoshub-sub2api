@@ -3,19 +3,19 @@
     <div v-if="loading" class="py-12 text-center" role="status">{{ t('common.loading') }}</div>
     <div v-else-if="view && form" class="space-y-5">
       <label class="block"><span class="input-label">{{ t('accountRefill.ruleGroup') }}</span>
-        <select :value="selectedGroup" class="input" data-testid="refill-rule-group" :disabled="busy || dirty || fenduduDirty || !!manualPending" @change="switchGroup(Number(($event.target as HTMLSelectElement).value))">
+        <select :value="selectedGroup" class="input" data-testid="refill-rule-group" :disabled="busy || dirty || muzeDirty || !!manualPending" @change="switchGroup(Number(($event.target as HTMLSelectElement).value))">
           <option :value="0" disabled>{{ t('accountRefill.chooseGroup') }}</option>
           <option v-for="group in ruleGroups" :key="group.id" :value="group.id">{{ group.name }} (#{{ group.id }}) · {{ t(view.rules?.find(r => r.group_id === group.id)?.enabled ? 'accountRefill.ruleOn' : 'accountRefill.ruleOff') }}</option>
         </select>
         <span class="input-hint">{{ t(dirty ? 'accountRefill.groupSaveFirst' : 'accountRefill.groupRulesHint') }}</span>
       </label>
-      <div v-if="!isFendudu" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div v-if="!isMuze" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div v-for="item in walletItems" :key="item.key" class="rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700">
-          <div class="text-xs text-gray-500 dark:text-dark-300">{{ t(`accountRefill.${item.key}`) }}</div>
+          <div class="text-xs text-gray-500 dark:text-dark-300">1208 · {{ t(`accountRefill.${item.key}`) }}</div>
           <div class="mt-1 text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">{{ number(item.value) }} <span class="text-xs font-normal text-gray-500">{{ t('accountRefill.points') }}</span></div>
         </div>
       </div>
-      <p v-if="!isFendudu" class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
+      <p v-if="!isMuze" class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
       <div class="rounded-lg bg-gray-50 px-4 py-3 text-sm dark:bg-dark-800" aria-live="polite">{{ view.message || t('accountRefill.unconfigured') }}</div>
       <nav ref="tabsNav" class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
         <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="busy" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
@@ -49,15 +49,20 @@
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryNotifyHint') }}</p>
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.timeoutRetryHint') }}</p>
             </div>
-            <div v-if="form.fendudu_fallback" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="refill-fendudu-fallback">
-              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.fendudu_fallback.enabled" type="checkbox" data-testid="refill-fendudu-fallback-enabled" />{{ t('accountRefill.fallbackEnabled') }}</label>
+            <div v-if="form.muze_fallback" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="refill-muze-fallback">
+              <label class="block sm:max-w-sm"><span class="input-label">{{ t('accountRefill.primarySupplier') }}</span>
+                <select v-model="form.primary_provider" class="input" data-testid="refill-primary-provider">
+                  <option value="1208">1208</option><option value="muze">Muze</option>
+                </select>
+              </label>
+              <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.muze_fallback.enabled" type="checkbox" data-testid="refill-muze-fallback-enabled" />{{ t('accountRefill.fallbackEnabled', { provider: backupName }) }}</label>
               <div class="grid gap-3 sm:grid-cols-2">
-                <label class="block"><span class="input-label">{{ t('accountRefill.fallbackFailures') }}</span><input v-model.number="form.fendudu_fallback.failure_threshold" type="number" min="1" max="100" step="1" required class="input" data-testid="refill-fendudu-fallback-failures" /></label>
-                <label class="block"><span class="input-label">{{ t('accountRefill.fallbackMinutes') }}</span><input v-model.number="form.fendudu_fallback.timeout_minutes" type="number" min="1" max="1440" step="1" required class="input" data-testid="refill-fendudu-fallback-minutes" /></label>
+                <label class="block"><span class="input-label">{{ t('accountRefill.fallbackFailures') }}</span><input v-model.number="form.muze_fallback.failure_threshold" type="number" min="1" max="100" step="1" required class="input" data-testid="refill-muze-fallback-failures" /></label>
+                <label class="block"><span class="input-label">{{ t('accountRefill.fallbackMinutes') }}</span><input v-model.number="form.muze_fallback.timeout_minutes" type="number" min="1" max="1440" step="1" required class="input" data-testid="refill-muze-fallback-minutes" /></label>
               </div>
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.fallbackHint') }}</p>
-              <p v-if="!view.fendudu?.token_configured" class="text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.fallbackConnectionRequired') }}</p>
-              <p v-if="view.fendudu_fallback_status" class="text-xs text-gray-500" data-testid="refill-fendudu-fallback-status">{{ t('accountRefill.fallbackStatus', { count: view.fendudu_fallback_status.consecutive_failures }) }}<span v-if="view.fendudu_fallback_status.message"> · {{ view.fendudu_fallback_status.message }}</span></p>
+              <p v-if="!view.muze?.token_configured || !view.token_configured" class="text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.fallbackConnectionRequired') }}</p>
+              <p v-if="view.muze_fallback_status" class="text-xs text-gray-500" data-testid="refill-muze-fallback-status">{{ t('accountRefill.fallbackStatus', { count: view.muze_fallback_status.consecutive_failures }) }}<span v-if="view.muze_fallback_status.message"> · {{ view.muze_fallback_status.message }}</span></p>
             </div>
             <div class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
               <div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm font-medium">{{ t('accountRefill.dailyTasks') }}</span><button type="button" class="btn btn-secondary" :disabled="busy || (form.daily_schedules?.length || 0) >= 20" data-testid="refill-daily-add" @click="addDailySchedule">{{ t('accountRefill.dailyAdd') }}</button></div>
@@ -99,7 +104,16 @@
               <p class="text-sm font-medium" data-testid="refill-rotation-preview">{{ rotationPreview }} → {{ t('accountRefill.rotationRepeat') }}</p>
               <p v-if="view.config.rotation_enabled" class="text-sm text-gray-500">{{ t('accountRefill.rotationNext') }}: {{ view.next_plan }} · {{ t('accountRefill.rotationPosition', { position: view.rotation_cursor + 1 }) }}</p>
             </div>
-            <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800"><p>{{ t('accountRefill.quote') }}: <strong>{{ number(quote?.price) }}</strong> {{ t('accountRefill.points') }}</p><p v-if="quote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ quote.terms }}</p></div>
+            <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" data-testid="refill-primary-quote">
+              <template v-if="form.primary_provider === 'muze'">
+                <p>Muze · {{ t('accountRefill.muzeAvailable') }}: <strong>{{ number(automaticMuzeProduct?.available_now) }}</strong> {{ t('accountRefill.muzeUnit') }}</p>
+                <p v-if="automaticMuzeProduct?.blocked_reason" class="mt-2 text-amber-700">{{ automaticMuzeProduct.blocked_reason }}</p>
+              </template>
+              <template v-else>
+                <p>1208 · {{ t('accountRefill.quote') }}: <strong>{{ number(quote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
+                <p v-if="quote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ quote.terms }}</p>
+              </template>
+            </div>
             <p class="text-sm leading-6 text-gray-500">{{ t(form.mode === 'interval' ? 'accountRefill.intervalHint' : form.mode === 'fixed' ? 'accountRefill.fixedHint' : 'accountRefill.ruleHint') }}</p>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label v-for="field in ruleFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step || 1" class="input" :data-testid="`refill-${field.key}`" /></label></div>
             <p v-if="form.mode === 'capacity'" class="input-hint">{{ t('accountRefill.capacityObservationHint') }}</p>
@@ -187,23 +201,23 @@
           </div>
         </fieldset>
       </form>
-      <div v-if="activeTab === 'manual' || isFendudu" class="space-y-4">
+      <div v-if="activeTab === 'manual' || isMuze" class="space-y-4">
         <p class="font-medium" data-testid="manual-refill-provider">{{ t('accountRefill.manualProvider', { provider: manualProviderName }) }}</p>
         <p v-if="manualStorageFailed" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.manualStorageError') }}</p>
-        <p v-if="otherProviderPending" class="text-sm text-amber-700" data-testid="manual-other-provider-pending">{{ t('accountRefill.otherProviderPending', { provider: t(isFendudu ? 'accountRefill.primaryName' : 'accountRefill.fenduduName') }) }}</p>
-        <details v-if="isFendudu" :open="!view.fendudu?.token_configured || fenduduDirty" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="fendudu-connection">
-          <summary class="cursor-pointer text-sm font-medium">{{ t('accountRefill.fenduduConnectionSettings') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</summary>
-          <label class="block"><span class="input-label">{{ t('accountRefill.fenduduToken') }} · {{ t(view.fendudu?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span><input v-model="fenduduToken" type="password" autocomplete="new-password" class="input" placeholder="rvak_…" :disabled="busy" data-testid="fendudu-token" /><span class="input-hint">{{ t('accountRefill.tokenHint') }}</span></label>
-          <label class="block"><span class="input-label">{{ t('accountRefill.fenduduConnection') }}</span><input v-model="fenduduConnectionID" class="input" placeholder="s2e_…" :disabled="busy" data-testid="fendudu-connection-id" /><span class="input-hint">{{ t('accountRefill.fenduduConnectionHint') }}</span></label>
-          <button v-admin-write type="button" class="btn btn-secondary" :disabled="busy || dirty || conflict || !!manualPending" data-testid="fendudu-save" @click="saveFendudu">{{ t('accountRefill.fenduduSave') }}</button>
-          <p class="text-xs text-gray-500">{{ t('accountRefill.fenduduUpdated') }} {{ date(view.fendudu?.checked_at) }}</p>
+        <p v-if="otherProviderPending" class="text-sm text-amber-700" data-testid="manual-other-provider-pending">{{ t('accountRefill.otherProviderPending', { provider: t(isMuze ? 'accountRefill.primaryName' : 'accountRefill.muzeName') }) }}</p>
+        <details v-if="isMuze" :open="!view.muze?.token_configured || muzeDirty" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="muze-connection">
+          <summary class="cursor-pointer text-sm font-medium">{{ t('accountRefill.muzeConnectionSettings') }} · {{ t(view.muze?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</summary>
+          <label class="block"><span class="input-label">{{ t('accountRefill.muzeToken') }} · {{ t(view.muze?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span><input v-model="muzeToken" type="password" autocomplete="new-password" class="input" placeholder="tk_…" :disabled="busy" data-testid="muze-token" /><span class="input-hint">{{ t('accountRefill.tokenHint') }}</span></label>
+          <label class="block"><span class="input-label">{{ t('accountRefill.muzeConnection') }}</span><input v-model="muzeConnectionID" class="input" :disabled="busy" data-testid="muze-connection-id" /><span class="input-hint">{{ t('accountRefill.muzeConnectionHint') }}</span></label>
+          <button v-admin-write type="button" class="btn btn-secondary" :disabled="busy || dirty || conflict || !!manualPending" data-testid="muze-save" @click="saveMuze">{{ t('accountRefill.muzeSave') }}</button>
+          <p class="text-xs text-gray-500">{{ t('accountRefill.muzeUpdated') }} {{ date(view.muze?.checked_at) }}</p>
         </details>
-        <p class="text-sm leading-6 text-gray-500">{{ t(isFendudu ? 'accountRefill.fenduduHint' : 'accountRefill.manualHint') }}</p>
+        <p class="text-sm leading-6 text-gray-500">{{ t(isMuze ? 'accountRefill.muzeHint' : 'accountRefill.manualHint') }}</p>
         <label class="block"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="manualPlan" class="input" :disabled="busy || !!manualPending" data-testid="manual-refill-plan"><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></select></label>
         <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
-          <template v-if="isFendudu"><p>{{ t('accountRefill.fenduduAvailable') }}: <strong>{{ number(fenduduProduct?.available_now) }}</strong> {{ t('accountRefill.fenduduUnit') }}</p><p v-if="fenduduProduct?.blocked_reason || fenduduProduct?.expired" class="mt-2 text-amber-700">{{ fenduduProduct.blocked_reason || t('accountRefill.expired') }}</p></template>
+          <template v-if="isMuze"><p>{{ t('accountRefill.muzeAvailable') }}: <strong>{{ number(muzeProduct?.available_now) }}</strong> {{ t('accountRefill.muzeUnit') }}</p><p v-if="muzeProduct?.remaining != null && muzeProduct.stock != null" class="mt-1 text-xs">{{ t('accountRefill.muzeStock', { remaining: muzeProduct.remaining, stock: muzeProduct.stock }) }}</p><p v-if="muzeProduct?.blocked_reason || muzeProduct?.expired" class="mt-2 text-amber-700">{{ muzeProduct.blocked_reason || t('accountRefill.expired') }}</p></template>
           <p v-else>{{ t('accountRefill.quote') }}: <strong>{{ number(manualQuote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
-          <p v-if="!isFendudu && manualQuote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ manualQuote.terms }}</p>
+          <p v-if="!isMuze && manualQuote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ manualQuote.terms }}</p>
         </div>
         <div class="rounded-lg border border-gray-200 p-4 text-sm dark:border-dark-700" data-testid="manual-refill-settings">
           <p class="font-medium">{{ t('accountRefill.manualSavedSettings') }}</p>
@@ -219,14 +233,14 @@
           </dl>
           <button type="button" class="mt-3 text-primary-600 underline" @click="activeTab = 'delivery'">{{ t('accountRefill.manualReviewSettings') }}</button>
         </div>
-        <p v-if="dirty || conflict || (isFendudu && fenduduDirty)" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
+        <p v-if="dirty || conflict || (isMuze && muzeDirty)" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
         <p v-if="!manualTokenConfigured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
         <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain', { provider: manualProviderName }) }}</p>
         <div class="flex flex-wrap gap-3">
-          <button v-admin-write type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : isFendudu ? 'accountRefill.fenduduSubmit' : 'accountRefill.manualSubmit', { provider: manualProviderName }) }}</button>
+          <button v-admin-write type="button" class="btn btn-primary" :disabled="manualDisabled" data-testid="manual-refill-submit" @click="submitManual()">{{ t(manualPending ? 'accountRefill.manualRetry' : isMuze ? 'accountRefill.muzeSubmit' : 'accountRefill.manualSubmit', { provider: manualProviderName }) }}</button>
           <button v-admin-write type="button" class="btn btn-secondary" :disabled="manualForceDisabled" data-testid="manual-refill-force" @click="submitManual(true)">{{ t('accountRefill.manualForce', { provider: manualProviderName }) }}</button>
         </div>
-        <p class="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{{ t(isFendudu ? 'accountRefill.fenduduForceHint' : 'accountRefill.manualForceHint') }}</p>
+        <p class="text-xs leading-relaxed text-amber-700 dark:text-amber-300">{{ t(isMuze ? 'accountRefill.muzeForceHint' : 'accountRefill.manualForceHint') }}</p>
       </div>
       <div v-if="activeTab === 'progress'" class="space-y-5">
         <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800">
@@ -269,11 +283,11 @@
               <tbody>
                 <tr v-for="job in pagedJobs" :key="job.id" class="border-b border-gray-100 align-top dark:border-dark-800">
                   <td class="p-2">
-                    <span class="font-medium">{{ job.plan }}</span><span v-if="job.provider === 'fendudu'" class="ml-2 text-xs text-gray-500">{{ t('accountRefill.fenduduName') }}</span>
+                    <span class="font-medium">{{ job.plan }}</span><span class="ml-2 text-xs text-gray-500">{{ job.provider === 'fendudu' ? t('accountRefill.retiredSupplier') : job.provider === 'muze' ? 'Muze' : '1208' }}</span>
                     <div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || t('accountRefill.supplierIDPending') }}</div>
                     <div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div>
-                    <div v-if="job.provider === 'fendudu'" class="mt-1 text-xs" data-testid="fendudu-supplier-expiry">
-                      {{ t('accountRefill.supplierReclaimAt') }}：{{ job.supplier_expires_at ? date(new Date(job.supplier_expires_at * 1000).toISOString()) : t('accountRefill.supplierExpiryPending') }}
+                    <div v-if="job.provider || job.supplier_expires_at" class="mt-1 text-xs" :data-testid="job.provider === 'muze' ? 'muze-supplier-expiry' : 'refill-supplier-expiry'">
+                      {{ t('accountRefill.supplierReclaimAt') }}：{{ job.supplier_expires_at ? formatSupplierTime(new Date(job.supplier_expires_at * 1000)) : job.provider === 'fendudu' ? '—' : t('accountRefill.supplierExpiryPending') }}
                     </div>
                   </td>
                   <td class="min-w-56 max-w-80 break-words p-2" data-testid="refill-job-reason">
@@ -282,18 +296,19 @@
                   </td>
                   <td class="max-w-80 p-2">
                     <span class="font-medium">{{ stateLabel(job.status) }}</span>
-                    <div v-if="job.supplier_status" class="mt-1 text-xs text-gray-500" data-testid="refill-supplier-status">{{ t('accountRefill.supplierStatus') }}: {{ supplierStateLabel(job.supplier_status) }} · {{ job.supplier_status }}</div>
+                    <div v-if="job.supplier_refund_phase" class="mt-1 text-xs text-gray-500">{{ t('accountRefill.refundPhase') }} · {{ refundPhaseLabel(job.supplier_refund_phase) }}</div>
+                    <div v-if="job.supplier_status" class="mt-1 text-xs text-gray-500" data-testid="refill-supplier-status">{{ t('accountRefill.supplierStatus') }}: {{ supplierStateLabel(job.supplier_status, job.provider) }} · {{ job.supplier_status }}</div>
                     <div v-if="job.supplier_error" class="mt-1 break-words text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.supplierError') }}: {{ job.supplier_error }}</div>
                     <div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div>
-                    <button v-admin-write v-if="['blocked', 'import_failed'].includes(job.status) && !(job.provider === 'fendudu' && !job.supplier_id && job.submission_started_at)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
-                    <div v-if="job.provider === 'fendudu' && job.status === 'blocked' && !job.supplier_id && job.submission_started_at" class="mt-2 space-y-2"><label class="block text-xs">{{ t('accountRefill.fenduduOrderID') }}<input v-model="reconcileIDs[job.id]" class="input mt-1" placeholder="rvc_…" :disabled="busy" :data-testid="`fendudu-order-${job.id}`" /></label><button type="button" class="btn btn-secondary text-xs" :disabled="busy || !reconcileIDs[job.id]?.trim()" @click="reconcileFendudu(job)">{{ t('accountRefill.fenduduReconcile') }}</button></div>
-                    <details v-if="job.status === 'blocked' && !job.supplier_id" class="mt-2 text-xs">
-                      <summary class="cursor-pointer text-amber-700">{{ t('accountRefill.dismiss') }}</summary>
-                      <label class="mt-2 flex gap-2"><input v-model="confirmedJobs" type="checkbox" :value="job.id" />{{ t('accountRefill.dismissHint') }}</label>
-                      <button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t('accountRefill.dismiss') }}</button>
+                    <button v-admin-write v-if="job.provider !== 'fendudu' && ['blocked', 'import_failed'].includes(job.status) && !(job.provider === 'muze' && !job.supplier_id && job.submission_started_at)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
+                    <div v-if="job.provider === 'muze' && job.status === 'blocked' && !job.supplier_id && job.submission_started_at" class="mt-2 space-y-2"><label class="block text-xs">{{ t('accountRefill.muzeOrderID') }}<input v-model="reconcileIDs[job.id]" class="input mt-1" :disabled="busy" :data-testid="`muze-order-${job.id}`" /></label><button type="button" class="btn btn-secondary text-xs" :disabled="busy || !reconcileIDs[job.id]?.trim()" @click="reconcileMuze(job)">{{ t('accountRefill.muzeReconcile') }}</button></div>
+                    <details v-if="job.status === 'blocked' && (job.provider === 'fendudu' || !job.supplier_id)" class="mt-2 text-xs">
+                      <summary class="cursor-pointer text-amber-700">{{ t(job.provider === 'fendudu' ? 'accountRefill.archiveLegacy' : 'accountRefill.dismiss') }}</summary>
+                      <label class="mt-2 flex gap-2"><input v-model="confirmedJobs" type="checkbox" :value="job.id" />{{ t(job.provider === 'fendudu' ? 'accountRefill.confirmLegacy' : 'accountRefill.dismissHint') }}</label>
+                      <button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t(job.provider === 'fendudu' ? 'accountRefill.archiveLegacy' : 'accountRefill.dismiss') }}</button>
                     </details>
                   </td>
-                  <td v-if="job.provider === 'fendudu'" class="p-2 tabular-nums">1 {{ t('accountRefill.fenduduUnit') }}<div class="mt-1 text-xs text-gray-500">{{ t('accountRefill.fenduduPrepaid') }}</div></td>
+                  <td v-if="job.provider" class="p-2 tabular-nums">1 {{ t('accountRefill.muzeUnit') }}<div class="mt-1 text-xs text-gray-500">{{ t('accountRefill.muzePrepaid') }}</div></td>
                   <td v-else class="p-2 tabular-nums">{{ number(job.price) }}<div class="mt-1 whitespace-nowrap text-xs text-gray-500">{{ t(`accountRefill.${job.budget_released ? 'amountReleased' : job.supplier_status === 'succeeded' ? 'amountCharged' : 'amountHeld'}`) }}</div></td>
                   <td class="whitespace-nowrap p-2 tabular-nums">{{ elapsed(job) }}</td>
                   <td class="whitespace-nowrap p-2 text-xs">{{ date(job.created_at) }}</td>
@@ -328,6 +343,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { formatSupplierTime } from '@/utils/supplierTime'
 import { getCodexFingerprintModeOptions } from '@/utils/codexFingerprintMode'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -344,12 +360,12 @@ import { saveAs } from 'file-saver'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
-const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' | 'fendudu'; proxies?: Proxy[] }>()
+const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' | 'muze'; proxies?: Proxy[] }>()
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
 const codexFingerprintModeOptions = computed(() => getCodexFingerprintModeOptions(t))
 const app = useAppStore()
-const tabs = ['connection', 'rules', 'delivery', 'manual', 'fendudu', 'notifications', 'progress'] as const
+const tabs = ['connection', 'rules', 'delivery', 'manual', 'muze', 'notifications', 'progress'] as const
 const activeTab = ref<typeof tabs[number]>('connection')
 const tabsNav = ref<HTMLElement | null>(null)
 const view = ref<RefillView | null>(null)
@@ -367,20 +383,21 @@ const pagedJobs = computed(() => view.value?.jobs.slice((jobsPage.value - 1) * j
 const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
 const webhook = ref('')
 const qqSecret = ref('')
-const fenduduToken = ref(''), fenduduConnectionID = ref('')
+const muzeToken = ref(''), muzeConnectionID = ref('')
 const reconcileIDs = ref<Record<string, string>>({})
-const isFendudu = computed(() => activeTab.value === 'fendudu')
-const fenduduDirty = computed(() => fenduduToken.value !== '' || fenduduConnectionID.value !== (view.value?.fendudu?.connection_id || ''))
-const manualTokenConfigured = computed(() => isFendudu.value ? view.value?.fendudu?.token_configured : view.value?.token_configured)
-const fenduduProduct = computed(() => view.value?.fendudu?.products?.find(p => p.product === manualPlan.value))
-const manualProviderName = computed(() => t(isFendudu.value ? 'accountRefill.fenduduName' : 'accountRefill.primaryName'))
+const backupName = computed(() => form.value?.primary_provider === 'muze' ? '1208' : 'Muze')
+const isMuze = computed(() => activeTab.value === 'muze')
+const muzeDirty = computed(() => muzeToken.value !== '' || muzeConnectionID.value !== (view.value?.muze?.connection_id || ''))
+const manualTokenConfigured = computed(() => isMuze.value ? view.value?.muze?.token_configured : view.value?.token_configured)
+const muzeProduct = computed(() => view.value?.muze?.products?.find(p => p.product === manualPlan.value))
+const manualProviderName = computed(() => t(isMuze.value ? 'accountRefill.muzeName' : 'accountRefill.primaryName'))
 const manualRequests = ref<ManualRefillRequest[]>([])
-const manualPending = computed(() => manualRequests.value.find(request => request.group_id === selectedGroup.value && (request.provider === 'fendudu') === isFendudu.value))
-const otherProviderPending = computed(() => manualRequests.value.some(request => request.group_id === selectedGroup.value && (request.provider === 'fendudu') !== isFendudu.value))
-const manualPlans = ref({ primary: 'pro20x', fendudu: 'pro20x' })
+const manualPending = computed(() => manualRequests.value.find(request => request.group_id === selectedGroup.value && (request.provider === 'muze') === isMuze.value))
+const otherProviderPending = computed(() => manualRequests.value.some(request => request.group_id === selectedGroup.value && (request.provider === 'muze') !== isMuze.value))
+const manualPlans = ref({ primary: 'pro20x', muze: 'pro20x' })
 const manualPlan = computed({
-  get: () => manualPending.value?.plan || manualPlans.value[isFendudu.value ? 'fendudu' : 'primary'],
-  set: value => { manualPlans.value[isFendudu.value ? 'fendudu' : 'primary'] = value }
+  get: () => manualPending.value?.plan || manualPlans.value[isMuze.value ? 'muze' : 'primary'],
+  set: value => { manualPlans.value[isMuze.value ? 'muze' : 'primary'] = value }
 })
 const legacyManualStorageKey = 'yoshub:manual-refill:pending'
 const manualStorageKey = 'yoshub:manual-refill:pending:v2'
@@ -398,11 +415,13 @@ const usageItems = computed(() => {
   const v = view.value
   return [{ key: 'spent', value: v?.daily.spent_points }, { key: 'reserved', value: v?.daily.reserved_points }, { key: 'count', value: v?.daily.count }, { key: 'budget', value: v?.config.daily_max_points }, { key: 'ready', value: v?.evaluation.ready }, { key: 'expiring', value: v?.evaluation.expiring }, { key: 'pending', value: v?.evaluation.pending }, { key: 'needed', value: v?.evaluation.needed }]
 })
-const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === (form.value?.rotation_enabled ? (dirty.value ? form.value.rotation[0]?.plan : view.value?.next_plan) : form.value?.plan) && q.enabled))
+const automaticPlan = computed(() => form.value?.rotation_enabled ? (dirty.value ? form.value.rotation[0]?.plan : view.value?.next_plan) : form.value?.plan)
+const automaticMuzeProduct = computed(() => view.value?.muze?.products?.find(p => p.product === automaticPlan.value))
+const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === automaticPlan.value && q.enabled))
 const manualQuote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && q.enabled))
 const manualGroups = computed(() => view.value?.config.delivery_group_ids.map(id => groups.value.find(g => g.id === id)?.name || `#${id}`).join('、'))
-const manualDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || (!manualPending.value && (dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)))
-const manualForceDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || dirty.value || conflict.value || (isFendudu.value && fenduduDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)
+const manualDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || (!manualPending.value && (dirty.value || conflict.value || (isMuze.value && muzeDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)))
+const manualForceDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || dirty.value || conflict.value || (isMuze.value && muzeDirty.value) || !manualTokenConfigured.value || !view.value.config.push_enabled)
 const keyDays = computed(() => { const at = view.value?.key?.expires_at; return at && !at.startsWith('0001') ? (Date.parse(at) - now.value) / 86400000 : null })
 const keyRemaining = computed(() => keyDays.value === null ? '' : keyDays.value <= 0 ? t('accountRefill.expired') : t('accountRefill.keyRemaining', { days: Math.floor(keyDays.value * 10) / 10 }))
 const fixedExpiry = computed({ get: () => form.value?.delivery.fixed_expires_at ? new Date(form.value.delivery.fixed_expires_at * 1000 + 8 * 3600000).toISOString().slice(0, 16) : '', set: v => { if (form.value) form.value.delivery.fixed_expires_at = v ? Math.floor(Date.parse(`${v}:00+08:00`) / 1000) : null } })
@@ -418,11 +437,16 @@ const ruleFields = computed<{ key: NumericKey; min: number; max: number; step?: 
 const deliveryFields = [{ key: 'priority', max: 2147483647, step: 1 }, { key: 'load_factor', max: 10000, step: 1 }, { key: 'rate_multiplier', max: 1000, step: 0.01 }] as const
 const number = (v: number | null | undefined) => v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: 8 })
 const forecastAccounts = computed(() => view.value?.evaluation.accounts.filter(account => account.forecast_loss) || [])
+const refundPhaseLabel = (v: string) => ['none','waiting','pending','free','returned','unknown'].includes(v) ? t(`accountRefill.refundPhase_${v}`) : v
 const date = (v: string | null | undefined) => !v || v.startsWith('0001') ? '—' : new Date(v).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`accountRefill.states.${state}`) : state
-const supplierStateLabel = (state: string) => ['queued', 'processing', 'succeeded', 'failed', 'review'].includes(state) ? stateLabel(state) : t('accountRefill.states.supplier_unknown')
+function supplierStateLabel(state: string, provider: RefillJob['provider']) {
+  if (provider === 'muze' && te(`accountRefill.muzeStages.${state}`)) return t(`accountRefill.muzeStages.${state}`)
+  return ['queued', 'processing', 'succeeded', 'failed', 'review'].includes(state) ? stateLabel(state) : t('accountRefill.states.supplier_unknown')
+}
 function downloadReason(job: RefillJob) {
-  if (job.provider === 'fendudu') return 'accountRefill.fenduduDownload'
+  if (job.provider === 'fendudu') return 'accountRefill.retiredSupplier'
+  if (job.provider === 'muze') return 'accountRefill.muzeDownload'
   if (job.status === 'delivery_expired' || (job.expires_at != null && job.expires_at * 1000 <= now.value)) return 'accountRefill.downloadExpired'
   if (!job.supplier_id || job.supplier_status !== 'succeeded' || !job.result_ready) return 'accountRefill.downloadNotReady'
   return ''
@@ -469,7 +493,8 @@ function accept(data: RefillView, reset: boolean) {
   data.config.timeout_retry_enabled ??= true
   data.config.timeout_retry_notify ??= true
   data.config.timeout_retry_minutes ??= 10
-  data.config.fendudu_fallback ??= { enabled: false, failure_threshold: 3, timeout_minutes: 5 }
+  data.config.primary_provider ||= '1208'
+  data.config.muze_fallback ??= { enabled: false, failure_threshold: 3, timeout_minutes: 5 }
   data.config.daily_schedules ??= data.config.daily_schedule ? [{ id: 'legacy', plan: '', ...data.config.daily_schedule }] : []
   for (const daily of data.config.daily_schedules) daily.day_mode ??= ''
   delete data.config.daily_schedule
@@ -511,15 +536,15 @@ function accept(data: RefillView, reset: boolean) {
   } else {
     jobsPage.value = Math.min(jobsPage.value, Math.max(1, Math.ceil(data.jobs.length / jobsPageSize)))
   }
-  if (reset || !fenduduDirty.value) fenduduConnectionID.value = data.fendudu?.connection_id || ''
+  if (reset || !muzeDirty.value) muzeConnectionID.value = data.muze?.connection_id || ''
   view.value = data
-  if (reset && isFendudu.value && !manualPending.value && !data.fendudu?.products?.some(p => p.product === manualPlan.value && p.available_now > 0 && !p.expired && !p.blocked_reason)) {
-    manualPlan.value = data.fendudu?.products?.find(p => ['pro5x', 'pro20x'].includes(p.product) && p.available_now > 0 && !p.expired && !p.blocked_reason)?.product || manualPlan.value
+  if (reset && isMuze.value && !manualPending.value && !data.muze?.products?.some(p => p.product === manualPlan.value && p.available_now > 0 && !p.expired && !p.blocked_reason)) {
+    manualPlan.value = data.muze?.products?.find(p => ['pro5x', 'pro20x'].includes(p.product) && p.available_now > 0 && !p.expired && !p.blocked_reason)?.product || manualPlan.value
   }
   const currentPending = manualPending.value
   const confirmed = manualRequests.value.filter(request => request.group_id === data.config.group_id && data.jobs.some(job => job.manual_request_id === request.request_id && job.provider === request.provider))
   for (const request of confirmed) clearManualRequest(request)
-  if (!reset && currentPending && confirmed.includes(currentPending) && ['manual', 'fendudu'].includes(activeTab.value)) {
+  if (!reset && currentPending && confirmed.includes(currentPending) && ['manual', 'muze'].includes(activeTab.value)) {
     activeTab.value = 'progress'; jobsPage.value = 1
   }
   now.value = Date.now()
@@ -543,11 +568,11 @@ function dailyStatus(id: string) {
 }
 async function save() {
   if (!form.value || busy.value || conflict.value) return
-  const fallback = form.value.fendudu_fallback
+  const fallback = form.value.muze_fallback
   if (fallback && (!Number.isInteger(fallback.failure_threshold) || fallback.failure_threshold < 1 || fallback.failure_threshold > 100 || !Number.isInteger(fallback.timeout_minutes) || fallback.timeout_minutes < 1 || fallback.timeout_minutes > 1440)) {
     error.value = t('accountRefill.fallbackInvalid'); activeTab.value = 'rules'; return
   }
-  if (fallback?.enabled && !view.value?.fendudu?.token_configured) {
+  if (fallback?.enabled && (!view.value?.muze?.token_configured || (!view.value?.token_configured && !token.value.trim()))) {
     error.value = t('accountRefill.fallbackConnectionRequired'); activeTab.value = 'rules'; return
   }
   if (!Number.isInteger(form.value.timeout_retry_minutes) || form.value.timeout_retry_minutes! < 1 || form.value.timeout_retry_minutes! > 1440) {
@@ -577,20 +602,20 @@ async function testNotification() {
   catch (e) { error.value = message(e) }
   finally { busy.value = false }
 }
-async function saveFendudu() {
+async function saveMuze() {
   if (busy.value || dirty.value || conflict.value || manualPending.value) return
   busy.value = true; error.value = ''; generation++
   try {
-    const data = await accountRefillAPI.configureFendudu(selectedGroup.value, fenduduToken.value, fenduduConnectionID.value, revision)
-    fenduduToken.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
+    const data = await accountRefillAPI.configureMuze(selectedGroup.value, muzeToken.value, muzeConnectionID.value, revision)
+    muzeToken.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
   } catch (e) { error.value = message(e) }
   finally { busy.value = false }
 }
-async function reconcileFendudu(job: RefillJob) {
+async function reconcileMuze(job: RefillJob) {
   const id = reconcileIDs.value[job.id]?.trim()
   if (busy.value || !id) return
   busy.value = true; error.value = ''; generation++
-  try { accept(await accountRefillAPI.reconcileFendudu(job.id, selectedGroup.value, id), false); delete reconcileIDs.value[job.id] }
+  try { accept(await accountRefillAPI.reconcileMuze(job.id, selectedGroup.value, id), false); delete reconcileIDs.value[job.id] }
   catch (e) { error.value = message(e) }
   finally { busy.value = false }
 }
@@ -619,14 +644,21 @@ function restoreManualRequests() {
     const legacy = sessionStorage.getItem(legacyManualStorageKey)
     if (legacy) requests.push(JSON.parse(legacy))
     for (const request of requests) {
-      if (!request || typeof request !== 'object' || typeof request.request_id !== 'string' || !['pro5x', 'pro20x'].includes(request.plan) || !Number.isInteger(request.revision) || (request.group_id != null && (!Number.isInteger(request.group_id) || request.group_id <= 0)) || (request.provider != null && request.provider !== 'fendudu') || (request.force != null && typeof request.force !== 'boolean')) throw new Error('Invalid manual request storage')
+      if (request?.provider === 'fendudu') {
+        // Retain retired receipts for inspection. Never retry them against either supplier.
+        const archiveKey = manualStorageKey + ':retired'
+        const archived = JSON.parse(sessionStorage.getItem(archiveKey) || '[]')
+        if (!archived.some((r: { request_id: string }) => r.request_id === request.request_id)) sessionStorage.setItem(archiveKey, JSON.stringify([...archived, request]))
+        continue
+      }
+      if (!request || typeof request !== 'object' || typeof request.request_id !== 'string' || !['pro5x', 'pro20x'].includes(request.plan) || !Number.isInteger(request.revision) || (request.group_id != null && (!Number.isInteger(request.group_id) || request.group_id <= 0)) || (request.provider != null && request.provider !== 'muze') || (request.force != null && typeof request.force !== 'boolean')) throw new Error('Invalid manual request storage')
       if (!manualRequests.value.some(item => item.request_id === request.request_id)) manualRequests.value.push(request as ManualRefillRequest)
     }
   } catch { manualStorageFailed.value = true; error.value = t('accountRefill.manualStorageError') }
 }
 async function submitManual(force = false) {
-  if (!['manual', 'fendudu'].includes(activeTab.value) || (force ? manualForceDisabled.value : manualDisabled.value)) return
-  const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(isFendudu.value ? { provider: 'fendudu' as const } : {}), ...(force ? { force: true } : {}) }
+  if (!['manual', 'muze'].includes(activeTab.value) || (force ? manualForceDisabled.value : manualDisabled.value)) return
+  const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(isMuze.value ? { provider: 'muze' as const } : {}), ...(force ? { force: true } : {}) }
   const remaining = manualRequests.value.filter(item => item.group_id !== request.group_id || item.provider !== request.provider)
   try { persistManualRequests([...remaining, request]) }
   catch { error.value = t('accountRefill.manualStorageError'); return }
@@ -652,7 +684,7 @@ function close() { if (!busy.value) emit('close') }
 watch(() => props.show, async show => {
   const current = ++generation
   if (timer) clearInterval(timer)
-  token.value = ''; fenduduToken.value = ''; fenduduConnectionID.value = ''; reconcileIDs.value = {}
+  token.value = ''; muzeToken.value = ''; muzeConnectionID.value = ''; reconcileIDs.value = {}
   webhook.value = ''; qqSecret.value = ''
   downloadStepUp.onCancel()
   if (!show) return
@@ -665,13 +697,13 @@ watch(() => props.show, async show => {
     // Pre-group legacy requests belong to the default rule, not whichever
     // supplier/group the administrator happens to view next.
     for (const request of manualRequests.value) request.group_id ??= data.config.group_id
-    const pending = manualRequests.value.find(request => (request.provider === 'fendudu') === isFendudu.value)
-    if (['manual', 'fendudu'].includes(activeTab.value) && pending?.group_id && pending.group_id !== data.config.group_id) data = await accountRefillAPI.get(pending.group_id)
+    const pending = manualRequests.value.find(request => (request.provider === 'muze') === isMuze.value)
+    if (['manual', 'muze'].includes(activeTab.value) && pending?.group_id && pending.group_id !== data.config.group_id) data = await accountRefillAPI.get(pending.group_id)
     if (current === generation) { groups.value = allGroups; accept(data, true) }
   }
   catch { if (current === generation) error.value = t('accountRefill.loadError') }
   finally { if (current === generation) loading.value = false }
   if (current === generation) timer = setInterval(() => { now.value = Date.now(); void refresh(false) }, 15000)
 }, { immediate: true })
-onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; fenduduToken.value = ''; webhook.value = ''; qqSecret.value = ''; if (timer) clearInterval(timer) })
+onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; muzeToken.value = ''; webhook.value = ''; qqSecret.value = ''; if (timer) clearInterval(timer) })
 </script>

@@ -22,6 +22,9 @@ func isAccountImportExpiryExtra(key string) bool {
 
 func (a *Account) SourceExpiresAt() (*time.Time, string) {
 	if a != nil && a.IsOpenAIOAuth() {
+		if a.Extra[AccountSourceExpiryOriginExtraKey] == "supplier_pending" {
+			return a.ExpiresAt, "supplier_pending"
+		}
 		for _, key := range []string{AccountSourceExpiryExtraKey, "import_original_expires_at"} {
 			raw := fmt.Sprint(a.Extra[key])
 			if numeric, ok := a.Extra[key].(float64); ok {

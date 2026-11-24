@@ -14,8 +14,8 @@
           <button v-for="preset in [0, 30, 60, 120]" :key="preset" type="button" class="btn btn-secondary text-xs" :disabled="saving" @click="minutes = preset">{{ t('accountRefill.minutePreset', { minutes: preset }) }}</button>
         </div>
         <p class="text-xs leading-5 text-gray-500">{{ t('accountRefill.expiryGraceHint') }}</p>
-        <p class="text-xs text-gray-500">{{ t('accountRefill.supplierReclaimAt') }}: {{ sourceExpiry ? new Date(sourceExpiry).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '—' }}</p>
-        <p v-if="effectiveExpiry" class="text-xs text-gray-500">{{ t('accountRefill.effectiveExpiry') }}: {{ new Date(effectiveExpiry).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) }}</p>
+        <p class="text-xs text-gray-500">{{ t('accountRefill.supplierReclaimAt') }}: {{ formatSupplierTime(sourceExpiry) }}</p>
+        <p v-if="effectiveExpiry" class="text-xs text-gray-500">{{ t('accountRefill.effectiveExpiry') }}: {{ formatSupplierTime(effectiveExpiry) }}</p>
         <button v-admin-write type="button" class="btn btn-secondary" :disabled="saving || !valid || minutes === saved" data-testid="expiry-grace-save" @click="save">{{ t(saving ? 'accountRefill.saving' : 'accountRefill.saveExpiryGrace') }}</button>
         <p v-if="success" class="text-xs text-green-600" role="status">{{ t('accountRefill.expiryGraceSaved') }}</p>
       </template>
@@ -27,6 +27,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { formatSupplierTime } from '@/utils/supplierTime'
 import { accountExpiryGraceAPI } from '@/api/admin/accountExpiryGrace'
 
 const props = defineProps<{ accountId: number; active: boolean }>()

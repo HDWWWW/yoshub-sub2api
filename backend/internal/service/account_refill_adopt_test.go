@@ -65,7 +65,7 @@ func (r *refillAdoptTestRepository) ScopedAdminCommitted(ctx context.Context, _ 
 	r.commits++
 }
 
-func TestFenduduAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
+func TestMuzeAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
 	for _, mode := range []string{"random", "direct", "wrong_identity", "policy_failure", "commit_failure", "recovery"} {
 		t.Run(mode, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
@@ -99,7 +99,7 @@ func TestFenduduAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
 				mock.ExpectCommit()
 			}
 			lease := time.Now().Add(time.Hour).Unix()
-			deadline, extra := ImportedAccountExpiryWithGrace(&lease, map[string]any{"refill_job_id": "local-job", "import_source": "fendudu_api", AccountSourceExpiryExtraKey: lease, AccountSourceExpiryOriginExtraKey: "supplier_api"}, 30)
+			deadline, extra := ImportedAccountExpiryWithGrace(&lease, map[string]any{"refill_job_id": "local-job", "import_source": "muze_api", AccountSourceExpiryExtraKey: lease, AccountSourceExpiryOriginExtraKey: "supplier_api"}, 30)
 			rate, autoPause := 1.5, true
 			input := &CreateAccountInput{Name: "saved-name", Credentials: map[string]any{"email": "fixture@example.test", "access_token": "stale-access", "refresh_token": "stale-refresh"}, Extra: extra,
 				GroupIDs: []int64{2, 3}, Concurrency: 77, Priority: 8, RateMultiplier: &rate, ExpiresAt: deadline, AutoPauseOnExpired: &autoPause, ProxyMode: "random"}
@@ -145,7 +145,7 @@ func TestFenduduAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
 	}
 }
 
-func TestFenduduExpiredReceiptPreservesEarlierExpiryAndCredentials(t *testing.T) {
+func TestMuzeExpiredReceiptPreservesEarlierExpiryAndCredentials(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -165,7 +165,7 @@ func TestFenduduExpiredReceiptPreservesEarlierExpiryAndCredentials(t *testing.T)
 	mock.ExpectExec(`SELECT account_id FROM account_groups`).WithArgs(int64(344)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	lease := earlier.Add(7 * time.Minute).Unix()
-	deadline, extra := ImportedAccountExpiryWithGrace(&lease, map[string]any{"refill_job_id": "local-job", "refill_supplier_id": "rvc_fixture", "import_source": "fendudu_api"}, 10)
+	deadline, extra := ImportedAccountExpiryWithGrace(&lease, map[string]any{"refill_job_id": "local-job", "refill_supplier_id": "rvc_fixture", "import_source": "muze_api"}, 10)
 	input := &CreateAccountInput{Credentials: map[string]any{"email": "fixture@example.test"}, Extra: extra, ExpiresAt: deadline, ProxyMode: "random"}
 	require.NoError(t, admin.RecordExpiredRefillAccount(context.Background(), 344, input))
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -182,7 +182,7 @@ func TestFenduduExpiredReceiptPreservesEarlierExpiryAndCredentials(t *testing.T)
 	require.Zero(t, proxy.calls)
 }
 
-func TestFenduduLeaseSyncRepairsLostIdentityWithoutReimport(t *testing.T) {
+func TestMuzeLeaseSyncRepairsLostIdentityWithoutReimport(t *testing.T) {
 	for _, mode := range []string{"repair", "closed", "missing-native-time", "wrong-email", "wrong-account", "claimed", "wrong-supplier", "policy-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
@@ -200,17 +200,18 @@ func TestFenduduLeaseSyncRepairsLostIdentityWithoutReimport(t *testing.T) {
 				Status: "inactive", Schedulable: false, ProxyID: &proxyID, ExpiresAt: &manual,
 				Credentials: map[string]any{"email": "fixture@example.test", "access_token": "fresh-access"}, Extra: extra,
 			}}
-			j := AccountRefillJob{ID: "local-job", SupplierID: "rvc_fixture", Provider: refillProviderFendudu,
-				Plan: "pro20x", AccountID: 344, Status: "imported", SubmissionStartedAt: &started, FenduduConnectionID: "s2e_fixture"}
-			cycle := &fenduduCycle{ID: j.SupplierID, Product: j.Plan, Pushed: true, PushProvider: "sub2api", PushConfigID: j.FenduduConnectionID,
+			j := AccountRefillJob{ID: "local-job", SupplierID: "rvc_fixture", Provider: refillProviderMuze,
+				Plan: "pro20x", AccountID: 344, Status: "imported", SubmissionStartedAt: &started, MuzeConnectionID: "s2e_fixture"}
+			cycle := &muzeCycle{ID: j.SupplierID, Product: j.Plan, Pushed: true, PushProvider: "sub2api", PushConfigID: j.MuzeConnectionID,
 				AccountID: "344", Email: "fixture@example.test", CreatedAt: started.Format(time.RFC3339), Status: "paid",
-				RevokeAt: time.Unix(lease+3600, 0).Format(time.RFC3339)}
+				RefundDueAt: time.Unix(lease+3600, 0).Format(time.RFC3339)}
 			want := lease + 3600
 			switch mode {
 			case "closed":
 				cycle.Status, j.Status = "closed", "delivery_expired"
 			case "missing-native-time":
-				cycle.RevokeAt, want = "", lease
+				cycle.RefundDueAt, want = "", lease
+				j.SupplierExpiresAt = &lease
 			case "wrong-email":
 				cycle.Email = "other@example.test"
 			case "wrong-account":
@@ -233,13 +234,13 @@ func TestFenduduLeaseSyncRepairsLostIdentityWithoutReimport(t *testing.T) {
 					mock.ExpectRollback()
 				}
 			}
-			expires, err := admin.SyncFenduduAccountLease(context.Background(), j, cycle, now)
+			expires, err := admin.SyncMuzeAccountLease(context.Background(), j, cycle, now)
 			if mode == "repair" || mode == "closed" || mode == "missing-native-time" {
 				require.NoError(t, err)
 				require.Equal(t, want, *expires)
 				require.Equal(t, j.ID, repo.account.Extra["refill_job_id"])
 				require.Equal(t, j.SupplierID, repo.account.Extra["refill_supplier_id"])
-				require.Equal(t, "fendudu_api", repo.account.Extra["import_source"])
+				require.Equal(t, "muze_api", repo.account.Extra["import_source"])
 				require.Equal(t, want, repo.account.Extra[AccountSourceExpiryExtraKey])
 			} else {
 				require.Error(t, err)

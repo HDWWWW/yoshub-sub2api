@@ -27,7 +27,7 @@ func refillTimeoutRetryDuration(c AccountRefillConfig) time.Duration {
 // cannot extend it. Ignore overdue orders only for demand and capacity, never
 // for reconciliation or financial reservations.
 func refillJobTimedOut(c AccountRefillConfig, job AccountRefillJob, now time.Time) bool {
-	return job.pending() && job.AccountID == 0 && (job.FenduduFallbackJobID != "" ||
+	return job.pending() && job.AccountID == 0 && (job.MuzeFallbackJobID != "" ||
 		refillTimeoutRetryEnabled(c) && !job.CreatedAt.IsZero() && !now.Before(job.CreatedAt.Add(refillTimeoutRetryDuration(c))))
 }
 
@@ -58,7 +58,7 @@ func refillTimeoutCandidate(state *accountRefillState, jobs []AccountRefillJob, 
 	var candidate *AccountRefillJob
 	for i := range jobs {
 		j := &jobs[i]
-		if !j.pending() || j.AccountID != 0 || j.CreatedAt.IsZero() || j.FenduduFallbackJobID != "" {
+		if !j.pending() || j.AccountID != 0 || j.CreatedAt.IsZero() || j.MuzeFallbackJobID != "" {
 			continue
 		}
 		if due := j.CreatedAt.Add(refillTimeoutRetryDuration(c)); due.After(deadline) {
@@ -123,7 +123,7 @@ func captureRefillTimeoutNotice(state *accountRefillState, now time.Time) *refil
 	}
 	notice := &refillTimeoutNotice{ready: state.Evaluation.Ready}
 	for _, job := range state.Jobs {
-		if job.FenduduFallbackJobID == "" && job.TimeoutNotificationAt == nil && refillJobTimedOut(c, job, now) {
+		if job.MuzeFallbackJobID == "" && job.TimeoutNotificationAt == nil && refillJobTimedOut(c, job, now) {
 			notice.jobs = append(notice.jobs, job)
 			// Keep each WeCom message bounded. The next tick picks up the rest.
 			if len(notice.jobs) == 3 {
@@ -148,7 +148,7 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 		ids := strings.Split(state.TimeoutNoticeKey, ":")
 		unresolved := map[string]bool{}
 		for _, job := range state.Jobs {
-			if job.FenduduFallbackJobID == "" && slices.Contains(ids, job.ID) && refillJobTimedOut(state.Config, job, now) {
+			if job.MuzeFallbackJobID == "" && slices.Contains(ids, job.ID) && refillJobTimedOut(state.Config, job, now) {
 				unresolved[job.ID] = true
 			}
 		}
@@ -196,7 +196,7 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 	var current []AccountRefillJob
 	for _, captured := range notice.jobs {
 		for _, job := range state.Jobs {
-			if job.FenduduFallbackJobID == "" && job.ID == captured.ID && refillJobTimedOut(state.Config, job, now) {
+			if job.MuzeFallbackJobID == "" && job.ID == captured.ID && refillJobTimedOut(state.Config, job, now) {
 				current = append(current, job)
 				break
 			}

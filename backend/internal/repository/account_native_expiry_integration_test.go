@@ -31,7 +31,7 @@ func TestNativeExpiryAtomicRetentionSupplierEchoAndAutoPause(t *testing.T) {
 	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{service.AccountImportExpiryGraceExtraKey: 3600}))
 	require.NoError(t, repo.UpdateExtra(ctx, a.ID, map[string]any{
 		"refill_job_id": "verified-job", "refill_supplier_id": "rvc_fixture",
-		"refill_plan": "pro20x", "import_source": "fendudu_api",
+		"refill_plan": "pro20x", "import_source": "muze_api",
 	}))
 	stale.Name = "unrelated edit"
 	stale.Extra = map[string]any{"public": true, service.AccountDeliveryKeyExtraKey: "forged"}
@@ -45,7 +45,7 @@ func TestNativeExpiryAtomicRetentionSupplierEchoAndAutoPause(t *testing.T) {
 	require.Equal(t, "verified-job", loaded.Extra["refill_job_id"])
 	require.Equal(t, "rvc_fixture", loaded.Extra["refill_supplier_id"])
 	require.Equal(t, "pro20x", loaded.Extra["refill_plan"])
-	require.Equal(t, "fendudu_api", loaded.Extra["import_source"])
+	require.Equal(t, "muze_api", loaded.Extra["import_source"])
 	var sqlDeadline int64
 	query := "SELECT extract(epoch from " + aliasedAccountSchedulingExpirySQL("a") + ")::bigint FROM accounts a WHERE a.id=$1"
 	require.NoError(t, scanSingleRow(ctx, tx, query, []any{a.ID}, &sqlDeadline))
@@ -78,4 +78,34 @@ func TestNativeExpiryAtomicRetentionSupplierEchoAndAutoPause(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, original+7200, loaded.ExpiresAt.Unix())
 	require.False(t, loaded.Schedulable, "retention must not reactivate a paused account")
+}
+
+func TestMuzePushCandidateQueryScopesGroupSubjectAndTime(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	client := tx.Client()
+	repo := newAccountRepositoryWithSQL(client, tx, nil)
+	group := mustCreateGroup(t, client, &service.Group{Name: "muze-push-target", Platform: service.PlatformOpenAI})
+	other := mustCreateGroup(t, client, &service.Group{Name: "muze-push-other", Platform: service.PlatformOpenAI})
+	since := time.Now().Add(-time.Minute)
+	create := func(name, subject, status string, groupID int64) int64 {
+		a := mustCreateAccount(t, client, &service.Account{Name: name, Platform: service.PlatformOpenAI, Status: status, Credentials: map[string]any{"chatgpt_account_id": subject, "email": "delivery@example.test"}})
+		mustBindAccountToGroup(t, client, a.ID, groupID, 1)
+		return a.ID
+	}
+	id := create("paused-push", "shared-subject", "inactive", group.ID)
+	create("wrong-group", "shared-subject", "active", other.ID)
+	create("wrong-subject", "other", "active", group.ID)
+	find := func(at time.Time) []*service.Account {
+		rows, err := repo.FindRefillPushCandidates(ctx, []int64{group.ID}, "shared-subject", at)
+		require.NoError(t, err)
+		return rows
+	}
+	matches := find(since)
+	require.Len(t, matches, 1)
+	require.Equal(t, id, matches[0].ID)
+	require.Equal(t, "inactive", matches[0].Status)
+	require.Empty(t, find(time.Now().Add(time.Hour)))
+	create("duplicate-identity", "shared-subject", "active", group.ID)
+	require.Len(t, find(since), 2)
 }

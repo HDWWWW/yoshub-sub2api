@@ -36,7 +36,8 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
-	FenduduFallback           *AccountRefillFenduduFallbackConfig    `json:"fendudu_fallback,omitempty"`
+	PrimaryProvider           string                                 `json:"primary_provider,omitempty"`
+	MuzeFallback              *AccountRefillMuzeFallbackConfig       `json:"muze_fallback,omitempty"`
 	DailySchedules            []AccountRefillDailySchedule           `json:"daily_schedules"`
 	DailySchedule             *AccountRefillDailySchedule            `json:"daily_schedule,omitempty"`
 	TimeoutRetryEnabled       *bool                                  `json:"timeout_retry_enabled,omitempty"`
@@ -102,7 +103,7 @@ type AccountRefillDeliveryConfig struct {
 
 func DefaultAccountRefillConfig() AccountRefillConfig {
 	timeoutEnabled, timeoutMinutes := true, defaultRefillTimeoutRetryMinutes
-	return AccountRefillConfig{TimeoutRetryEnabled: &timeoutEnabled, TimeoutRetryMinutes: &timeoutMinutes, Notifications: AccountRefillNotificationConfig{LowBalanceThreshold: 100}, MonitorEnabled: true, Mode: "capacity", DeliveryGroupIDs: []int64{}, PushEnabled: true, MaxInFlight: 1, IntervalMinutes: 60, IntervalQuantity: 1,
+	return AccountRefillConfig{PrimaryProvider: "1208", TimeoutRetryEnabled: &timeoutEnabled, TimeoutRetryMinutes: &timeoutMinutes, Notifications: AccountRefillNotificationConfig{LowBalanceThreshold: 100}, MonitorEnabled: true, Mode: "capacity", DeliveryGroupIDs: []int64{}, PushEnabled: true, MaxInFlight: 1, IntervalMinutes: 60, IntervalQuantity: 1,
 		Plan: "pro5x", MinReady: 1, MaxReady: 20, LeadMinutes: 30,
 		MinRemaining5h: 15, MinRemaining7d: 15, TargetConcurrency: 85, ConcurrencySustainSeconds: 30, ImportExpiryGraceMinutes: 60, CheckSeconds: 60,
 		CooldownSeconds: 300, DailyMaxCount: 50, DailyMaxPoints: 3000, MaxUnitPrice: 60,
@@ -111,7 +112,10 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
-	if err := c.FenduduFallback.validate(); err != nil {
+	if c.PrimaryProvider != "" && c.PrimaryProvider != "1208" && c.PrimaryProvider != refillProviderMuze {
+		return errors.New("无效的主号商")
+	}
+	if err := c.MuzeFallback.validate(); err != nil {
 		return err
 	}
 	if err := validateRefillDailySchedules(c); err != nil {
@@ -206,10 +210,11 @@ func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {
 }
 
 type AccountRefillJob struct {
-	FenduduFallbackJobID   string                      `json:"fendudu_fallback_job_id,omitempty"`
+	MuzeFallbackJobID      string                      `json:"muze_fallback_job_id,omitempty"`
+	SupplyFallback         bool                        `json:"supply_fallback,omitempty"`
 	FallbackForJobID       string                      `json:"fallback_for_job_id,omitempty"`
 	Provider               string                      `json:"provider,omitempty"`
-	FenduduConnectionID    string                      `json:"fendudu_connection_id,omitempty"`
+	MuzeConnectionID       string                      `json:"muze_connection_id,omitempty"`
 	SubmissionStartedAt    *time.Time                  `json:"submission_started_at,omitempty"`
 	TimeoutIgnoredAt       *time.Time                  `json:"timeout_ignored_at,omitempty"`
 	TimeoutNotificationAt  *time.Time                  `json:"timeout_notification_at,omitempty"`
@@ -233,6 +238,7 @@ type AccountRefillJob struct {
 	SupplierID             string                      `json:"supplier_id,omitempty"`
 	Status                 string                      `json:"status"`
 	SupplierStatus         string                      `json:"supplier_status,omitempty"`
+	SupplierRefundPhase    string                      `json:"supplier_refund_phase,omitempty"`
 	SupplierError          string                      `json:"supplier_error,omitempty"`
 	Reason                 string                      `json:"reason"`
 	ReasonDetail           string                      `json:"reason_detail,omitempty"`
@@ -302,9 +308,9 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
-	FenduduFallback       accountRefillFenduduFallbackState           `json:"fendudu_fallback"`
+	MuzeFallback          accountRefillMuzeFallbackState              `json:"muze_fallback"`
 	WorkdayCalendar       *refillWorkdayCalendar                      `json:"workday_calendar,omitempty"`
-	Fendudu               fenduduRefillState                          `json:"fendudu"`
+	Muze                  muzeRefillState                             `json:"muze"`
 	DailyScheduleStatus   AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`
 	DailyScheduleStatuses map[string]AccountRefillDailyScheduleStatus `json:"daily_schedule_statuses,omitempty"`
 	RotationGeneration    int64                                       `json:"rotation_generation,omitempty"`
@@ -361,6 +367,11 @@ func decodeAccountRefillState(raw string) (accountRefillState, error) {
 	if raw != "" {
 		if err := json.Unmarshal([]byte(raw), &state); err != nil {
 			return state, errors.New("补号状态读取失败，已停止提交")
+		}
+	}
+	if strings.Contains(raw, `"fendudu`) {
+		if err := migrateRetiredRefillProvider(raw, &state); err != nil {
+			return state, err
 		}
 	}
 	if state.Usage == nil {
@@ -449,6 +460,9 @@ func evaluateAccountRefill(c AccountRefillConfig, accounts []Account, loads map[
 		sourceExpiry, origin := a.SourceExpiresAt()
 		synced, _ := a.Extra[AccountSourceExpiryCheckedExtraKey].(string)
 		row := AccountRefillAccount{ID: a.ID, Name: a.Name, State: "ready", ExpiresAt: a.SchedulingExpiresAt(), SourceExpiresAt: sourceExpiry, ExpirySource: origin, SourceSyncedAt: synced, Concurrency: a.Concurrency}
+		if origin == "supplier_pending" {
+			row.SourceExpiresAt = nil
+		}
 		row.Plan = refillAccountPlan(a, jobs)
 		threshold := refillQuotaThreshold(c, row.Plan)
 		row.MinRemaining5h, row.MinRemaining7d = threshold.MinRemaining5h, threshold.MinRemaining7d

@@ -1338,6 +1338,18 @@ func upstreamBillingRateSortExpression(extra string) string {
 		" AND jsonb_typeof(" + effectiveJSON + ") = 'number' THEN (" + effective + ")::numeric END END"
 }
 
+// Include inactive pushes as well: a restart can occur between adopting the
+// account (initially inactive) and durably finishing the refill job.
+func (r *accountRepository) FindRefillPushCandidates(ctx context.Context, groups []int64, subject string, since time.Time) ([]*service.Account, error) {
+	ids, err := r.client.Account.Query().Where(dbaccount.PlatformEQ(service.PlatformOpenAI), dbaccount.TypeEQ(service.AccountTypeOAuth), dbaccount.CreatedAtGTE(since), dbaccount.HasAccountGroupsWith(dbaccountgroup.GroupIDIn(groups...)), func(s *entsql.Selector) {
+		s.Where(sqljson.ValueEQ(dbaccount.FieldCredentials, subject, sqljson.Path("chatgpt_account_id")))
+	}).Limit(2).IDs(ctx)
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	return r.GetByIDs(ctx, ids)
+}
+
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
 	accounts, err := r.queryAccountsByGroup(ctx, groupID, accountGroupQueryOptions{
 		status: service.StatusActive,

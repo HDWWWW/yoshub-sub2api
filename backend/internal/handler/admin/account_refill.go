@@ -295,7 +295,7 @@ func (h *AccountHandler) DismissAccountRefill(c *gin.Context) {
 	h.GetAccountRefill(c)
 }
 
-func (h *AccountHandler) ConfigureFenduduRefill(c *gin.Context) {
+func (h *AccountHandler) ConfigureMuzeRefill(c *gin.Context) {
 	svc, ok := h.refillForRequest(c)
 	if !ok {
 		return
@@ -307,20 +307,20 @@ func (h *AccountHandler) ConfigureFenduduRefill(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 	if c.ShouldBindJSON(&req) != nil {
-		response.BadRequest(c, "粉嘟嘟连接设置无效")
+		response.BadRequest(c, "muze连接设置无效")
 		return
 	}
-	middleware.SetAuditAction(c, "admin.accounts.refill.fendudu.configure")
+	middleware.SetAuditAction(c, "admin.accounts.refill.muze.configure")
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
-	if err := svc.ConfigureFendudu(ctx, req.APIToken, req.ConnectionID, req.Revision); err != nil {
+	if err := svc.ConfigureMuze(ctx, req.APIToken, req.ConnectionID, req.Revision); err != nil {
 		refillResponseError(c, err)
 		return
 	}
 	h.GetAccountRefill(c)
 }
 
-func (h *AccountHandler) ReconcileFenduduRefill(c *gin.Context) {
+func (h *AccountHandler) ReconcileMuzeRefill(c *gin.Context) {
 	svc, ok := h.refillForRequest(c)
 	if !ok {
 		return
@@ -330,11 +330,11 @@ func (h *AccountHandler) ReconcileFenduduRefill(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 	if c.ShouldBindJSON(&req) != nil {
-		response.BadRequest(c, "粉嘟嘟订单 ID 无效")
+		response.BadRequest(c, "muze订单 ID 无效")
 		return
 	}
-	middleware.SetAuditAction(c, "admin.accounts.refill.fendudu.reconcile")
-	if err := svc.ReconcileFendudu(c.Request.Context(), c.Param("job_id"), req.SupplierID); err != nil {
+	middleware.SetAuditAction(c, "admin.accounts.refill.muze.reconcile")
+	if err := svc.ReconcileMuze(c.Request.Context(), c.Param("job_id"), req.SupplierID); err != nil {
 		refillResponseError(c, err)
 		return
 	}

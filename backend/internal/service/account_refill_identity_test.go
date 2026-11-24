@@ -10,7 +10,7 @@ import (
 )
 
 func TestAccountEditPreservesRefillIdentityFromCurrentAccount(t *testing.T) {
-	for _, source := range []string{"fendudu_api", "llmrefund_api"} {
+	for _, source := range []string{"muze_api", "llmrefund_api"} {
 		t.Run(source, func(t *testing.T) {
 			repo := &refillAdoptTestRepository{t: t, account: Account{
 				ID: 344, Platform: PlatformOpenAI, Type: AccountTypeOAuth,

@@ -27,12 +27,12 @@ func fallbackPrimaryJob(id, status string, created time.Time) AccountRefillJob {
 	return j
 }
 
-func fallbackHarness(t *testing.T) (*AccountRefillService, *refillTestStore, *fenduduTestProvider, *fenduduTestAdmin) {
-	s, store, p, accounts := fenduduHarness(t)
+func fallbackHarness(t *testing.T) (*AccountRefillService, *refillTestStore, *muzeTestProvider, *muzeTestAdmin) {
+	s, store, p, accounts := muzeHarness(t)
 	store.mutate(t, func(state *accountRefillState) {
 		state.Config.Enabled, state.Config.MonitorEnabled = true, true
 		state.Config.Mode = "fixed"
-		state.Config.FenduduFallback = &AccountRefillFenduduFallbackConfig{true, 3, 5}
+		state.Config.MuzeFallback = &AccountRefillMuzeFallbackConfig{true, 3, 5}
 		state.ProviderRetryAt, state.NextCheckAt = time.Now().Add(time.Hour), time.Now().Add(time.Hour)
 		state.Config.PlanImportConcurrency = map[string]int{"pro20x": 77}
 		state.Config.ImportExpiryGraceMinutes = 10
@@ -41,7 +41,7 @@ func fallbackHarness(t *testing.T) (*AccountRefillService, *refillTestStore, *fe
 	return s, store, p, accounts
 }
 
-func TestFenduduFallbackFailureThresholdAndSuccessReset(t *testing.T) {
+func TestMuzeFallbackFailureThresholdAndSuccessReset(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		count, threshold int
@@ -51,7 +51,7 @@ func TestFenduduFallbackFailureThresholdAndSuccessReset(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, store, p, _ := fallbackHarness(t)
 			store.mutate(t, func(state *accountRefillState) {
-				state.Config.FenduduFallback.FailureThreshold = tc.threshold
+				state.Config.MuzeFallback.FailureThreshold = tc.threshold
 				for i := 0; i < tc.count; i++ {
 					state.Jobs = append(state.Jobs, fallbackPrimaryJob(fmt.Sprint(i), "failed", time.Now().Add(time.Duration(i-10)*time.Minute)))
 				}
@@ -65,7 +65,7 @@ func TestFenduduFallbackFailureThresholdAndSuccessReset(t *testing.T) {
 			require.NoError(t, err)
 			if tc.want == 1 {
 				j := state.Jobs[0]
-				require.Equal(t, refillProviderFendudu, j.Provider)
+				require.Equal(t, refillProviderMuze, j.Provider)
 				require.Equal(t, "pro20x", j.Plan)
 				require.Equal(t, 77, j.Concurrency)
 				require.Equal(t, 8, j.DeliveryConfig.Priority)
@@ -74,20 +74,20 @@ func TestFenduduFallbackFailureThresholdAndSuccessReset(t *testing.T) {
 				require.NotEmpty(t, j.FallbackForJobID)
 				require.Equal(t, 1, state.Usage[time.Now().In(refillTimezone).Format("2006-01-02")].Count)
 				require.Zero(t, state.Usage[time.Now().In(refillTimezone).Format("2006-01-02")].Points)
-				require.Empty(t, refillFenduduFailures(&state))
+				require.Empty(t, refillMuzeFailures(&state))
 				require.Equal(t, -1, nextRefillFailureReplacement(&state))
 			}
 		})
 	}
 }
 
-func TestFenduduFallbackAnySuccessfulRefillRestartsFailureCount(t *testing.T) {
-	for _, scenario := range []string{"manual-primary", "manual-fendudu", "forced-fendudu", "daily-primary", "daily-fendudu"} {
+func TestMuzeFallbackAnySuccessfulRefillRestartsFailureCount(t *testing.T) {
+	for _, scenario := range []string{"manual-primary", "manual-muze", "forced-muze", "daily-primary", "daily-muze"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, store, p, _ := fallbackHarness(t)
 			now := time.Now()
 			store.mutate(t, func(state *accountRefillState) {
-				state.Config.FenduduFallback.FailureThreshold = 2
+				state.Config.MuzeFallback.FailureThreshold = 2
 				state.Jobs = []AccountRefillJob{
 					fallbackPrimaryJob("old-first", "failed", now.Add(-10*time.Minute)),
 					fallbackPrimaryJob("old-second", "failed", now.Add(-9*time.Minute)),
@@ -98,13 +98,13 @@ func TestFenduduFallbackAnySuccessfulRefillRestartsFailureCount(t *testing.T) {
 				switch scenario {
 				case "manual-primary":
 					success.ManualRequestID = "manual"
-				case "manual-fendudu", "forced-fendudu":
-					success.Provider, success.ManualRequestID = refillProviderFendudu, "manual"
-					success.Force = scenario == "forced-fendudu"
-				case "daily-primary", "daily-fendudu":
+				case "manual-muze", "forced-muze":
+					success.Provider, success.ManualRequestID = refillProviderMuze, "manual"
+					success.Force = scenario == "forced-muze"
+				case "daily-primary", "daily-muze":
 					success.DailyBatchID = "daily"
-					if scenario == "daily-fendudu" {
-						success.Provider = refillProviderFendudu
+					if scenario == "daily-muze" {
+						success.Provider = refillProviderMuze
 					}
 				}
 				state.Jobs = append(state.Jobs, success)
@@ -113,7 +113,7 @@ func TestFenduduFallbackAnySuccessfulRefillRestartsFailureCount(t *testing.T) {
 			restarted := *s
 			view, err := restarted.View(context.Background())
 			require.NoError(t, err)
-			require.Zero(t, view.FenduduFallbackStatus.ConsecutiveFailures)
+			require.Zero(t, view.MuzeFallbackStatus.ConsecutiveFailures)
 			require.NoError(t, restarted.run(context.Background(), false))
 			require.Zero(t, p.orders, "old failures must not buy a backup after a successful manual or scheduled import")
 
@@ -122,7 +122,7 @@ func TestFenduduFallbackAnySuccessfulRefillRestartsFailureCount(t *testing.T) {
 			})
 			view, err = restarted.View(context.Background())
 			require.NoError(t, err)
-			require.Equal(t, 1, view.FenduduFallbackStatus.ConsecutiveFailures)
+			require.Equal(t, 1, view.MuzeFallbackStatus.ConsecutiveFailures)
 			require.NoError(t, restarted.run(context.Background(), false))
 			require.Zero(t, p.orders, "one failure after success is below the configured threshold")
 
@@ -134,24 +134,24 @@ func TestFenduduFallbackAnySuccessfulRefillRestartsFailureCount(t *testing.T) {
 			state, err := decodeAccountRefillState(store.raw)
 			require.NoError(t, err)
 			require.Equal(t, "new-second", state.Jobs[0].FallbackForJobID)
-			require.Empty(t, refillFenduduFailures(&state))
+			require.Empty(t, refillMuzeFailures(&state))
 		})
 	}
 }
 
-func TestFenduduFallbackSuccessResetRequiresImportedAccountInSameGroup(t *testing.T) {
+func TestMuzeFallbackSuccessResetRequiresImportedAccountInSameGroup(t *testing.T) {
 	for _, scenario := range []string{"other-group", "awaiting-delivery", "no-account", "unfinished", "success-before-failures"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, store, _, _ := fallbackHarness(t)
 			now := time.Now()
 			store.mutate(t, func(state *accountRefillState) {
-				state.Config.FenduduFallback.FailureThreshold = 2
+				state.Config.MuzeFallback.FailureThreshold = 2
 				state.Jobs = []AccountRefillJob{
 					fallbackPrimaryJob("first", "failed", now.Add(-3*time.Minute)),
 					fallbackPrimaryJob("second", "failed", now.Add(-2*time.Minute)),
 				}
 				success := fallbackPrimaryJob("success", "imported", now.Add(-time.Minute))
-				success.Provider, success.ManualRequestID = refillProviderFendudu, "manual"
+				success.Provider, success.ManualRequestID = refillProviderMuze, "manual"
 				switch scenario {
 				case "other-group":
 					success.GroupID = 3
@@ -169,12 +169,12 @@ func TestFenduduFallbackSuccessResetRequiresImportedAccountInSameGroup(t *testin
 			})
 			view, err := s.View(context.Background())
 			require.NoError(t, err)
-			require.Equal(t, 2, view.FenduduFallbackStatus.ConsecutiveFailures)
+			require.Equal(t, 2, view.MuzeFallbackStatus.ConsecutiveFailures)
 		})
 	}
 }
 
-func TestFenduduFallbackTimeoutBoundaryAndOnePurchaseAcrossRestart(t *testing.T) {
+func TestMuzeFallbackTimeoutBoundaryAndOnePurchaseAcrossRestart(t *testing.T) {
 	s, store, p, _ := fallbackHarness(t)
 	now := time.Now()
 	store.mutate(t, func(state *accountRefillState) {
@@ -182,15 +182,15 @@ func TestFenduduFallbackTimeoutBoundaryAndOnePurchaseAcrossRestart(t *testing.T)
 	})
 	state, err := decodeAccountRefillState(store.raw)
 	require.NoError(t, err)
-	require.False(t, refillFenduduStalled(&state, state.Jobs[0], now.Add(-time.Nanosecond)))
-	require.True(t, refillFenduduStalled(&state, state.Jobs[0], now))
+	require.False(t, refillMuzeStalled(&state, state.Jobs[0], now.Add(-time.Nanosecond)))
+	require.True(t, refillMuzeStalled(&state, state.Jobs[0], now))
 	require.NoError(t, s.run(context.Background(), true))
 	require.Zero(t, p.orders, "check is read-only")
 	require.NoError(t, s.run(context.Background(), false))
 	require.Equal(t, 1, p.orders)
 	state, err = decodeAccountRefillState(store.raw)
 	require.NoError(t, err)
-	require.Equal(t, state.Jobs[0].ID, state.Jobs[1].FenduduFallbackJobID)
+	require.Equal(t, state.Jobs[0].ID, state.Jobs[1].MuzeFallbackJobID)
 	require.Equal(t, "processing", state.Jobs[1].Status, "original is retained for reconciliation")
 	require.True(t, refillJobTimedOut(state.Config, state.Jobs[1], now))
 	require.Nil(t, captureRefillTimeoutNotice(&state, now), "a 5-minute backup must not announce the independent 10-minute primary timeout")
@@ -207,15 +207,15 @@ func TestFenduduFallbackTimeoutBoundaryAndOnePurchaseAcrossRestart(t *testing.T)
 	require.Equal(t, 1, p.orders, "a failed backup cannot replay the same primary trigger")
 }
 
-func TestFenduduFallbackGuardsAndUnknownResults(t *testing.T) {
-	for _, scenario := range []string{"off", "automation-off", "monitor-off", "push-off", "manual", "daily", "wrong-group", "other-provider", "already-imported", "not-due", "custom-timeout", "quota", "daily-limit", "healthy", "pending-backup", "no-connection", "fendudu-backoff"} {
+func TestMuzeFallbackGuardsAndUnknownResults(t *testing.T) {
+	for _, scenario := range []string{"off", "automation-off", "monitor-off", "push-off", "manual", "daily", "wrong-group", "other-provider", "already-imported", "not-due", "custom-timeout", "quota", "daily-limit", "healthy", "pending-backup", "no-connection", "muze-backoff"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, store, p, accounts := fallbackHarness(t)
 			store.mutate(t, func(state *accountRefillState) {
 				j := fallbackPrimaryJob("original", "supplier_unknown", time.Now().Add(-6*time.Minute))
 				switch scenario {
 				case "off":
-					state.Config.FenduduFallback.Enabled = false
+					state.Config.MuzeFallback.Enabled = false
 				case "automation-off":
 					state.Config.Enabled = false
 				case "monitor-off":
@@ -229,14 +229,14 @@ func TestFenduduFallbackGuardsAndUnknownResults(t *testing.T) {
 				case "wrong-group":
 					j.GroupID = 3
 				case "other-provider":
-					j.Provider = refillProviderFendudu
+					j.Provider = refillProviderMuze
 					j.Status = "blocked"
 				case "already-imported":
 					j.AccountID = 42
 				case "not-due":
 					j.CreatedAt = time.Now().Add(-4 * time.Minute)
 				case "custom-timeout":
-					state.Config.FenduduFallback.TimeoutMinutes = 7
+					state.Config.MuzeFallback.TimeoutMinutes = 7
 				case "quota":
 					p.available = 0
 				case "daily-limit":
@@ -245,12 +245,12 @@ func TestFenduduFallbackGuardsAndUnknownResults(t *testing.T) {
 					accounts.accounts = []Account{refillTestAccount(time.Now().Add(time.Hour))}
 				case "pending-backup":
 					backup := fallbackPrimaryJob("backup", "blocked", time.Now())
-					backup.Provider, backup.FallbackForJobID = refillProviderFendudu, "previous"
+					backup.Provider, backup.FallbackForJobID = refillProviderMuze, "previous"
 					state.Jobs = append(state.Jobs, backup)
 				case "no-connection":
-					state.Fendudu.EncryptedToken = ""
-				case "fendudu-backoff":
-					state.Fendudu.RetryAt = time.Now().Add(time.Hour)
+					state.Muze.EncryptedToken = ""
+				case "muze-backoff":
+					state.Muze.RetryAt = time.Now().Add(time.Hour)
 				}
 				state.Jobs = append(state.Jobs, j)
 			})
@@ -266,12 +266,12 @@ func TestFenduduFallbackGuardsAndUnknownResults(t *testing.T) {
 		state.Jobs = []AccountRefillJob{j}
 	})
 	state, _ := decodeAccountRefillState(store.raw)
-	require.Empty(t, refillFenduduFailures(&state))
+	require.Empty(t, refillMuzeFailures(&state))
 	require.NoError(t, s.run(context.Background(), false))
 	require.Equal(t, 1, p.orders)
 }
 
-func TestFenduduFallbackDurabilityAndUncertainPOST(t *testing.T) {
+func TestMuzeFallbackDurabilityAndUncertainPOST(t *testing.T) {
 	for _, scenario := range []string{"reservation-save", "post-timeout", "post-save"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, store, p, _ := fallbackHarness(t)
@@ -307,54 +307,54 @@ func TestFenduduFallbackDurabilityAndUncertainPOST(t *testing.T) {
 }
 
 type fallbackProductsHook struct {
-	*fenduduTestProvider
+	*muzeTestProvider
 	hook func()
 }
 
-func (p *fallbackProductsHook) Products(ctx context.Context, token string) ([]FenduduProduct, error) {
+func (p *fallbackProductsHook) Products(ctx context.Context, token string) ([]MuzeProduct, error) {
 	p.hook()
-	return p.fenduduTestProvider.Products(ctx, token)
+	return p.muzeTestProvider.Products(ctx, token)
 }
 
-func TestFenduduFallbackRechecksDemandAfterQuotaLookup(t *testing.T) {
+func TestMuzeFallbackRechecksDemandAfterQuotaLookup(t *testing.T) {
 	s, store, p, accounts := fallbackHarness(t)
 	store.mutate(t, func(state *accountRefillState) {
 		now := time.Now()
-		state.Fendudu.CheckedAt = &now // Only the purchase quote invokes the hook.
+		state.Muze.CheckedAt = &now // Only the purchase quote invokes the hook.
 		state.Jobs = []AccountRefillJob{fallbackPrimaryJob("stalled", "review", now.Add(-6*time.Minute))}
 	})
-	s.fendudu = &fallbackProductsHook{p, func() { accounts.accounts = []Account{refillTestAccount(time.Now().Add(time.Hour))} }}
+	s.muze = &fallbackProductsHook{p, func() { accounts.accounts = []Account{refillTestAccount(time.Now().Add(time.Hour))} }}
 	require.NoError(t, s.run(context.Background(), false))
 	require.Zero(t, p.orders)
 }
 
-func TestFenduduFallbackConfigurePreservesOldClientsAndStartsFresh(t *testing.T) {
+func TestMuzeFallbackConfigurePreservesOldClientsAndStartsFresh(t *testing.T) {
 	s, store, _, _ := fallbackHarness(t)
 	state, err := decodeAccountRefillState(store.raw)
 	require.NoError(t, err)
 	c := state.Config
-	c.FenduduFallback = nil
+	c.MuzeFallback = nil
 	require.NoError(t, s.Configure(context.Background(), c, "rst_fixture", state.Revision))
 	state, err = decodeAccountRefillState(store.raw)
 	require.NoError(t, err)
-	require.True(t, state.Config.FenduduFallback.Enabled)
-	require.Equal(t, 3, state.Config.FenduduFallback.FailureThreshold)
-	for _, invalid := range []AccountRefillFenduduFallbackConfig{{true, 0, 5}, {true, 101, 5}, {true, 3, 0}, {true, 3, 1441}} {
-		c.FenduduFallback = &invalid
+	require.True(t, state.Config.MuzeFallback.Enabled)
+	require.Equal(t, 3, state.Config.MuzeFallback.FailureThreshold)
+	for _, invalid := range []AccountRefillMuzeFallbackConfig{{true, 0, 5}, {true, 101, 5}, {true, 3, 0}, {true, 3, 1441}} {
+		c.MuzeFallback = &invalid
 		require.Error(t, c.Validate())
 	}
-	store.mutate(t, func(state *accountRefillState) { state.Config.FenduduFallback = nil })
+	store.mutate(t, func(state *accountRefillState) { state.Config.MuzeFallback = nil })
 	state, _ = decodeAccountRefillState(store.raw)
 	c = state.Config
-	c.FenduduFallback = &AccountRefillFenduduFallbackConfig{true, 3, 5}
+	c.MuzeFallback = &AccountRefillMuzeFallbackConfig{true, 3, 5}
 	require.NoError(t, s.Configure(context.Background(), c, "", state.Revision))
 	state, _ = decodeAccountRefillState(store.raw)
-	require.False(t, state.FenduduFallback.Since.IsZero())
-	store.mutate(t, func(state *accountRefillState) { state.Fendudu.EncryptedToken = "" })
-	require.ErrorContains(t, s.Configure(context.Background(), c, "", state.Revision), "粉嘟嘟连接")
+	require.False(t, state.MuzeFallback.Since.IsZero())
+	store.mutate(t, func(state *accountRefillState) { state.Muze.EncryptedToken = "" })
+	require.ErrorContains(t, s.Configure(context.Background(), c, "", state.Revision), "muze连接")
 }
 
-func TestFenduduFallbackReplacesThirdActualFailureBeforeFourthPrimaryOrder(t *testing.T) {
+func TestMuzeFallbackReplacesThirdActualFailureBeforeFourthPrimaryOrder(t *testing.T) {
 	s, store, p, _ := fallbackHarness(t)
 	primary := s.provider.(*refillTestProvider)
 	primary.status = "failed"
@@ -369,7 +369,7 @@ func TestFenduduFallbackReplacesThirdActualFailureBeforeFourthPrimaryOrder(t *te
 	require.Equal(t, 1, p.orders)
 }
 
-func TestFenduduFallbackSharesCrossGroupDemandAndPrepaidReservations(t *testing.T) {
+func TestMuzeFallbackSharesCrossGroupDemandAndPrepaidReservations(t *testing.T) {
 	for _, scenario := range []string{"same-pool", "same-wallet"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, store, p, _ := fallbackHarness(t)
@@ -380,9 +380,9 @@ func TestFenduduFallbackSharesCrossGroupDemandAndPrepaidReservations(t *testing.
 			child.mutate(t, func(state *accountRefillState) {
 				state.Config = refillTestConfig()
 				state.Config.GroupID, state.Config.DeliveryGroupIDs = 3, []int64{3}
-				state.Fendudu.TokenHash = "same-wallet"
+				state.Muze.TokenHash = "same-wallet"
 				j := fallbackPrimaryJob("other", "submitting", time.Now())
-				j.Provider, j.Plan, j.SupplierID = refillProviderFendudu, "pro20x", ""
+				j.Provider, j.Plan, j.SupplierID = refillProviderMuze, "pro20x", ""
 				j.GroupID, j.DeliveryGroupIDs = 3, []int64{3}
 				if scenario == "same-pool" {
 					j.DeliveryGroupIDs = []int64{2, 3}
@@ -398,14 +398,14 @@ func TestFenduduFallbackSharesCrossGroupDemandAndPrepaidReservations(t *testing.
 	}
 }
 
-func TestFenduduFallbackAdoptsDeliveryAndPreservesOriginalReconciliation(t *testing.T) {
+func TestMuzeFallbackAdoptsDeliveryAndPreservesOriginalReconciliation(t *testing.T) {
 	s, store, p, accounts := fallbackHarness(t)
 	store.mutate(t, func(state *accountRefillState) {
 		state.Jobs = []AccountRefillJob{fallbackPrimaryJob("stalled", "review", time.Now().Add(-6*time.Minute))}
 	})
 	require.NoError(t, s.run(context.Background(), false))
 	lease := time.Now().Add(time.Hour).Truncate(time.Second)
-	p.cycle.Pushed, p.cycle.AccountID, p.cycle.Email, p.cycle.RevokeAt = true, "344", "backup@example.test", lease.Format(time.RFC3339)
+	p.cycle.Pushed, p.cycle.AccountID, p.cycle.Email, p.cycle.RefundDueAt = true, "344", "backup@example.test", lease.Format(time.RFC3339)
 	accounts.accounts = []Account{{ID: 344, CreatedAt: time.Now(), Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 		Credentials: map[string]any{"email": "backup@example.test", "access_token": "fixture", "refresh_token": "refresh"}, Extra: map[string]any{}}}
 	store.mutate(t, func(state *accountRefillState) { state.Jobs[0].NextAttemptAt = time.Time{} })
@@ -423,7 +423,7 @@ func TestFenduduFallbackAdoptsDeliveryAndPreservesOriginalReconciliation(t *test
 	require.False(t, state.Jobs[1].ReplacementPending)
 	// A completed backup also resets failures that occurred while it was in flight.
 	failure := fallbackPrimaryJob("new-failure", "failed", state.Jobs[0].FinishedAt.Add(-time.Second))
-	state.FenduduFallback.LastAt = nil
+	state.MuzeFallback.LastAt = nil
 	state.Jobs = append(state.Jobs, failure)
-	require.Empty(t, refillFenduduFailures(&state))
+	require.Empty(t, refillMuzeFailures(&state))
 }

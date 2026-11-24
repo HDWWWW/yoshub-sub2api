@@ -46,8 +46,8 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 	extra := map[string]any{"same_account_retry_count": j.DeliveryConfig.sameAccountRetryCount(), "refill_job_id": j.ID, "refill_supplier_id": j.SupplierID, "import_source": "llmrefund_api",
 		"refill_plan":            j.Plan,
 		"codex_fingerprint_mode": j.DeliveryConfig.FingerprintMode, "openai_oauth_responses_websockets_v2_enabled": j.DeliveryConfig.WSMode != "off", "openai_oauth_responses_websockets_v2_mode": j.DeliveryConfig.WSMode}
-	if j.Provider == refillProviderFendudu {
-		extra["import_source"] = "fendudu_api"
+	if j.Provider == refillProviderMuze {
+		extra["import_source"] = "muze_api"
 	}
 	if j.DeliveryConfig.OpenAIResponsesFlattenNamespaces != nil && *j.DeliveryConfig.OpenAIResponsesFlattenNamespaces {
 		extra["openai_responses_flatten_namespaces"] = true
@@ -63,6 +63,12 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 	}
 	if j.ExpiresAt != nil {
 		extra[AccountSourceExpiryExtraKey] = *j.ExpiresAt
+	}
+	if j.Provider == "" {
+		// 1208 may send the supplier lease only with the delivered account.
+		if source, ok := extra[AccountSourceExpiryExtraKey].(int64); ok && source > 0 && source <= 253402214399 {
+			j.SupplierExpiresAt = &source
+		}
 	}
 	extra[AccountSourceExpiryOriginExtraKey] = "supplier_api"
 	extra[AccountSourceExpiryCheckedExtraKey] = time.Now().UTC().Format(time.RFC3339)

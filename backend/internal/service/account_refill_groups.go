@@ -37,8 +37,8 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 	if err != nil {
 		return "", err
 	}
-	fendudu := old.Fendudu
-	if old.EncryptedToken == "" || fendudu.EncryptedToken == "" {
+	muze := old.Muze
+	if old.EncryptedToken == "" || muze.EncryptedToken == "" {
 		if stores, ok := s.root.(AccountRefillGroupStore); ok {
 			rows, err := stores.ListRules(ctx)
 			if err != nil {
@@ -59,10 +59,10 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 				if old.EncryptedToken == "" && candidate.EncryptedToken != "" {
 					old = candidate
 				}
-				if fendudu.EncryptedToken == "" && candidate.Fendudu.EncryptedToken != "" {
-					fendudu = candidate.Fendudu
+				if muze.EncryptedToken == "" && candidate.Muze.EncryptedToken != "" {
+					muze = candidate.Muze
 				}
-				if old.EncryptedToken != "" && fendudu.EncryptedToken != "" {
+				if old.EncryptedToken != "" && muze.EncryptedToken != "" {
 					break
 				}
 			}
@@ -72,7 +72,18 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 	state.Config.GroupID = s.groupID
 	state.Config.DeliveryGroupIDs = []int64{s.groupID}
 	state.EncryptedToken, state.EncryptedWebhook = old.EncryptedToken, old.EncryptedWebhook
-	state.Fendudu = fendudu
+	// When configured, the installation-wide key takes precedence over inheriting
+	// another group’s wallet or push connection. Existing rules bypass seeding.
+	if defaults, ok := s.root.(muzeDefaultStore); ok {
+		cipher, err := defaults.ReadMuzeDefaultToken(ctx)
+		if err != nil {
+			return "", err
+		}
+		if cipher != "" {
+			muze = muzeRefillState{}
+		}
+	}
+	state.Muze = muze
 	state.Key, state.Wallet, state.Catalog = old.Key, old.Wallet, old.Catalog
 	state.IdentityAt, state.CatalogAt = old.IdentityAt, old.CatalogAt
 	b, err := json.Marshal(state)
@@ -112,7 +123,7 @@ func (s *AccountRefillService) groupService(id int64, store AccountRefillGroupSt
 	child := &AccountRefillService{
 		store:     &seededRefillGroupStore{AccountRefillStore: store.ForGroup(id), root: s.store, groupID: id},
 		encryptor: s.encryptor, accounts: s.accounts, admin: s.admin, groups: s.groups,
-		loads: s.loads, proxies: s.proxies, provider: s.provider, fendudu: s.fendudu, notifier: s.notifier,
+		loads: s.loads, proxies: s.proxies, provider: s.provider, muze: s.muze, notifier: s.notifier,
 		ruleRoot: s, ruleGroupID: id,
 	}
 	s.ruleServices[id] = child
@@ -239,7 +250,7 @@ func (s *AccountRefillService) unsubmittedPoints(ctx context.Context, state *acc
 	points := 0.0
 	add := func(jobs []AccountRefillJob) {
 		for _, j := range jobs {
-			if j.pending() && j.SupplierID == "" {
+			if j.Provider == "" && j.pending() && j.SupplierID == "" {
 				points += j.Price
 			}
 		}

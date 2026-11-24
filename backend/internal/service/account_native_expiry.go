@@ -92,7 +92,7 @@ func recalculateNativeExpiry(a *Account) {
 		a.ExpiresAt = nil
 		return
 	}
-	if source, origin := a.SourceExpiresAt(); origin != "local" && source != nil && source.Unix() < base {
+	if source, origin := a.SourceExpiresAt(); origin != "local" && origin != "supplier_pending" && source != nil && source.Unix() < base {
 		base = source.Unix()
 	}
 	deadline := time.Unix(base+int64(a.ExpiryGraceSeconds()), 0)
@@ -177,7 +177,7 @@ func ApplyAccountExpiryWrite(ctx context.Context, a *Account, expires int64) {
 		}
 		a.Extra[AccountDeliveryExpiryExtraKey] = expires
 		a.Extra[AccountExpiryBaseExtraKey] = expires
-		if a.Extra[AccountSourceExpiryOriginExtraKey] != "supplier_api" {
+		if a.Extra[AccountSourceExpiryOriginExtraKey] != "supplier_api" && a.Extra[AccountSourceExpiryOriginExtraKey] != "supplier_pending" {
 			a.Extra[AccountSourceExpiryExtraKey] = expires
 			a.Extra[AccountSourceExpiryOriginExtraKey] = "import"
 		}

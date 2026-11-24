@@ -6,68 +6,76 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-type fenduduTestProvider struct {
+type muzeTestProvider struct {
 	t             *testing.T
 	store         *refillTestStore
 	available     int
 	orders        int
 	orderError    error
 	failAfterPost bool
-	cycle         *fenduduCycle
+	cycle         *muzeCycle
 }
 
-func (p *fenduduTestProvider) Products(context.Context, string) ([]FenduduProduct, error) {
-	return []FenduduProduct{{Product: "pro20x", AvailableNow: p.available}}, nil
+const muzeFixtureToken = "tk_" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func (p *muzeTestProvider) ResolveConnection(_ context.Context, _ string, id string) (string, error) {
+	if id == "" {
+		return "c_fixture", nil
+	}
+	return id, nil
 }
-func (p *fenduduTestProvider) Order(_ context.Context, _ string, j AccountRefillJob) (*fenduduOrder, error) {
+func (p *muzeTestProvider) Products(context.Context, string) ([]MuzeProduct, error) {
+	return []MuzeProduct{{Product: "pro20x", AvailableNow: p.available}}, nil
+}
+func (p *muzeTestProvider) Order(_ context.Context, _ string, j AccountRefillJob) (*muzeOrder, error) {
 	state, err := decodeAccountRefillState(p.store.raw)
 	require.NoError(p.t, err)
 	require.NotNil(p.t, state.Jobs[0].SubmissionStartedAt, "persist the task ID and parameters before POST")
 	require.Equal(p.t, j.ID, state.Jobs[0].ID)
 	p.orders++
 	p.store.failSave = p.failAfterPost
-	p.cycle = &fenduduCycle{ID: "rvc_fixture", Product: j.Plan, PushProvider: "sub2api", PushConfigID: "s2e_fixture", Status: "paid", CreatedAt: j.SubmissionStartedAt.Format(time.RFC3339Nano)}
-	return &fenduduOrder{Success: true, Created: 1, CycleIDs: []string{"rvc_fixture"}}, p.orderError
+	p.cycle = &muzeCycle{ID: "rvc_fixture", RequestID: j.ID, Product: j.Plan, PushProvider: "sub2api", PushConfigID: j.MuzeConnectionID, Status: "using", CreatedAt: j.SubmissionStartedAt.Format(time.RFC3339Nano)}
+	return &muzeOrder{ID: "rvc_fixture"}, p.orderError
 }
-func (p *fenduduTestProvider) Cycle(context.Context, string, string) (*fenduduCycle, error) {
+func (p *muzeTestProvider) Cycle(context.Context, string, string) (*muzeCycle, error) {
 	return p.cycle, nil
 }
 
-type fenduduTestAdmin struct {
+type muzeTestAdmin struct {
 	*refillTestAccounts
 	input  *CreateAccountInput
 	adopt  int
 	closed int
 }
 
-func (a *fenduduTestAdmin) SyncFenduduAccountLease(ctx context.Context, j AccountRefillJob, cycle *fenduduCycle, now time.Time) (*int64, error) {
+func (a *muzeTestAdmin) SyncMuzeAccountLease(ctx context.Context, j AccountRefillJob, cycle *muzeCycle, now time.Time) (*int64, error) {
 	for i := range a.accounts {
 		account := &a.accounts[i]
 		if account.ID != j.AccountID {
 			continue
 		}
-		if err := validateFenduduPushedAccount(account, &j, cycle, now); err != nil {
+		if err := validateMuzePushedAccount(account, &j, cycle, now); err != nil {
 			return nil, err
 		}
-		expires := fenduduSourceExpiry(cycle, account)
-		updates := fenduduLeaseUpdates(&j, account, *expires, now)
+		lease := muzeEffectiveLease(&j, cycle, account)
+		expires := &lease
+		updates := muzeLeaseUpdates(&j, account, *expires, now)
 		updates["refill_job_id"], updates["refill_supplier_id"] = j.ID, j.SupplierID
-		updates["refill_plan"], updates["import_source"] = j.Plan, "fendudu_api"
+		updates["refill_plan"], updates["import_source"] = j.Plan, "muze_api"
 		ApplyAccountExpiryExtra(account, updates)
 		return expires, nil
 	}
 	return nil, ErrAccountNotFound
 }
 
-func (a *fenduduTestAdmin) AdoptRefillAccount(_ context.Context, id int64, in *CreateAccountInput) (*Account, error) {
+func (a *muzeTestAdmin) AdoptRefillAccount(_ context.Context, id int64, in *CreateAccountInput) (*Account, error) {
 	a.input, a.adopt = in, a.adopt+1
 	v, err := buildAccountForCreate(in, in.Extra)
 	if err != nil {
@@ -84,7 +92,7 @@ func (a *fenduduTestAdmin) AdoptRefillAccount(_ context.Context, id int64, in *C
 	return nil, ErrAccountNotFound
 }
 
-func (a *fenduduTestAdmin) RecordExpiredRefillAccount(_ context.Context, id int64, in *CreateAccountInput) error {
+func (a *muzeTestAdmin) RecordExpiredRefillAccount(_ context.Context, id int64, in *CreateAccountInput) error {
 	for i := range a.accounts {
 		v := &a.accounts[i]
 		if v.ID == id {
@@ -101,26 +109,26 @@ func (a *fenduduTestAdmin) RecordExpiredRefillAccount(_ context.Context, id int6
 	return ErrAccountNotFound
 }
 
-func fenduduHarness(t *testing.T) (*AccountRefillService, *refillTestStore, *fenduduTestProvider, *fenduduTestAdmin) {
+func muzeHarness(t *testing.T) (*AccountRefillService, *refillTestStore, *muzeTestProvider, *muzeTestAdmin) {
 	s, store, _, accounts := refillHarness(t)
-	p := &fenduduTestProvider{t: t, store: store, available: 5}
-	admin := &fenduduTestAdmin{refillTestAccounts: accounts}
-	s.fendudu, s.admin = p, admin
+	p := &muzeTestProvider{t: t, store: store, available: 5}
+	admin := &muzeTestAdmin{refillTestAccounts: accounts}
+	s.muze, s.admin = p, admin
 	store.mutate(t, func(state *accountRefillState) {
 		state.Config.Enabled, state.Config.MonitorEnabled = false, false
 		state.EncryptedToken = "" // Backup orders work without the primary key.
-		state.Fendudu = fenduduRefillState{EncryptedToken: "ciphertext", TokenHash: "same-wallet", ConnectionID: "s2e_fixture"}
+		state.Muze = muzeRefillState{EncryptedToken: "ciphertext", TokenHash: "same-wallet", ConnectionID: "s2e_fixture"}
 	})
 	return s, store, p, admin
 }
-func fenduduRequest() ManualAccountRefillRequest {
+func muzeRequest() ManualAccountRefillRequest {
 	r := manualRequest()
-	r.Provider = refillProviderFendudu
+	r.Provider = refillProviderMuze
 	return r
 }
 
-func TestFenduduManualSnapshotAndPushedAccountRecovery(t *testing.T) {
-	s, store, p, accounts := fenduduHarness(t)
+func TestMuzeManualSnapshotAndPushedAccountRecovery(t *testing.T) {
+	s, store, p, accounts := muzeHarness(t)
 	store.mutate(t, func(state *accountRefillState) {
 		state.Config.DeliveryGroupIDs = []int64{2, 3}
 		state.Config.PlanImportConcurrency = map[string]int{"pro20x": 77}
@@ -132,7 +140,7 @@ func TestFenduduManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 		state.Config.Delivery.ModelMapping = map[string]string{"a": "b"}
 	})
 	ctx := context.Background()
-	r := fenduduRequest()
+	r := muzeRequest()
 	require.NoError(t, s.Manual(ctx, r))
 	require.NoError(t, s.Manual(ctx, r))
 	require.Zero(t, p.orders)
@@ -152,7 +160,7 @@ func TestFenduduManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 	require.NoError(t, s.run(ctx, false))
 	require.Equal(t, 1, p.orders)
 	lease := time.Now().Add(time.Hour).Truncate(time.Second)
-	p.cycle.Pushed, p.cycle.AccountID, p.cycle.Email, p.cycle.RevokeAt = true, "344", "fixture@example.test", lease.Format(time.RFC3339)
+	p.cycle.Pushed, p.cycle.AccountID, p.cycle.Email, p.cycle.RefundDueAt = true, "344", "fixture@example.test", lease.Format(time.RFC3339)
 	accounts.accounts = []Account{{ID: 344, Name: "supplier name", CreatedAt: time.Now(), Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 		Credentials: map[string]any{"email": "fixture@example.test", "access_token": "fixture", "refresh_token": "refresh"}, Extra: map[string]any{}}}
 	refillDue(t, store)
@@ -164,7 +172,7 @@ func TestFenduduManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 	require.Equal(t, 77, a.Concurrency)
 	require.Equal(t, 8, a.Priority)
 	require.Equal(t, []int64{2, 3}, a.GroupIDs)
-	require.Equal(t, "fendudu_api", a.Extra["import_source"])
+	require.Equal(t, "muze_api", a.Extra["import_source"])
 	require.Equal(t, map[string]string{"a": "b"}, a.Credentials["model_mapping"])
 	require.Equal(t, lease.Add(30*time.Minute).Unix(), a.ExpiresAt.Unix())
 	require.Equal(t, lease.Unix(), a.Extra[AccountSourceExpiryExtraKey])
@@ -181,18 +189,18 @@ func TestFenduduManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 	require.Equal(t, 1, accounts.adopt)
 	require.Equal(t, 1, p.orders)
 	_, err = s.DownloadDelivery(ctx, state.Jobs[0].ID)
-	require.ErrorContains(t, err, "不提供交付 JSON")
+	require.ErrorContains(t, err, "在账号列表导出")
 }
 
-func TestFenduduUncertainSubmissionNeverRepeats(t *testing.T) {
+func TestMuzeUncertainSubmissionNeverRepeats(t *testing.T) {
 	for _, crash := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "crash-after-post"}[crash], func(t *testing.T) {
-			s, store, p, _ := fenduduHarness(t)
+			s, store, p, _ := muzeHarness(t)
 			p.failAfterPost = crash
 			if !crash {
 				p.orderError = errors.New("timeout")
 			}
-			require.NoError(t, s.Manual(context.Background(), fenduduRequest()))
+			require.NoError(t, s.Manual(context.Background(), muzeRequest()))
 			err := s.run(context.Background(), false)
 			if crash {
 				require.Error(t, err)
@@ -209,7 +217,7 @@ func TestFenduduUncertainSubmissionNeverRepeats(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "blocked", state.Jobs[0].Status)
 			require.ErrorContains(t, s.Retry(context.Background(), state.Jobs[0].ID), "不能重复下单")
-			require.NoError(t, s.ReconcileFendudu(context.Background(), state.Jobs[0].ID, "rvc_fixture"))
+			require.NoError(t, s.ReconcileMuze(context.Background(), state.Jobs[0].ID, "rvc_fixture"))
 			refillDue(t, store)
 			require.NoError(t, s.run(context.Background(), false))
 			require.Equal(t, 1, p.orders)
@@ -217,11 +225,11 @@ func TestFenduduUncertainSubmissionNeverRepeats(t *testing.T) {
 	}
 }
 
-func TestFenduduManualGuardsAndForce(t *testing.T) {
+func TestMuzeManualGuardsAndForce(t *testing.T) {
 	for _, scenario := range []string{"quota", "push-disabled", "revision", "daily-limit", "pending", "save-failed"} {
 		t.Run(scenario, func(t *testing.T) {
-			s, store, p, _ := fenduduHarness(t)
-			r := fenduduRequest()
+			s, store, p, _ := muzeHarness(t)
+			r := muzeRequest()
 			store.mutate(t, func(v *accountRefillState) {
 				switch scenario {
 				case "quota":
@@ -249,11 +257,11 @@ func TestFenduduManualGuardsAndForce(t *testing.T) {
 	}
 }
 
-func TestFenduduRejectsWrongPushedAccountAndOldOrders(t *testing.T) {
-	s, store, p, accounts := fenduduHarness(t)
-	require.NoError(t, s.Manual(context.Background(), fenduduRequest()))
+func TestMuzeRejectsWrongPushedAccountAndOldOrders(t *testing.T) {
+	s, store, p, accounts := muzeHarness(t)
+	require.NoError(t, s.Manual(context.Background(), muzeRequest()))
 	require.NoError(t, s.run(context.Background(), false))
-	p.cycle.Pushed, p.cycle.AccountID, p.cycle.Email, p.cycle.RevokeAt = true, "344", "expected@example.test", time.Now().Add(time.Hour).Format(time.RFC3339)
+	p.cycle.Pushed, p.cycle.AccountID, p.cycle.Email, p.cycle.RefundDueAt = true, "344", "expected@example.test", time.Now().Add(time.Hour).Format(time.RFC3339)
 	accounts.accounts = []Account{{ID: 344, Name: "keep", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"email": "other@example.test"}}}
 	refillDue(t, store)
 	require.NoError(t, s.run(context.Background(), false))
@@ -263,80 +271,11 @@ func TestFenduduRejectsWrongPushedAccountAndOldOrders(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "import_failed", state.Jobs[0].Status)
 	p.cycle.CreatedAt = time.Now().Add(-time.Hour).Format(time.RFC3339)
-	require.Error(t, validateFenduduCycle(p.cycle, state.Jobs[0]))
+	require.Error(t, validateMuzeCycle(p.cycle, state.Jobs[0]))
 }
 
-func TestFenduduHTTPContract(t *testing.T) {
-	var order map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "rvak_fixture", r.Header.Get("X-Api-Key"))
-		require.Empty(t, r.Header.Get("Authorization"))
-		switch r.URL.Path {
-		case "/products":
-			_, _ = w.Write([]byte(`{"success":true,"products":[{"product":"pro20x","available_now":5}]}`))
-		case "/order":
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&order))
-			_, _ = w.Write([]byte(`{"success":true,"created":1,"cycle_ids":["rvc_fixture"]}`))
-		case "/cycle-detail":
-			require.Equal(t, "rvc_fixture", r.URL.Query().Get("id"))
-			_, _ = w.Write([]byte(`{"success":true,"cycle":{"id":"rvc_fixture","product":"pro20x","sub2api_account_id":"344"}}`))
-		case "/cycles":
-			require.Equal(t, http.MethodGet, r.Method)
-			require.Equal(t, "200", r.URL.Query().Get("limit"))
-			require.Equal(t, "cursor/+fixture", r.URL.Query().Get("cursor"))
-			_, _ = w.Write([]byte(`{"success":true,"items":[{"id":"rvc_fixture"}],"has_more":false,"next_cursor":""}`))
-		default:
-			t.Errorf("unexpected endpoint %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	p := newHTTPFenduduProvider()
-	p.base = server.URL
-	products, err := p.Products(context.Background(), "rvak_fixture")
-	require.NoError(t, err)
-	require.Equal(t, 5, products[0].AvailableNow)
-	_, err = p.Order(context.Background(), "rvak_fixture", AccountRefillJob{ID: "d8bd88cd-b4a3-5637-92b3-171cf37587c3", Plan: "pro20x", DeliveryGroupIDs: []int64{2, 5}, FenduduConnectionID: "s2e_fixture"})
-	require.NoError(t, err)
-	require.Equal(t, "d8bd88cd-b4a3-5637-92b3-171cf37587c3", order["request_id"])
-	require.Equal(t, float64(1), order["count"])
-	require.Equal(t, "2,5", order["sub2api_group_ids"])
-	require.Equal(t, "s2e_fixture", order["sub2api_config_id"])
-	require.Equal(t, float64(0), order["subscription_schedule"])
-	require.Empty(t, order["push_fallback_config_id"])
-	cycle, err := p.Cycle(context.Background(), "rvak_fixture", "rvc_fixture")
-	require.NoError(t, err)
-	require.Equal(t, "344", cycle.AccountID)
-	page, err := p.Cycles(context.Background(), "rvak_fixture", "cursor/+fixture")
-	require.NoError(t, err)
-	require.Equal(t, "rvc_fixture", page.Items[0].ID)
-}
-
-func TestFenduduHTTPBusinessFailureAndRedirect(t *testing.T) {
-	targetCalls := 0
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalls++ }))
-	defer target.Close()
-	for _, response := range []string{`{"success":false,"error":"rvak_fixture"}`, `{"success":true,"products":[{"product":"pro20x","available_now":-1}]}`, `{"success":true}`, `{"success":`} {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(response)) }))
-		p := newHTTPFenduduProvider()
-		p.base = server.URL
-		_, err := p.Products(context.Background(), "rvak_fixture")
-		require.Error(t, err)
-		require.NotContains(t, err.Error(), "rvak_fixture")
-		server.Close()
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
-	}))
-	defer server.Close()
-	p := newHTTPFenduduProvider()
-	p.base = server.URL
-	_, err := p.Products(context.Background(), "rvak_fixture")
-	require.Error(t, err)
-	require.Zero(t, targetCalls)
-}
-
-func TestFenduduQuotaReservationsAcrossGroups(t *testing.T) {
-	s, base, p, _ := fenduduHarness(t)
+func TestMuzeQuotaReservationsAcrossGroups(t *testing.T) {
+	s, base, p, _ := muzeHarness(t)
 	p.available = 1
 	stores := &refillGroupedTestStore{refillTestStore: base, children: map[int64]*refillTestStore{}}
 	s.store = stores
@@ -344,28 +283,28 @@ func TestFenduduQuotaReservationsAcrossGroups(t *testing.T) {
 	require.NoError(t, err)
 	v, err := child.View(context.Background())
 	require.NoError(t, err)
-	require.True(t, v.Fendudu.TokenConfigured)
+	require.True(t, v.Muze.TokenConfigured)
 	require.NoError(t, child.Configure(context.Background(), v.Config, "", 0))
-	require.NoError(t, s.Manual(context.Background(), fenduduRequest()))
-	r := fenduduRequest()
+	require.NoError(t, s.Manual(context.Background(), muzeRequest()))
+	r := muzeRequest()
 	r.GroupID = 3
 	require.ErrorContains(t, child.Manual(context.Background(), r), "次数不足")
 	require.Zero(t, p.orders)
 }
 
-func TestFenduduConnectionsInheritIndependently(t *testing.T) {
+func TestMuzeConnectionsInheritIndependently(t *testing.T) {
 	for _, backupAtRoot := range []bool{true, false} {
 		name := "primary_at_root"
 		if backupAtRoot {
 			name = "backup_at_root"
 		}
 		t.Run(name, func(t *testing.T) {
-			s, base, _, _ := fenduduHarness(t)
+			s, base, _, _ := muzeHarness(t)
 			other := &refillTestStore{raw: base.raw}
 			base.mutate(t, func(state *accountRefillState) {
 				if !backupAtRoot {
 					state.EncryptedToken = "primary-cipher"
-					state.Fendudu = fenduduRefillState{}
+					state.Muze = muzeRefillState{}
 				}
 			})
 			other.mutate(t, func(state *accountRefillState) {
@@ -373,7 +312,7 @@ func TestFenduduConnectionsInheritIndependently(t *testing.T) {
 				state.Jobs = []AccountRefillJob{{ID: "must-not-inherit", Status: "processing"}}
 				if backupAtRoot {
 					state.EncryptedToken = "primary-cipher"
-					state.Fendudu = fenduduRefillState{}
+					state.Muze = muzeRefillState{}
 				}
 			})
 			s.store = &refillGroupedTestStore{refillTestStore: base, children: map[int64]*refillTestStore{3: other}}
@@ -383,8 +322,8 @@ func TestFenduduConnectionsInheritIndependently(t *testing.T) {
 			state, err := decodeAccountRefillState(raw)
 			require.NoError(t, err)
 			require.Equal(t, "primary-cipher", state.EncryptedToken)
-			require.Equal(t, "ciphertext", state.Fendudu.EncryptedToken)
-			require.Equal(t, "s2e_fixture", state.Fendudu.ConnectionID)
+			require.Equal(t, "ciphertext", state.Muze.EncryptedToken)
+			require.Equal(t, "s2e_fixture", state.Muze.ConnectionID)
 			require.Empty(t, state.Jobs)
 			require.False(t, state.Config.Enabled)
 			require.Equal(t, []int64{4}, state.Config.DeliveryGroupIDs)
@@ -392,12 +331,12 @@ func TestFenduduConnectionsInheritIndependently(t *testing.T) {
 	}
 }
 
-func TestFenduduPendingDeliveryMetadata(t *testing.T) {
-	s, store, p, _ := fenduduHarness(t)
+func TestMuzePendingDeliveryMetadata(t *testing.T) {
+	s, store, p, _ := muzeHarness(t)
 	ctx := context.Background()
-	require.NoError(t, s.Manual(ctx, fenduduRequest()))
+	require.NoError(t, s.Manual(ctx, muzeRequest()))
 	require.NoError(t, s.run(ctx, false))
-	p.cycle.Status, p.cycle.PushProvider, p.cycle.PushConfigID = "paying", "", ""
+	p.cycle.Status, p.cycle.PushProvider, p.cycle.PushConfigID = "charging", "", ""
 	refillDue(t, store)
 	require.NoError(t, s.run(ctx, false))
 	v, err := s.View(ctx)
@@ -405,67 +344,67 @@ func TestFenduduPendingDeliveryMetadata(t *testing.T) {
 	require.Equal(t, "processing", v.Jobs[0].Status, "missing pending metadata must not block polling")
 	cycle := *p.cycle
 	cycle.PushProvider = "other"
-	require.Error(t, validateFenduduCycle(&cycle, v.Jobs[0]))
+	require.Error(t, validateMuzeCycle(&cycle, v.Jobs[0]))
 	cycle.PushProvider, cycle.PushConfigID = "sub2api", "s2e_other"
-	require.Error(t, validateFenduduCycle(&cycle, v.Jobs[0]))
+	require.Error(t, validateMuzeCycle(&cycle, v.Jobs[0]))
 	p.cycle.Pushed = true
 	refillDue(t, store)
 	require.NoError(t, s.run(ctx, false))
 	v, err = s.View(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "blocked", v.Jobs[0].Status, "pushed delivery requires complete matching metadata")
+	require.Equal(t, "import_failed", v.Jobs[0].Status, "published push still needs a local identity")
 	require.Equal(t, 1, p.orders)
 }
 
-func TestFenduduConnectionSecretAndPendingProtection(t *testing.T) {
-	s, store, _, _ := fenduduHarness(t)
+func TestMuzeConnectionSecretAndPendingProtection(t *testing.T) {
+	s, store, _, _ := muzeHarness(t)
 	ctx := context.Background()
-	require.NoError(t, s.ConfigureFendudu(ctx, "rvak_fixture", "s2e_fixture", 1))
+	require.NoError(t, s.ConfigureMuze(ctx, muzeFixtureToken, "s2e_fixture", 1))
 	v, err := s.View(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, v.Revision)
 	body, err := json.Marshal(v)
 	require.NoError(t, err)
-	require.NotContains(t, string(body), "rvak_fixture")
+	require.NotContains(t, string(body), muzeFixtureToken)
 	require.NotContains(t, string(body), "encrypted_token")
 	require.NotContains(t, string(body), "token_hash")
-	require.NotContains(t, store.raw, "rvak_fixture")
-	r := fenduduRequest()
+	require.NotContains(t, store.raw, muzeFixtureToken)
+	r := muzeRequest()
 	r.Revision = v.Revision
 	require.NoError(t, s.Manual(ctx, r))
-	require.ErrorContains(t, s.ConfigureFendudu(ctx, "rvak_other", "s2e_fixture", v.Revision), "在途订单")
-	require.ErrorContains(t, s.ConfigureFendudu(ctx, "rvak_fixture", "s2e_other", v.Revision), "在途订单")
-	require.ErrorContains(t, s.ConfigureFendudu(ctx, "rvak_fixture", "s2e_fixture", 1), "其他页面")
+	require.ErrorContains(t, s.ConfigureMuze(ctx, "tk_"+strings.Repeat("b", 64), "s2e_fixture", v.Revision), "在途订单")
+	require.ErrorContains(t, s.ConfigureMuze(ctx, muzeFixtureToken, "s2e_other", v.Revision), "在途订单")
+	require.ErrorContains(t, s.ConfigureMuze(ctx, muzeFixtureToken, "s2e_fixture", 1), "其他页面")
 }
 
-func TestFenduduQuotaRefreshIgnoresPrimaryBackoff(t *testing.T) {
-	s, store, p, _ := fenduduHarness(t)
+func TestMuzeQuotaRefreshIgnoresPrimaryBackoff(t *testing.T) {
+	s, store, p, _ := muzeHarness(t)
 	ctx := context.Background()
-	require.NoError(t, s.Manual(ctx, fenduduRequest()))
+	require.NoError(t, s.Manual(ctx, muzeRequest()))
 	require.NoError(t, s.run(ctx, false))
 	p.available = 4
 	store.mutate(t, func(state *accountRefillState) { state.ProviderRetryAt = time.Now().Add(time.Hour) })
 	require.NoError(t, s.run(ctx, false))
 	v, err := s.View(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 4, v.Fendudu.Products[0].AvailableNow)
+	require.Equal(t, 4, v.Muze.Products[0].AvailableNow)
 	p.available = 3
 	require.NoError(t, s.Check(ctx))
 	v, err = s.View(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 3, v.Fendudu.Products[0].AvailableNow)
-	require.NotNil(t, v.Fendudu.CheckedAt)
+	require.Equal(t, 3, v.Muze.Products[0].AvailableNow)
+	require.NotNil(t, v.Muze.CheckedAt)
 	require.Equal(t, 1, p.orders, "refresh never submits another order")
 }
 
-func TestFenduduPauseResumesSavedImportAndLeaseSync(t *testing.T) {
-	s, store, p, accounts := fenduduHarness(t)
+func TestMuzePauseResumesSavedImportAndLeaseSync(t *testing.T) {
+	s, store, p, accounts := muzeHarness(t)
 	ctx := context.Background()
-	require.NoError(t, s.Manual(ctx, fenduduRequest()))
+	require.NoError(t, s.Manual(ctx, muzeRequest()))
 	require.NoError(t, s.run(ctx, false))
 	lease := time.Now().Add(time.Hour).Truncate(time.Second)
-	p.cycle.Pushed, p.cycle.Status, p.cycle.AccountID, p.cycle.Email = true, "prewarming", "344", "fixture@example.test"
-	p.cycle.RevokeAt = lease.Format(time.RFC3339)
+	p.cycle.Pushed, p.cycle.Status, p.cycle.AccountID, p.cycle.Email = true, "using", "344", "fixture@example.test"
+	p.cycle.RefundDueAt = lease.Format(time.RFC3339)
 	accounts.accounts = []Account{{ID: 344, Name: "supplier", CreatedAt: time.Now(), Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 		Status: StatusActive, Schedulable: true, Credentials: map[string]any{"email": p.cycle.Email, "access_token": "fixture"}, Extra: map[string]any{}}}
 	store.mutate(t, func(state *accountRefillState) { state.Config.PushEnabled = false })
@@ -481,18 +420,18 @@ func TestFenduduPauseResumesSavedImportAndLeaseSync(t *testing.T) {
 	require.NoError(t, s.run(ctx, false))
 	require.Equal(t, 1, accounts.adopt, "resumption must not allocate another proxy or apply newer settings")
 	require.True(t, accounts.accounts[0].Schedulable)
-	p.cycle.RevokeAt = lease.Add(time.Hour).Format(time.RFC3339)
+	p.cycle.RefundDueAt = lease.Add(time.Hour).Format(time.RFC3339)
 	require.NoError(t, s.Check(ctx))
 	require.Equal(t, lease.Add(time.Hour).Unix(), accounts.accounts[0].Extra[AccountSourceExpiryExtraKey])
 	require.Equal(t, 1, p.orders)
 }
 
-func TestFenduduOrderStoppedDoesNotRetryOrAdvanceRotation(t *testing.T) {
-	s, store, p, _ := fenduduHarness(t)
+func TestMuzeOrderStoppedDoesNotRetryOrAdvanceRotation(t *testing.T) {
+	s, store, p, _ := muzeHarness(t)
 	ctx := context.Background()
-	require.NoError(t, s.Manual(ctx, fenduduRequest()))
+	require.NoError(t, s.Manual(ctx, muzeRequest()))
 	require.NoError(t, s.run(ctx, false))
-	p.cycle.Status = "order_stopped"
+	p.cycle.Status, p.cycle.RefundPhase = "returned", "returned"
 	refillDue(t, store)
 	require.NoError(t, s.run(ctx, false))
 	v, err := s.View(ctx)

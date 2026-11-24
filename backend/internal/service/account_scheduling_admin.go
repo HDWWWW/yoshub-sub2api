@@ -74,7 +74,7 @@ type AccountSchedulingMetadata struct {
 
 func SchedulingMetadata(a *Account) AccountSchedulingMetadata {
 	source, origin := a.SourceExpiresAt()
-	if origin == "local" {
+	if origin == "local" || origin == "supplier_pending" {
 		source = nil
 	} // Never label a local date as supplier data.
 	item := AccountSchedulingMetadata{

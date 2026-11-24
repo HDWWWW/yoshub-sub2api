@@ -23,19 +23,19 @@ function response(group = 2) {
       plan: 'pro20x', rotation: [], import_concurrency: 60, notifications: {},
       delivery: { model_mapping: {}, fingerprint_mode: 'full', proxy_mode: 'direct', expiry_mode: 'rental' } },
     revision: 447, rules: [{ group_id: 2 }], token_configured: true,
-    fendudu: { token_configured: true, connection_id: 's2e_fixture', products: [{ product: 'pro20x', available_now: 5, expired: false, blocked_reason: '' }] },
+    muze: { token_configured: true, connection_id: 's2e_fixture', products: [{ product: 'pro20x', available_now: 5, expired: false, blocked_reason: '' }] },
     key: null, wallet: null, catalog: { items: [] }, jobs: [], daily: {}, evaluation: { accounts: [], checked_at: new Date().toISOString() }
   }
 }
-function pending(provider?: 'fendudu', group = 2): ManualRefillRequest {
+function pending(provider?: 'muze', group = 2): ManualRefillRequest {
   return { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: 'pro20x', revision: 445, group_id: group, ...(provider ? { provider } : {}) }
 }
-async function open(initialTab: 'manual' | 'fendudu') {
+async function open(initialTab: 'manual' | 'muze') {
   const wrapper = mount(AccountRefillModal, { props: { show: true, initialTab }, global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' } } } })
   await flushPromises()
   return wrapper
 }
-async function selectTab(wrapper: Awaited<ReturnType<typeof open>>, tab: 'manual' | 'fendudu') {
+async function selectTab(wrapper: Awaited<ReturnType<typeof open>>, tab: 'manual' | 'muze') {
   await wrapper.findAll('nav button').find(b => b.text() === zh[tab])!.trigger('click')
   await flushPromises()
 }
@@ -49,29 +49,42 @@ describe('Manual refill supplier isolation', () => {
   })
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
+  it('archives retired browser receipts without replaying them on either supplier', async () => {
+    const old = { ...pending(), provider: 'fendudu' }
+    sessionStorage.setItem(storageKey, JSON.stringify([old]))
+    const w = await open('muze')
+    expect(manual).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem(storageKey + ':retired') || '[]')).toEqual([old])
+    await w.get('[data-testid="manual-refill-submit"]').trigger('click')
+    await flushPromises()
+    expect(manual.mock.calls[0]![0].provider).toBe('muze')
+    expect(manual.mock.calls[0]![0].request_id).not.toBe(old.request_id)
+    w.unmount()
+  })
+
   it.each([
-    ['manual', false], ['manual', true], ['fendudu', false], ['fendudu', true]
+    ['manual', false], ['manual', true], ['muze', false], ['muze', true]
   ] as const)('keeps explicit %s entry with an opposite supplier legacy request, force=%s', async (tab, force) => {
-    const original = pending(tab === 'manual' ? 'fendudu' : undefined)
+    const original = pending(tab === 'manual' ? 'muze' : undefined)
     sessionStorage.setItem(legacyKey, JSON.stringify(original))
     const w = await open(tab)
-    const supplier = tab === 'fendudu' ? '粉嘟嘟' : '原号商'
+    const supplier = tab === 'muze' ? 'Muze' : '1208'
     expect(w.get('nav button[aria-pressed="true"]').text()).toBe(zh[tab])
     expect(w.get('[data-testid="manual-refill-provider"]').text()).toContain(supplier)
-    expect(w.get('[data-testid="manual-other-provider-pending"]').text()).toContain(tab === 'manual' ? '粉嘟嘟' : '原号商')
+    expect(w.get('[data-testid="manual-other-provider-pending"]').text()).toContain(tab === 'manual' ? 'Muze' : '1208')
     const button = w.get(`[data-testid="manual-refill-${force ? 'force' : 'submit'}"]`)
     expect(button.text()).toContain(supplier)
     expect(button.attributes('disabled')).toBeUndefined()
     await button.trigger('click'); await flushPromises()
     expect(manual).toHaveBeenCalledTimes(1)
     const submitted = manual.mock.calls[0]![0]
-    expect(submitted.provider).toBe(tab === 'fendudu' ? 'fendudu' : undefined)
+    expect(submitted.provider).toBe(tab === 'muze' ? 'muze' : undefined)
     expect(!!submitted.force).toBe(force)
     expect(submitted.request_id).not.toBe(original.request_id)
     expect(saved()).toEqual([original])
     expect(sessionStorage.getItem(legacyKey)).toBeNull()
     w.unmount()
-    const reopened = await open(tab === 'manual' ? 'fendudu' : 'manual')
+    const reopened = await open(tab === 'manual' ? 'muze' : 'manual')
     expect(reopened.get('[data-testid="manual-refill-submit"]').text()).toContain('重试确认')
     await reopened.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
     expect(manual).toHaveBeenLastCalledWith(original)
@@ -83,48 +96,48 @@ describe('Manual refill supplier isolation', () => {
     let w = await open('manual')
     await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
     const primary = structuredClone(manual.mock.calls[0]![0])
-    await selectTab(w, 'fendudu')
+    await selectTab(w, 'muze')
     await w.get('[data-testid="manual-refill-force"]').trigger('click'); await flushPromises()
-    const fendudu = structuredClone(manual.mock.calls[1]![0])
-    expect(saved()).toEqual([primary, fendudu])
+    const muze = structuredClone(manual.mock.calls[1]![0])
+    expect(saved()).toEqual([primary, muze])
     w.unmount(); w = await open('manual')
     await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
     expect(manual).toHaveBeenLastCalledWith(primary)
-    await selectTab(w, 'fendudu')
-    expect(w.get('[data-testid="manual-refill-submit"]').text()).toBe('重试确认粉嘟嘟原请求')
+    await selectTab(w, 'muze')
+    expect(w.get('[data-testid="manual-refill-submit"]').text()).toBe('重试确认Muze原请求')
     await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
-    expect(manual).toHaveBeenLastCalledWith(fendudu)
-    expect(fendudu).toMatchObject({ provider: 'fendudu', force: true })
+    expect(manual).toHaveBeenLastCalledWith(muze)
+    expect(muze).toMatchObject({ provider: 'muze', force: true })
     w.unmount()
   })
 
   it('removes only the rejected supplier request and retains the selected entry for the next force', async () => {
-    const primary = pending(), fendudu = { ...pending('fendudu'), force: true }
-    sessionStorage.setItem(storageKey, JSON.stringify([primary, fendudu]))
+    const primary = pending(), muze = { ...pending('muze'), force: true }
+    sessionStorage.setItem(storageKey, JSON.stringify([primary, muze]))
     manual.mockRejectedValueOnce({ status: 400 })
     const w = await open('manual')
     await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
     expect(manual).toHaveBeenLastCalledWith(primary)
-    expect(saved()).toEqual([fendudu])
+    expect(saved()).toEqual([muze])
     expect(w.get('nav button[aria-pressed="true"]').text()).toBe(zh.manual)
     await w.get('[data-testid="manual-refill-force"]').trigger('click'); await flushPromises()
     expect(manual.mock.calls[1]![0]).toMatchObject({ force: true, plan: primary.plan })
     expect(manual.mock.calls[1]![0].provider).toBeUndefined()
-    expect(saved()).toEqual([fendudu])
+    expect(saved()).toEqual([muze])
     w.unmount()
   })
 
   it('isolates the same supplier requests by group and loads the original request group on reopen', async () => {
-    const group3 = pending('fendudu', 3)
+    const group3 = pending('muze', 3)
     sessionStorage.setItem(storageKey, JSON.stringify([group3]))
     const w = await open('manual')
     expect(w.get<HTMLSelectElement>('[data-testid="refill-rule-group"]').element.value).toBe('2')
-    await selectTab(w, 'fendudu')
+    await selectTab(w, 'muze')
     await w.get('[data-testid="manual-refill-force"]').trigger('click'); await flushPromises()
-    expect(manual.mock.calls[0]![0]).toMatchObject({ provider: 'fendudu', group_id: 2, force: true })
+    expect(manual.mock.calls[0]![0]).toMatchObject({ provider: 'muze', group_id: 2, force: true })
     expect(saved()).toEqual([group3])
     w.unmount()
-    const reopened = await open('fendudu')
+    const reopened = await open('muze')
     expect(reopened.get<HTMLSelectElement>('[data-testid="refill-rule-group"]').element.value).toBe('3')
     await reopened.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
     expect(manual).toHaveBeenLastCalledWith(group3)
@@ -132,9 +145,9 @@ describe('Manual refill supplier isolation', () => {
   })
 
   it('clears a confirmed opposite supplier receipt without redirecting the normal entry', async () => {
-    const original = pending('fendudu')
+    const original = pending('muze')
     sessionStorage.setItem(legacyKey, JSON.stringify(original))
-    get.mockResolvedValue({ ...response(), jobs: [{ id: 'known', provider: 'fendudu', manual_request_id: original.request_id, status: 'submitting' }] })
+    get.mockResolvedValue({ ...response(), jobs: [{ id: 'known', provider: 'muze', manual_request_id: original.request_id, status: 'submitting' }] })
     const w = await open('manual')
     expect(w.get('nav button[aria-pressed="true"]').text()).toBe(zh.manual)
     expect(saved()).toEqual([])
@@ -143,7 +156,7 @@ describe('Manual refill supplier isolation', () => {
   })
 
   it('blocks purchase if migrating the legacy request cannot be saved', async () => {
-    const original = pending('fendudu')
+    const original = pending('muze')
     sessionStorage.setItem(legacyKey, JSON.stringify(original))
     const w = await open('manual')
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota exceeded') })
@@ -164,9 +177,9 @@ describe('Manual refill supplier isolation', () => {
   })
 
   it('keeps a legacy request without group bound to the default group', async () => {
-    const original = pending('fendudu'); delete original.group_id
+    const original = pending('muze'); delete original.group_id
     sessionStorage.setItem(legacyKey, JSON.stringify(original))
-    const w = await open('fendudu')
+    const w = await open('muze')
     await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
     expect(manual).toHaveBeenCalledWith({ ...original, group_id: 2 })
     w.unmount()

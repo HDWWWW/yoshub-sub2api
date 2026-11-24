@@ -12,14 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFenduduTimeoutAndSuccessUseSameOrderAndDoNotRepeat(t *testing.T) {
+func TestMuzeTimeoutAndSuccessUseSameOrderAndDoNotRepeat(t *testing.T) {
 	for _, mode := range []string{"normal", "lost-receipt", "resolved-same-tick"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				time.Sleep(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Sub(time.Now()))
-				s, store, provider, accounts := fenduduHarness(t)
-				p := &fenduduRecoveryProvider{fenduduTestProvider: provider, pages: map[string]*fenduduCyclePage{"": {Success: true, Items: []fenduduCycle{}}}}
-				s.fendudu = p
+				s, store, provider, accounts := muzeHarness(t)
+				p := &muzeRecoveryProvider{muzeTestProvider: provider}
+				s.muze = p
 				if mode != "normal" {
 					provider.orderError = errors.New("lost response")
 				}
@@ -30,13 +30,13 @@ func TestFenduduTimeoutAndSuccessUseSameOrderAndDoNotRepeat(t *testing.T) {
 					v.EncryptedWebhook = "encrypted-fixture"
 				})
 				ctx := context.Background()
-				require.NoError(t, s.Manual(ctx, fenduduRequest()))
+				require.NoError(t, s.Manual(ctx, muzeRequest()))
 				require.NoError(t, s.run(ctx, false))
 				v, err := s.View(ctx)
 				require.NoError(t, err)
 				id := v.Jobs[0].ID
 				require.Len(t, n.messages, 1)
-				require.Contains(t, n.messages[0], "粉嘟嘟手动补号")
+				require.Contains(t, n.messages[0], "muze手动补号")
 				if mode == "resolved-same-tick" {
 					time.Sleep(11 * time.Minute)
 					store.mutate(t, func(v *accountRefillState) {
@@ -48,12 +48,12 @@ func TestFenduduTimeoutAndSuccessUseSameOrderAndDoNotRepeat(t *testing.T) {
 					refillDue(t, store)
 					require.NoError(t, s.run(ctx, false))
 					require.Len(t, n.messages, 2)
-					require.Contains(t, n.messages[1], "粉嘟嘟手动补号超时提醒")
+					require.Contains(t, n.messages[1], "muze手动补号超时提醒")
 					require.Contains(t, n.messages[1], "号商任务：")
 					require.NotContains(t, n.messages[1], id)
 				}
-				pushFenduduFixture(provider, accounts)
-				p.pages[""] = &fenduduCyclePage{Success: true, Items: []fenduduCycle{*provider.cycle}}
+				pushMuzeFixture(provider, accounts)
+				p.found = provider.cycle
 				store.mutate(t, func(v *accountRefillState) { v.Jobs[0].NextAttemptAt = time.Time{} })
 				require.NoError(t, s.run(ctx, false))
 				wantMessages := 3
@@ -62,7 +62,7 @@ func TestFenduduTimeoutAndSuccessUseSameOrderAndDoNotRepeat(t *testing.T) {
 				}
 				require.Len(t, n.messages, wantMessages)
 				success := n.messages[len(n.messages)-1]
-				require.Contains(t, success, "粉嘟嘟手动补号成功")
+				require.Contains(t, success, "muze手动补号成功")
 				require.NotContains(t, success, id)
 				require.Contains(t, success, "号商任务：rvc_fixture")
 				require.Contains(t, success, "预购次数：1")
@@ -87,7 +87,7 @@ func TestFenduduTimeoutAndSuccessUseSameOrderAndDoNotRepeat(t *testing.T) {
 }
 
 func TestManualRefillDelaySharesProgressSwitchAndSkipsDeliveredAccounts(t *testing.T) {
-	for _, provider := range []string{"", refillProviderFendudu} {
+	for _, provider := range []string{"", refillProviderMuze} {
 		for _, mode := range []string{"waiting", "already-pushed", "switch-off"} {
 			t.Run(provider+"/"+mode, func(t *testing.T) {
 				n := &refillNoticeStub{}

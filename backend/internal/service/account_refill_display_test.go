@@ -108,3 +108,12 @@ func TestRefillNotificationsUseOnlySupplierTaskIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestRefillHistorical1208SupplierExpiryOnly(t *testing.T) {
+	stamp := int64(1795536900)
+	jobs := []AccountRefillJob{{ExpiresAt: &stamp}, {Provider: "muze", ExpiresAt: &stamp}}
+	display := refillJobsForDisplay(jobs)
+	require.Equal(t, &stamp, display[0].SupplierExpiresAt)
+	require.Nil(t, display[1].SupplierExpiresAt)
+	require.Nil(t, jobs[0].SupplierExpiresAt)
+}

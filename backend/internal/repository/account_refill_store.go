@@ -55,6 +55,14 @@ func (s *accountRefillStore) ListRules(ctx context.Context) (map[int64]string, e
 }
 
 func NewAccountRefillStore(db *sql.DB) service.AccountRefillStore { return &accountRefillStore{db: db} }
+func (s *accountRefillStore) ReadMuzeDefaultToken(ctx context.Context) (string, error) {
+	var ciphertext string
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=$1", "muze_inventory_api_token_encrypted").Scan(&ciphertext)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return ciphertext, err
+}
 func (s *accountRefillStore) Read(ctx context.Context) (string, error) {
 	var raw string
 	err := s.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=$1", s.key()).Scan(&raw)
