@@ -79,6 +79,7 @@ func (s *OpenAIGatewayService) doOpenAIHTTPOverWS(c *gin.Context, req *http.Requ
 		// bypassing the dispatch state machine and account retry guard.
 		req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(req.Context()))
 		req.GetBody = nil
+		account.ApplyHeaderOverrides(req.Context(), req.Header)
 		response, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			return response, smartWSUncertainError(err)

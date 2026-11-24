@@ -48,8 +48,13 @@ func (s *AccountTestService) RunRiskProbe(ctx context.Context, a *Account, c Acc
 
 func finishRiskProbeResponse(call *riskProbeCall, resp *http.Response, chat bool) error {
 	call.result.UpstreamStatus = resp.StatusCode
-	if resp.StatusCode == http.StatusUnauthorized && call.config.Probe401Enabled {
-		call.result.auth401 = readRiskProbe401(call.credentialOwner, call.config.Model, resp.Body)
+	if resp.StatusCode == http.StatusUnauthorized && call.credentialOwner != nil {
+		if call.config.Probe401Enabled {
+			call.result.auth401 = readRiskProbe401(call.credentialOwner, call.config.Model, resp.Body)
+		}
+		if call.config.Notify401Enabled && call.result.auth401 == nil {
+			call.result.auth401 = &riskProbe401Evidence{ownerID: call.credentialOwner.ID, ownerName: riskNotificationName(call.credentialOwner.Name)}
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("risk probe upstream rejected request")

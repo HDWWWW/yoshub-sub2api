@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // The upstream cannot send its first failure before the HTTP client has read
@@ -268,14 +269,22 @@ func TestHappyFirstTokenSmartWSWirePayloads(t *testing.T) {
 					t.Logf("notification=%t; WS create=1; terminal=%s", on, err.Raw)
 					// SmartWS retains a same-turn failed tail for accounting; the
 					// streaming formatter receives the first (non-policy) failure.
-					if !pass || err.Get("type").Str == "error" {
-						require.JSONEq(t, tc.tail[0], err.Raw)
-					} else if tc.name == "failed" {
-						// After streamed output, passthrough's existing client sanitizer
-						// may omit response.output/usage. Compare on/off, not a new format.
-						require.JSONEq(t, gjson.Get(failed, "response.error").Raw, err.Get("response.error").Raw)
-						require.JSONEq(t, gjson.Get(failed, "trace").Raw, err.Get("trace").Raw)
+					if pass && err.Get("type").Str == "response.failed" && tc.name != "failed" {
+						// Passthrough normalizes a bare error after visible output
+						// to a terminal frame for the current response.
+						require.Equal(t, "resp_parity", err.Get("response.id").Str)
+						message := gjson.Get(tc.tail[0], "error.message").Str
+						if message == "" {
+							message = gjson.Get(tc.tail[0], "message").Str
+						}
+						require.Equal(t, message, err.Get("response.error.message").Str)
+						require.Equal(t, "server_error", err.Get("response.error.code").Str)
+					} else {
+						expected, deleteErr := sjson.Delete(tc.tail[0], "trace")
+						require.NoError(t, deleteErr)
+						require.JSONEq(t, expected, err.Raw)
 					}
+					require.False(t, err.Get("trace").Exists())
 					if on {
 						require.JSONEq(t, withoutNotice, err.Raw)
 					} else {

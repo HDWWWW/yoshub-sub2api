@@ -107,6 +107,17 @@ func (s *HeaderOverrideRequestScope) record(accountID int64, lowerName, value st
 	headers[lowerName] = value
 }
 
+// forget removes a request-scoped value when a second transport build drops
+// the header. The ops detail must describe the chosen transport.
+func (s *HeaderOverrideRequestScope) forget(accountID int64, name string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.reported[accountID], name)
+}
+
 // reportedHeaders 返回本次请求上报给指定账号的请求头副本；没有上报时返回 nil。
 func (s *HeaderOverrideRequestScope) reportedHeaders(accountID int64) map[string]string {
 	if s == nil || accountID <= 0 {

@@ -24,8 +24,8 @@ func riskModelMismatchEnabled(c AccountRiskConfig) bool {
 }
 
 func riskEventNotificationEnabled(c AccountRiskConfig, event AccountRiskEvent) bool {
-	if event.Kind == accountRiskProbe401 {
-		return c.Enabled && c.Probe401Enabled
+	if event.Kind == accountRiskProbe401 || event.Kind == accountRiskBusiness401 {
+		return c.Enabled && c.Notify401Enabled
 	}
 	if event.Kind == "model_mismatch" {
 		return riskModelMismatchEnabled(c)
@@ -157,10 +157,11 @@ func (s *OpenAIGatewayService) beginAccountRiskModelObservation(ctx context.Cont
 		ClearOpsUpstreamModel(c)
 		callback := s.accountRiskModelCallback(ctx, getOpenAIGroupIDFromContext(c), account, func() string { return c.GetString(OpsUpstreamModelKey) })
 		c.Set(accountRiskModelObserverKey, callback)
+		c.Set(accountRiskBusiness401, s.accountRiskStream401(ctx, c, account))
 	}
 	return beginUpstreamResponseModelObservation(c)
 }
 
 func (s *OpenAIGatewayService) newAccountRiskModelObserver(ctx context.Context, c *gin.Context, account *Account, sentModel string) *upstreamResponseModelObserver {
-	return &upstreamResponseModelObserver{onModel: s.accountRiskModelCallback(ctx, getOpenAIGroupIDFromContext(c), account, func() string { return sentModel })}
+	return &upstreamResponseModelObserver{on401: s.accountRiskStream401(ctx, c, account), onModel: s.accountRiskModelCallback(ctx, getOpenAIGroupIDFromContext(c), account, func() string { return sentModel })}
 }

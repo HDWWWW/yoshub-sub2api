@@ -223,7 +223,7 @@ func TestNativeStaleAccountWritePreservesCurrentManualPriority(t *testing.T) {
 	defer tx.Rollback()
 	stale := &service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Extra: map[string]any{service.AccountManualPriorityExtraKey: 9, "supplier": true}}
-	merged, err := lockAndMergeAccountProbeExtra(context.Background(), tx.Client(), stale, nil, nil)
+	merged, err := lockAndMergeAccountProbeExtra(context.Background(), tx.Client(), stale, service.AccountBillingSettingsUpdate{})
 	require.NoError(t, err)
 	require.EqualValues(t, 0, merged[service.AccountManualPriorityExtraKey])
 	require.Equal(t, true, merged["supplier"])

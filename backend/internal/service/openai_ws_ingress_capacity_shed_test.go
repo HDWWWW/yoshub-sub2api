@@ -31,8 +31,8 @@ func (r *openAIWSIngressCapacityShedRepo) UpdateExtra(context.Context, int64, ma
 	return nil
 }
 
-// SmartWS preserves upstream business errors and does not rewrite them to encourage replay.
-func TestProxyResponsesWebSocketFromClient_PreservesCapacityShedCodeForClient(t *testing.T) {
+// SmartWS translates capacity codes on the client copy while keeping the upstream replay guard.
+func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -42,16 +42,16 @@ func TestProxyResponsesWebSocketFromClient_PreservesCapacityShedCodeForClient(t 
 		wantAbsent     []string
 	}{
 		{
-			name: "capacity_shed_code_is_preserved",
+			name: "capacity_shed_code_is_retryable",
 			upstreamEvents: [][]byte{
 				[]byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`),
 				[]byte(`{"type":"response.failed","response":{"id":"resp_shed","status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`),
 			},
 			wantContains: []string{
-				`"code":"server_is_overloaded"`,
+				`"code":"server_error"`,
 				"Our servers are currently overloaded",
 			},
-			wantAbsent: []string{`"code":"server_error"`},
+			wantAbsent: []string{`"code":"server_is_overloaded"`},
 		},
 		{
 			name: "non_capacity_error_code_is_passed_through",

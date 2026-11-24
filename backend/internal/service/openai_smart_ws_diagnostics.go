@@ -160,6 +160,9 @@ func (d *smartWSHandshakeDiagnostics) responseSummary(headers http.Header, body 
 }
 
 func (p *openAIWSConnPool) observeSmartWSHandshake(ctx context.Context, req openAIWSAcquireRequest, hasConn bool, status int, responseHeaders http.Header, dialErr error, elapsed time.Duration) {
+	if status == http.StatusUnauthorized && p.onHandshakeStatus != nil {
+		p.onHandshakeStatus(ctx, req.Account, status, "WebSocket 握手")
+	}
 	d := &p.handshakeDiagnostics
 	succeeded := dialErr == nil && hasConn
 	if succeeded {

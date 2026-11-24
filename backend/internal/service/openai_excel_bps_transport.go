@@ -79,7 +79,16 @@ func (s *OpenAIGatewayService) doExcelBPSHTTP(req *http.Request, proxy string, a
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileExcelBPS)))
-	return s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
+	return s.doExcelBPSHTTPResponse(req, proxy, account)
+}
+
+// Excel uses a dedicated upstream transport and profile, including attachments.
+func (s *OpenAIGatewayService) doExcelBPSHTTPResponse(req *http.Request, proxy string, account *Account) (*http.Response, error) {
+	resp, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
+	if err == nil && resp != nil {
+		s.observeBusiness401(req.Context(), account, resp.StatusCode, "HTTP")
+	}
+	return resp, err
 }
 
 func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Context, account *Account, scope string, body []byte, token, accountID string, acquire excelBPSAcquire) (*http.Response, excelBPSLease, string, error) {

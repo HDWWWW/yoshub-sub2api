@@ -624,23 +624,23 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 			c.Header(key, v)
 		}
 	}
+	downstreamStatus, clientPayload := smartWSClientError(c, account, resp.StatusCode, payload)
 	contentType := "application/json"
-	if !json.Valid(payload) {
+	if !json.Valid(clientPayload) {
 		contentType = "text/plain; charset=utf-8"
 	}
 	MarkResponseCommitted(c)
-	downstreamStatus := resp.StatusCode
 	if isPolicy {
 		downstreamStatus = openAISafetyPolicyHTTPStatus(downstreamStatus)
 	}
 	// A slot-wait ping can commit SSE before SmartWS sees its first frame.
 	// Keep the compact policy writer first; otherwise use the protocol that
 	// is already on the wire, not the upstream response's content type.
-	if !isPolicy || !writeOpenAICompactSSEBridge(c, downstreamStatus, payload) {
+	if !isPolicy || !writeOpenAICompactSSEBridge(c, downstreamStatus, clientPayload) {
 		if stopSmartWSKeepaliveAndCheckSSE(c) {
-			writeSmartWSCommittedSSEError(c, downstreamStatus, payload)
+			writeSmartWSCommittedSSEError(c, downstreamStatus, clientPayload)
 		} else {
-			c.Data(downstreamStatus, contentType, payload)
+			c.Data(downstreamStatus, contentType, clientPayload)
 		}
 	}
 	c.Set(smartWSFailureDeliveredKey, true)

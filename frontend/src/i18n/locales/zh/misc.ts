@@ -19,6 +19,7 @@ export default {
 
   // Version Badge
   version: {
+    upstreamRepository: '查看原版 GitHub 仓库',
     upstreamTitle: '原版 Sub2API',
     upstreamChecking: '正在检查原版更新…',
     upstreamAvailable: '原版有更新：{version}',

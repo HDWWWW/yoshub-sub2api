@@ -75,7 +75,11 @@ func TestSmartWSHandshakeAccountFailureClassification(t *testing.T) {
 				require.True(t, stop.RetryableOnSameAccount)
 			} else {
 				require.Equal(t, test.status, rec.Code)
-				require.Equal(t, test.body, rec.Body.String())
+				if strings.HasPrefix(test.body, "{") {
+					require.JSONEq(t, test.body, rec.Body.String())
+				} else {
+					require.Equal(t, test.body, rec.Body.String())
+				}
 				require.Equal(t, "7", rec.Header().Get("Retry-After"))
 			}
 			require.Zero(t, upstream.callCount)

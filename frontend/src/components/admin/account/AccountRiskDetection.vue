@@ -27,6 +27,11 @@
           </section>
           <section class="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
             <label class="flex items-center gap-3">
+              <input v-model="draft.notify_401_enabled" data-testid="risk-notify-401-enabled" aria-describedby="risk-notify-401-hint" type="checkbox" class="rounded" />
+              <span class="text-sm font-medium">{{ t('accountRisk.notify401Title') }}</span>
+            </label>
+            <p id="risk-notify-401-hint" class="text-xs text-gray-500">{{ t('accountRisk.notify401Hint') }}</p>
+            <label class="flex items-center gap-3">
               <input v-model="draft.probe_401_enabled" data-testid="risk-probe-401-enabled" aria-describedby="risk-probe-401-hint" type="checkbox" class="rounded" />
               <span class="text-sm font-medium">{{ t('accountRisk.probe401Title') }}</span>
             </label>
@@ -215,7 +220,7 @@ async function load() {
   view.value = null; draft.value = null; testResult.value = null; testAccountID.value = 0; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_mismatch_max_retries: data.config.probe_mismatch_max_retries ?? 0, probe_401_enabled: data.config.probe_401_enabled ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_mismatch_max_retries: data.config.probe_mismatch_max_retries ?? 0, probe_401_enabled: data.config.probe_401_enabled ?? false, notify_401_enabled: data.config.notify_401_enabled ?? data.config.probe_401_enabled ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { if (current === generation) loading.value = false }
 }

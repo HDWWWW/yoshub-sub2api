@@ -28,6 +28,7 @@ func TestAccountRiskProbe401ActionsAndNotification(t *testing.T) {
 			s, store, accounts, _, now := riskHarness()
 			r := store.state.Rules[7]
 			r.Config.Probe401Enabled = true
+			r.Config.Notify401Enabled = true
 			r.Config.ProbeNotifyOnly = true
 			r.Config.NotifyEnabled = false // 401 alerts have their own switch.
 			accounts.pool[0].Credentials = map[string]any{"access_token": "private-token", "refresh_token": tc.refresh}
@@ -143,6 +144,7 @@ func TestAccountRiskProbe401AllAndCapacity(t *testing.T) {
 			}
 			r := store.state.Rules[7]
 			r.Config.Probe401Enabled = true
+			r.Config.Notify401Enabled = true
 			r.Config.CapacityNotifyOnly = kind == "capacity notify only"
 			r.Config.NotifyEnabled = true
 			var job *accountRiskJob

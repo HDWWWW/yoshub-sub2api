@@ -1744,9 +1744,10 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 		return
 	}
 	if failoverErr != nil && failoverErr.PreserveUpstreamError {
-		errType, code, message := service.OpenAIUpstreamErrorFields(failoverErr.StatusCode, failoverErr.ResponseBody)
+		// Messages applies frame rules above. HTTP status rejections keep the original status.
+		status, errType, code, message := failoverErr.PreservedClientError(nil)
 		service.SetOpsUpstreamError(c, failoverErr.StatusCode, message, "")
-		h.anthropicStreamingAwareError(c, failoverErr.StatusCode, errType, message, streamStarted, code)
+		h.anthropicStreamingAwareError(c, status, errType, message, streamStarted, code)
 		return
 	}
 	if failoverErr != nil && failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
@@ -3792,12 +3793,10 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		return
 	}
 	if failoverErr.PreserveUpstreamError {
-		if h.applyOpenAIFailoverPassthroughRule(c, failoverErr.StatusCode, failoverErr.ResponseBody, streamStarted) {
-			return
-		}
-		errType, code, message := service.OpenAIUpstreamErrorFields(failoverErr.StatusCode, failoverErr.ResponseBody)
+		service.BindErrorPassthroughService(c, h.errorPassthroughService)
+		status, errType, code, message := failoverErr.PreservedClientError(c)
 		service.SetOpsUpstreamError(c, failoverErr.StatusCode, message, "")
-		h.handleStreamingAwareErrorWithCode(c, failoverErr.StatusCode, errType, code, message, streamStarted, false)
+		h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted, false)
 		return
 	}
 	if failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
@@ -4297,8 +4296,7 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 	}
 
 	if failoverErr != nil && failoverErr.PreserveUpstreamError {
-		intendedStatus = failoverErr.StatusCode
-		errorType, errorCode, message = service.OpenAIUpstreamErrorFields(intendedStatus, failoverErr.ResponseBody)
+		intendedStatus, errorType, errorCode, message = failoverErr.PreservedClientError(c)
 	}
 	service.MarkOpsStreamFailure(c, errorType, errorCode, message, intendedStatus)
 	if conn != nil {

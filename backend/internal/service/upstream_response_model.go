@@ -31,6 +31,7 @@ type upstreamResponseModelObserver struct {
 	terminal string
 	conflict bool
 	onModel  func(string)
+	on401    func()
 
 	// firstTier holds the first non-terminal tier declaration; it is discarded
 	// when later non-terminal declarations disagree. terminalTier comes from a
@@ -74,6 +75,10 @@ func normalizeObservedUpstreamResponseModel(model string) string {
 }
 
 func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType string) {
+	if o.on401 != nil && (eventType == "error" || eventType == "response.failed") && explicitStream401(payload) {
+		o.on401()
+		o.on401 = nil
+	}
 	model := firstValidTrimmedGJSONString(payload, "response.model", "model")
 	terminal := isUpstreamResponseModelTerminalEvent(eventType)
 	o.Observe(model, terminal)
@@ -195,6 +200,9 @@ func beginUpstreamResponseModelObservation(c *gin.Context) *upstreamResponseMode
 	if c != nil {
 		if callback, ok := c.Get(accountRiskModelObserverKey); ok {
 			observer.onModel, _ = callback.(func(string))
+		}
+		if callback, ok := c.Get(accountRiskBusiness401); ok {
+			observer.on401, _ = callback.(func())
 		}
 		c.Set(upstreamResponseModelObserverContextKey, observer)
 	}

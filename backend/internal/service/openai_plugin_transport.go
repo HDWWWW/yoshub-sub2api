@@ -22,6 +22,10 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		ctx, cancel := context.WithCancel(request.Context())
 		request = request.WithContext(ctx)
 		defer func() {
+			// Synthetic WS responses are observed at the actual handshake or frame.
+			if err == nil && response != nil && response.StatusCode == http.StatusUnauthorized && !isOpenAIHTTPWSResponse(response) {
+				s.observeBusiness401(ctx, account, response.StatusCode, "HTTP")
+			}
 			if err != nil || response == nil || response.Body == nil {
 				cancel()
 				return

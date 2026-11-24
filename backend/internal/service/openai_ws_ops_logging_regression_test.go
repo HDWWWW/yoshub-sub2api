@@ -40,7 +40,7 @@ func TestSmartWSNativeDeliveredErrorLogPreservesMessageAndStatus(t *testing.T) {
 			c, _ := newOpenAIUpstreamErrorTestContext(t)
 			SetOpenAIClientTransport(c, OpenAIClientTransportWS)
 			var delivered []byte
-			err := writeSmartWSNativeFailure(c, tc.status, []byte(tc.body), nil, func(payload []byte) error {
+			err := writeSmartWSNativeFailure(c, nil, tc.status, []byte(tc.body), nil, func(payload []byte) error {
 				delivered = append([]byte(nil), payload...)
 				return nil
 			})
@@ -87,7 +87,7 @@ func TestSmartWSHTTPBridgeDetailErrorIsSearchableInOps(t *testing.T) {
 func TestSmartWSNativeFailedDeliveryDoesNotMarkVisibleError(t *testing.T) {
 	c, _ := newOpenAIUpstreamErrorTestContext(t)
 	SetOpenAIClientTransport(c, OpenAIClientTransportWS)
-	err := writeSmartWSNativeFailure(c, 400, []byte(`{"detail":"not delivered"}`), nil, func([]byte) error {
+	err := writeSmartWSNativeFailure(c, nil, 400, []byte(`{"detail":"not delivered"}`), nil, func([]byte) error {
 		return context.Canceled
 	})
 	require.ErrorIs(t, err, context.Canceled)
@@ -137,7 +137,9 @@ func TestOpenAIWSHTTPBridge422LogPrivacy(t *testing.T) {
 				require.Len(t, up.requests, 1)
 				require.Len(t, frames, 1)
 				if route.platform == PlatformOpenAI {
-					require.JSONEq(t, `{"type":"error","status":422,"detail":`+tc.detail+`}`, frames[0])
+					require.Equal(t, int64(422), gjson.Get(frames[0], "status").Int())
+					require.Equal(t, tc.logMessage, gjson.Get(frames[0], "error.message").Str)
+					require.NotContains(t, frames[0], "LOCAL_INPUT_MARK")
 				} else {
 					msg, err := json.Marshal(tc.wireMessage)
 					require.NoError(t, err)
@@ -171,8 +173,10 @@ func TestOpenAIWS422LogReasonOnDeliveredEnvelope(t *testing.T) {
 			require.True(t, gjson.Valid(frame))
 			c, _ := newOpenAIUpstreamErrorTestContext(t)
 			SetOpenAIClientTransport(c, OpenAIClientTransportWS)
-			err := writeSmartWSNativeFailure(c, http.StatusUnprocessableEntity, []byte(frame), nil, func(p []byte) error {
-				require.Equal(t, frame, string(p)) // A typed upstream envelope is delivered byte for byte, without injecting status.
+			err := writeSmartWSNativeFailure(c, nil, http.StatusUnprocessableEntity, []byte(frame), nil, func(p []byte) error {
+				require.Equal(t, "response.failed", gjson.GetBytes(p, "type").Str)
+				require.False(t, gjson.GetBytes(p, "status").Exists())
+				require.NotContains(t, string(p), "LOCAL_INPUT_MARK")
 				return nil
 			})
 			require.Error(t, err)

@@ -42,6 +42,7 @@ type AccountRiskConfig struct {
 	ProbeNotifyOnly           bool   `json:"probe_notify_only"`
 	ProbeMismatchMaxRetries   int    `json:"probe_mismatch_max_retries"`
 	Probe401Enabled           bool   `json:"probe_401_enabled"`
+	Notify401Enabled          bool   `json:"notify_401_enabled"`
 	Probe429StopEnabled       bool   `json:"probe_429_stop_enabled"`
 	Probe429MaxRetries        int    `json:"probe_429_max_retries"`
 	ModelMismatchAction       string `json:"model_mismatch_action"`
@@ -65,8 +66,19 @@ func DefaultAccountRiskConfig() AccountRiskConfig {
 func (c *AccountRiskConfig) UnmarshalJSON(data []byte) error {
 	type configAlias AccountRiskConfig
 	decoded := configAlias{ProbeEnabled: true, ProbeScope: "single"}
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	// The original probe switch also sent 401 alerts. Only an absent new
+	// field inherits it, so explicitly disabling alerts survives reload.
+	var fields struct {
+		*configAlias
+		Notify401 *bool `json:"notify_401_enabled"`
+	}
+	fields.configAlias = &decoded
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
+	}
+	decoded.Notify401Enabled = decoded.Probe401Enabled
+	if fields.Notify401 != nil {
+		decoded.Notify401Enabled = *fields.Notify401
 	}
 	*c = AccountRiskConfig(decoded)
 	return nil
@@ -362,7 +374,8 @@ func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision in
 		// must not strand accounts already waiting for a capacity recheck.
 		previous := r.Config
 		previous.Probe401Enabled = c.Probe401Enabled
-		if r.Revision > 0 && previous == c && r.Config.Probe401Enabled != c.Probe401Enabled {
+		previous.Notify401Enabled = c.Notify401Enabled
+		if r.Revision > 0 && previous == c && r.Config != c {
 			for _, p := range state.CapacityPauses {
 				if p.GroupID == groupID && p.Revision == revision {
 					p.Revision++
@@ -665,7 +678,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		if isScheduledRiskProbe(job.pending.Kind) && !r.Config.ProbeEnabled {
 			return nil
 		}
-		auth401 := r.Config.Probe401Enabled && job.config.Probe401Enabled && result.UpstreamStatus == http.StatusUnauthorized && result.auth401 != nil && job.pending.ExpiresAt.After(now)
+		auth401 := (r.Config.Probe401Enabled || r.Config.Notify401Enabled) && result.UpstreamStatus == http.StatusUnauthorized && result.auth401 != nil && job.pending.ExpiresAt.After(now)
 		if job.pauseToken != "" {
 			if !auth401 {
 				return s.finishCapacityPause(ctx, state, stop, job, result, probeErr, now)
@@ -695,7 +708,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		if auth401 {
 			var applyErr error
 			authOwner, cooldownUntil, applyErr = s.applyProbe401(ctx, r, stop, job, result.auth401, now)
-			recorded = authOwner != nil
+			recorded = authOwner != nil || r.Config.Notify401Enabled
 			return applyErr
 		}
 		exhausted429 := isScheduledRiskProbe(job.pending.Kind) && r.Config.Probe429StopEnabled &&

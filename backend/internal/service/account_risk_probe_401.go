@@ -15,9 +15,10 @@ const accountRiskProbe401 = "probe_401"
 // Only an upstream HTTP response produces evidence. Never retain the body,
 // tokens, or a provider-controlled string in the rule, logs, or notification.
 type riskProbe401Evidence struct {
-	ownerID  int64
-	identity [32]byte
-	failure  credential401Failure
+	ownerID   int64
+	ownerName string
+	identity  [32]byte
+	failure   credential401Failure
 }
 
 func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe401Evidence {
@@ -37,22 +38,35 @@ func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe
 		tempUnschedRulesApply(owner, http.StatusUnauthorized, body, model) {
 		return nil
 	}
-	return &riskProbe401Evidence{ownerID: owner.ID, identity: riskModelAccountIdentity(owner), failure: classifyCredential401(owner, body)}
+	return &riskProbe401Evidence{ownerID: owner.ID, ownerName: riskNotificationName(owner.Name), identity: riskModelAccountIdentity(owner), failure: classifyCredential401(owner, body)}
 }
 
 // Apply the response only to the credential version that actually sent the probe.
 // The account update, event and scheduler outbox commit in one risk transaction.
 func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRule, scheduling AccountRiskScheduling, job *accountRiskJob, evidence *riskProbe401Evidence, now time.Time) (*Account, time.Time, error) {
-	stale := "账号、凭据或分组已变化，本次 401 结果作废"
+	if evidence.failure == "" || !r.Config.Probe401Enabled {
+		r.Observation.LastProbeResult = "自动风控探测收到上游 HTTP 401"
+		if r.Config.Notify401Enabled {
+			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, now, accountRiskProbe401, "notify_only", r.Observation.LastProbeResult)
+		}
+		return nil, time.Time{}, nil
+	}
+	stale := "自动风控探测收到上游 HTTP 401，账号、凭据或分组已变化，未执行停调"
+	alertStale := func() {
+		r.Observation.LastProbeResult = stale
+		if r.Config.Notify401Enabled {
+			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, now, accountRiskProbe401, "notify_only", stale)
+		}
+	}
 	source, err := s.probeAccount(ctx, job, now)
 	if err != nil {
-		r.Observation.LastProbeResult = stale
+		alertStale()
 		return nil, time.Time{}, nil
 	}
 	owner := source
 	if source.IsShadow() {
 		if *source.ParentAccountID != evidence.ownerID {
-			r.Observation.LastProbeResult = stale
+			alertStale()
 			return nil, time.Time{}, nil
 		}
 		owner, err = s.accounts.GetByID(ctx, evidence.ownerID)
@@ -61,7 +75,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 		}
 	}
 	if owner == nil || owner.ID != evidence.ownerID || !owner.IsActive() || riskModelAccountIdentity(owner) != evidence.identity {
-		r.Observation.LastProbeResult = stale
+		alertStale()
 		return nil, time.Time{}, nil
 	}
 	reason := fmt.Sprintf("自动风控探测收到上游 HTTP 401（%s）", evidence.failure)
@@ -82,7 +96,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 		return nil, time.Time{}, err
 	}
 	if !changed {
-		r.Observation.LastProbeResult = stale
+		alertStale()
 		return nil, time.Time{}, nil
 	}
 	r.Observation.LastProbeResult = reason
@@ -99,8 +113,16 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 			}
 		}
 	}
-	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: owner.ID, AccountName: riskNotificationName(owner.Name), Reason: r.Observation.LastProbeResult, Kind: accountRiskProbe401, Action: action, Notification: "pending"}
+	appendRisk401Event(r, owner.ID, owner.Name, now, accountRiskProbe401, action, r.Observation.LastProbeResult)
+	return owner, blockedUntil, nil
+}
+
+func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time, kind, action, reason string) {
+	notification := "disabled"
+	if r.Config.Notify401Enabled {
+		notification = "pending"
+	}
+	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: id, AccountName: riskNotificationName(name), Reason: reason, Kind: kind, Action: action, Notification: notification}
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	trimAccountRiskEvents(r)
-	return owner, blockedUntil, nil
 }

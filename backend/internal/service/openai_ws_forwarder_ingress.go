@@ -1278,7 +1278,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				failureTerminal = eventType
 				imageCounter.AddSSEData(upstreamMessage)
-				if writeErr := writeClientMessage(rewriteOpenAIResponseServiceTier(upstreamMessage, account, outboundServiceTier)); writeErr != nil {
+				if writeErr := writeClientMessage(smartWSClientFrame(c, account, rewriteOpenAIResponseServiceTier(upstreamMessage, account, outboundServiceTier))); writeErr != nil {
 					return nil, context.Canceled
 				}
 				markOpenAIWSClientVisibleFailure(c, eventType, upstreamMessage)
@@ -1292,7 +1292,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					if id := gjson.GetBytes(tail, "response.id").String(); id != "" {
 						responseID = id
 					}
-					if writeErr := writeClientMessage(rewriteOpenAIResponseServiceTier(tail, account, outboundServiceTier)); writeErr != nil {
+					if writeErr := writeClientMessage(smartWSClientFrame(c, account, rewriteOpenAIResponseServiceTier(tail, account, outboundServiceTier))); writeErr != nil {
 						return nil, context.Canceled
 					}
 				}
@@ -1442,9 +1442,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				// sanitizeOpenAICapacityShedErrorCodeForClient 注释里写明的前提。
 				clientMessage := rewriteOpenAIResponseServiceTier(upstreamMessage, account, outboundServiceTier)
 				if eventType == "error" || eventType == "response.failed" {
-					if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
-						clientMessage = rewritten
-					}
+					clientMessage = smartWSClientFrame(c, account, clientMessage)
 				}
 				if err := writeClientMessage(clientMessage); err != nil {
 					if account.Platform == PlatformOpenAI {

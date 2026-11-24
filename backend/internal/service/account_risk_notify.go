@@ -155,6 +155,8 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 	}
 	action := "已关闭此账号调度，现有请求继续完成。"
 	switch event.Action {
+	case "gateway":
+		action = "已记录业务请求的上游 401，调度状态由网关现有认证规则处理。"
 	case "cooldown":
 		action = "已暂停接收新请求，等待凭据刷新。冷却截止时间见上方原因。"
 	case "notify_only":

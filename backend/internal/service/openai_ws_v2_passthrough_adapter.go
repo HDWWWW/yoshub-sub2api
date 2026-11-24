@@ -918,6 +918,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		pool.smartMetrics.handshakes.Add(1)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
 		finishDial()
+		s.observeBusiness401(ctx, account, statusCode, "WebSocket 握手")
 		if err == nil && upstreamConn == nil {
 			err = errors.New("upstream websocket dial returned no connection")
 		}
@@ -1033,7 +1034,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return restoreCodexToolNamesFromContext(c, payload)
 		},
 		rewriteServiceTier: func(payload []byte) []byte {
-			return rewriteOpenAIResponseServiceTier(payload, account, usageMeta.serviceTier.Load())
+			return smartWSClientFrame(c, account, rewriteOpenAIResponseServiceTier(payload, account, usageMeta.serviceTier.Load()))
 		},
 	}
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{

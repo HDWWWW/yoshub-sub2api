@@ -1029,7 +1029,10 @@ func writeOpenAIPassthroughStructuredErrorEnvelope(
 	// 否则本函数要保留的 error.code 恰好在 compact 流上丢失。
 	if (downstreamStatus < 200 || downstreamStatus >= 300) &&
 		openAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
-		writeOpenAICompactSSEFailureWithCode(c, downstreamStatus, code, message)
+		if code == "" {
+			errorPayload["code"] = "upstream_error"
+		}
+		writeOpenAIControlFailure(c, downstreamStatus, "upstream_error", message, errorPayload)
 		return
 	}
 
@@ -2328,7 +2331,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if clientDisconnected || !writePendingLines() {
 			return
 		}
-		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), bareErrorPayload, failedMessage)); err != nil {
+		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), smartWSClientFrame(c, account, bareErrorPayload), sanitizeOpenAIPassthroughClientErrorText(account, failedMessage))); err != nil {
 			clientDisconnected = true
 			closeOpenAIUpstreamOnDisconnect(resp, account)
 			return
@@ -2546,7 +2549,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}
 			imageCounter.AddSSEData(dataBytes)
-			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
+			if smartWSHasDispatched(c) && (eventType == "error" || eventType == "response.failed") {
+				dataBytes = smartWSClientFrame(c, account, dataBytes)
+				trimmedData = strings.TrimSpace(string(dataBytes))
+				line = "data: " + trimmedData
+			} else if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
 				dataBytes,
 				eventType,
 				openAIStreamClientOutputStarted(c, clientOutputStarted),

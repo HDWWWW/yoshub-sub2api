@@ -491,7 +491,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if clientDisconnected {
 			return
 		}
-		message = rewriteOpenAIResponseServiceTier(message, account, outboundServiceTier)
+		message = smartWSClientFrame(c, account, rewriteOpenAIResponseServiceTier(message, account, outboundServiceTier))
 		frame := make([]byte, 0, len(message)+8)
 		frame = append(frame, "data: "...)
 		frame = append(frame, message...)
@@ -705,7 +705,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 			markOpenAICyberPolicyEvent(c, failurePayload, http.StatusOK, usage)
 			mergeSmartWSCyberPolicyUsage(c, usage)
-			clientMessage := rewriteOpenAIResponseServiceTier(message, account, outboundServiceTier)
+			clientMessage := smartWSClientFrame(c, account, rewriteOpenAIResponseServiceTier(message, account, outboundServiceTier))
 			if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", clientMessage); err != nil {
 				clientDisconnected = true
 				return resultWithUsage(), err

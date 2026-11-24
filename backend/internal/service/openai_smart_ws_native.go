@@ -31,8 +31,9 @@ func smartWSNativeErrorPayload(status int, body []byte, headers http.Header) []b
 	return body
 }
 
-func writeSmartWSNativeFailure(c *gin.Context, status int, body []byte, headers http.Header, write func([]byte) error) error {
-	payload := smartWSNativeErrorPayload(status, body, headers)
+func writeSmartWSNativeFailure(c *gin.Context, account *Account, status int, body []byte, headers http.Header, write func([]byte) error) error {
+	clientStatus, clientBody := smartWSClientError(c, account, status, body)
+	payload := smartWSNativeErrorPayload(clientStatus, clientBody, headers)
 	if err := write(payload); err != nil {
 		return err
 	}
@@ -88,7 +89,7 @@ func (s *OpenAIGatewayService) smartWSNativeHandshakeFailure(ctx context.Context
 	}
 	event.ProxyID, event.ProxyName = opsUpstreamWSProxyAttribution(account)
 	appendOpsUpstreamError(c, event)
-	failure := writeSmartWSNativeFailure(c, dialErr.StatusCode, body, dialErr.ResponseHeaders, write)
+	failure := writeSmartWSNativeFailure(c, account, dialErr.StatusCode, body, dialErr.ResponseHeaders, write)
 	var stop *UpstreamFailoverError
 	if errors.As(failure, &stop) {
 		classification.annotate(stop)

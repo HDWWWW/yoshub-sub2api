@@ -950,7 +950,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 // 桥接转发 error / response.failed 给 WS 客户端前必须把容量降载码改写为可重试
 // 的 server_error：Codex 对 server_is_overloaded/slow_down 判致命并终止会话。
 // 账号状态判定使用改写前的原始事件，不受影响。
-func TestProxyOpenAIWSHTTPBridgeTurnPreservesCapacityShedCodeForClient(t *testing.T) {
+func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -998,7 +998,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnPreservesCapacityShedCodeForClient(t *testin
 
 			requireStoppedSmartWSFailure(t, err)
 			require.Len(t, writes, 1)
-			require.Contains(t, string(writes[0]), `"code":"server_is_overloaded"`)
+			require.Contains(t, string(writes[0]), `"code":"server_error"`)
 			require.Contains(t, string(writes[0]), "Our servers are currently overloaded")
 		})
 	}
@@ -1289,7 +1289,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput(t *
 	require.Equal(t, "response.created", gjson.GetBytes(writes[0], "type").String())
 	require.Equal(t, "keepalive", gjson.GetBytes(writes[1], "type").String())
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(writes[2], "type").String())
-	require.Contains(t, string(writes[4]), `"code":"server_is_overloaded"`)
+	require.Contains(t, string(writes[4]), `"code":"server_error"`)
 	require.Len(t, upstream.requests, 1)
 }
 

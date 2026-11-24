@@ -40,6 +40,10 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 	if err != nil {
 		return nil, true, err
 	}
+	// HTTP request-scoped overrides may already have been expanded on req.
+	// A pooled WebSocket must drop per-request identity and keep only the
+	// connection-scoped overrides. Leave the original HTTP fallback untouched.
+	account.ApplyHeaderOverrides(withHeaderOverrideConnectionScope(req.Context()), headers)
 	copyReq.Header = headers
 	var frameLimit int64
 	if s.cfg != nil {
@@ -51,6 +55,10 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		readTimeout = time.Duration(s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds) * time.Second
 	}
 	dispatch.readTimeout = readTimeout
+	var alert401 func()
+	if cb, ok := c.Get(accountRiskBusiness401); ok {
+		alert401, _ = cb.(func())
+	}
 	response, handled, err := s.getIndependentSmartWSPool().TryWithOptions(copyReq, proxyURL, scope, smartws.Options{
 		OnHandshake: func(status int, h http.Header, body []byte, dialErr error, elapsed time.Duration) {
 			observation.m.handshakes.Add(1)
@@ -95,6 +103,9 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 			dispatch.observe(c, payload)
 			observation.event(payload)
 			typ := gjson.GetBytes(payload, "type").String()
+			if (typ == "error" || typ == "response.failed") && alert401 != nil && explicitStream401(payload) {
+				alert401()
+			}
 			if response != nil {
 				rememberSmartWSHTTPUsage(c, response.Header, raw, payload, observation.start, true)
 			}

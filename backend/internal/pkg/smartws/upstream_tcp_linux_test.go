@@ -5,13 +5,13 @@ package smartws
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
 	"strings"
 	"syscall"
 	"testing"
@@ -84,8 +84,17 @@ func TestNewPoolWSSFirstHopTCPOptions(t *testing.T) {
 			p.config.dialer.TLSClientConfig = tlsConfig
 
 			var firstHop net.Conn
-			ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { firstHop = info.Conn }})
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(`{"stream":true,"input":"test"}`))
+			// Gorilla may wrap SOCKS tunnels in a proxy connection. Inspect
+			// the actual first-hop socket returned by our production dialer.
+			dial := p.config.dialer.NetDialContext
+			p.config.dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				conn, err := dial(ctx, network, address)
+				if err == nil {
+					firstHop = conn
+				}
+				return conn, err
+			}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(`{"stream":true,"input":"test"}`))
 			require.NoError(t, err)
 			req.Header.Set("Authorization", "Bearer loopback-test")
 			resp, handled, err := p.TryWithOptions(req, proxyURL, "", Options{AllowTarget: true, ReadTimeout: 5 * time.Second})

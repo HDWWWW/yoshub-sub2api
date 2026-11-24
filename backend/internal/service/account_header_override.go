@@ -205,6 +205,7 @@ func (a *Account) ApplyHeaderOverrides(ctx context.Context, h http.Header) {
 			}
 			expanded, loggable, ok := expandHeaderOverrideTemplate(ctx, value)
 			if !ok {
+				headerOverrideScopeFromContext(ctx).forget(a.ID, name)
 				continue
 			}
 			value = expanded

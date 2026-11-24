@@ -648,6 +648,7 @@
             <p v-if="upstreamNotice?.base_version" class="mt-1 text-gray-500 dark:text-dark-400">
               {{ t('version.upstreamBase', { version: upstreamNotice.base_version }) }}
             </p>
+            <a href="https://github.com/Wei-Shaw/sub2api" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block text-primary-600 underline hover:text-primary-700 dark:text-primary-400">{{ t('version.upstreamRepository') }}</a>
           </section>
         </div>
       </transition>

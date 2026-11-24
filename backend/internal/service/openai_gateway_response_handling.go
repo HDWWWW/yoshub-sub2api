@@ -424,7 +424,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if codexFailureTerminal && sawBareError && !sawResponseFailed && !clientDisconnected {
 			applyAttemptResponseHeaders()
-			if _, err := writePendingString(buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtStamper.Value(), bareErrorPayload, failedMessage)); err != nil {
+			if _, err := writePendingString(buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtStamper.Value(), smartWSClientFrame(c, account, bareErrorPayload), sanitizeOpenAIPassthroughClientErrorText(account, failedMessage))); err != nil {
 				handlePendingWriteError(err)
 			} else {
 				failureDelivered = true
@@ -713,11 +713,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = "data: " + data
 				eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
 			}
-			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
+			if smartWSHasDispatched(c) && (eventType == "error" || eventType == "response.failed") {
+				dataBytes = smartWSClientFrame(c, account, dataBytes)
+				data = string(dataBytes)
+				line = "data: " + data
+			} else if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
 				dataBytes,
 				eventType,
 				openAIStreamClientOutputStarted(c, clientOutputStarted),
-			); sanitized && !smartWSHasDispatched(c) {
+			); sanitized {
 				dataBytes = sanitizedData
 				data = string(sanitizedData)
 				line = "data: " + data
@@ -2036,6 +2040,9 @@ func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, sou
 		code = strings.TrimSpace(gjson.GetBytes(source, "response.error.code").String())
 	}
 	if code == "" {
+		code = openAIPassthroughClientErrorField(nil, gjson.GetBytes(source, "code"))
+	}
+	if code == "" {
 		code = "upstream_error"
 	}
 	message := extractOpenAISSEErrorMessage(source)
@@ -2045,7 +2052,13 @@ func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, sou
 	if message == "" {
 		message = "Upstream response failed"
 	}
+	if strings.EqualFold(code, "slow_down") || strings.EqualFold(code, "server_is_overloaded") {
+		code = openAICapacityShedRetryableClientCode
+	}
 	errorBody := gin.H{"code": code, "message": message}
+	if param := firstValidTrimmedGJSONString(source, "error.param", "response.error.param"); param != "" && len(param) <= openAIPassthroughClientErrorFieldMaxBytes {
+		errorBody["param"] = param
+	}
 	if errorType != "" {
 		errorBody["type"] = errorType
 	}

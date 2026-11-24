@@ -19,6 +19,7 @@ export default {
 
   // Version Badge
   version: {
+    upstreamRepository: 'Open original GitHub repository',
     upstreamTitle: 'Original Sub2API',
     upstreamChecking: 'Checking the upstream release…',
     upstreamAvailable: 'Upstream update available: {version}',

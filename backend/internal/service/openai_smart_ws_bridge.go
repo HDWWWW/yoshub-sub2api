@@ -59,7 +59,7 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 		if !markOpenAICyberPolicyEvent(c, payload, resp.StatusCode, nil) {
 			_ = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, payload, upstreamModel)
 		}
-		return result, writeSmartWSNativeFailure(c, resp.StatusCode, payload, resp.Header, write)
+		return result, writeSmartWSNativeFailure(c, account, resp.StatusCode, payload, resp.Header, write)
 	}
 
 	result = &OpenAIForwardResult{Model: model, UpstreamModel: upstreamModel, Stream: true, OpenAIWSMode: true,
@@ -172,6 +172,9 @@ func (s *OpenAIGatewayService) proxySmartWSHTTPBridge(
 			}
 		}
 		clientPayload := payload
+		if failed {
+			clientPayload = smartWSClientFrame(c, account, payload)
+		}
 		if !failed && model != upstreamModel && openAIWSEventMayContainModel(typ) {
 			clientPayload = replaceOpenAIWSMessageModel(payload, upstreamModel, model)
 		}
