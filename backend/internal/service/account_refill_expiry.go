@@ -155,7 +155,7 @@ func claimRefillExpiryDemand(state *accountRefillState, job *AccountRefillJob, r
 		demand.JobID, demand.OwnerGroupID = job.ID, job.GroupID
 		demand.DeliveryGroupIDs = slices.Clone(job.DeliveryGroupIDs)
 		demand.Completed = false
-		job.ReasonDetail += fmt.Sprintf(" 接替账号 #%d，号商回收时间 %s；该次租期仅补入一个接替账号。", target.AccountID, time.Unix(target.SourceExpiresAt, 0).In(refillTimezone).Format("2006-01-02 15:04:05"))
+		job.ReasonDetail += fmt.Sprintf(" 接替账号 #%d，号商回收时间 %s；该次租期仅补入一个接替账号。", target.AccountID, formatNotificationTime(time.Unix(target.SourceExpiresAt, 0)))
 		return
 	}
 }

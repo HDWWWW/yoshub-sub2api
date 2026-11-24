@@ -550,7 +550,7 @@ func (s *PaymentService) sendSubscriptionPurchaseSuccessNotification(ctx context
 		}
 		if s.subscriptionSvc != nil {
 			if sub, err := s.subscriptionSvc.GetActiveSubscription(ctx, o.UserID, *o.SubscriptionGroupID); err == nil && sub != nil {
-				variables["expiry_time"] = sub.ExpiresAt.Format("2006-01-02 15:04")
+				variables["expiry_time"] = formatNotificationTime(sub.ExpiresAt)
 			}
 		}
 	}

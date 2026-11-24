@@ -76,7 +76,7 @@ func TestAccountRiskProbe401ActionsAndNotification(t *testing.T) {
 			require.NotContains(t, notifier.messages[0], "private-")
 			require.Equal(t, "sent", r.Events[0].Notification)
 			if tc.action == "cooldown" {
-				require.Contains(t, notifier.messages[0], "冷却至")
+				require.Contains(t, notifier.messages[0], "冷却至 "+formatNotificationTime(*accounts.pool[0].TempUnschedulableUntil))
 			} else {
 				require.Contains(t, notifier.messages[0], "已关闭")
 			}

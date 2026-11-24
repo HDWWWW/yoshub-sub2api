@@ -156,8 +156,8 @@
                   <template v-if="item"><p>{{ index === 0 ? t('accountRisk.first') : t('accountRisk.second') }}: #{{ item.account_id }} {{ item.name }}</p><p class="font-mono">{{ item.used }} / {{ item.capacity }} · {{ item.percent.toFixed(1) }}%</p></template>
                 </div>
               </div>
-              <p v-if="check.anomaly_since" class="mt-1 text-xs text-gray-500">{{ t('accountRisk.since') }} {{ formatTime(check.anomaly_since) }}</p>
-              <p v-if="check.next_probe_at" class="text-xs text-gray-500">{{ t('accountRisk.nextProbe') }} {{ formatTime(check.next_probe_at) }}</p>
+              <p v-if="check.anomaly_since" class="mt-1 text-xs text-gray-500">{{ t('accountRisk.since') }} {{ formatNotificationTime(check.anomaly_since) }}</p>
+              <p v-if="check.next_probe_at" class="text-xs text-gray-500">{{ t('accountRisk.nextProbe') }} {{ formatNotificationTime(check.next_probe_at) }}</p>
             </div>
           </div>
           <div v-else-if="view.observation.mode === 'capacity'" class="grid gap-2 sm:grid-cols-2">
@@ -165,23 +165,23 @@
               <template v-if="item"><p>{{ index === 0 ? t('accountRisk.first') : t('accountRisk.second') }}: #{{ item.account_id }} {{ item.name }}</p><p class="font-mono">{{ item.used }} / {{ item.capacity }} · {{ item.percent.toFixed(1) }}%</p></template>
             </div>
           </div>
-          <p v-if="!capacityAnomalies.length && view.observation.anomaly_since">{{ t('accountRisk.since') }} {{ formatTime(view.observation.anomaly_since) }}</p>
-          <p v-if="(view.observation.mode !== 'capacity' || !capacityAnomalies.length) && view.observation.next_probe_at">{{ t('accountRisk.nextProbe') }} {{ formatTime(view.observation.next_probe_at) }}</p>
-          <p v-if="view.observation.last_probe_at">{{ formatTime(view.observation.last_probe_at) }} · {{ view.observation.last_probe_result }}</p>
+          <p v-if="!capacityAnomalies.length && view.observation.anomaly_since">{{ t('accountRisk.since') }} {{ formatNotificationTime(view.observation.anomaly_since) }}</p>
+          <p v-if="(view.observation.mode !== 'capacity' || !capacityAnomalies.length) && view.observation.next_probe_at">{{ t('accountRisk.nextProbe') }} {{ formatNotificationTime(view.observation.next_probe_at) }}</p>
+          <p v-if="view.observation.last_probe_at">{{ formatNotificationTime(view.observation.last_probe_at) }} · {{ view.observation.last_probe_result }}</p>
           <div v-if="scheduledChecks.length" class="space-y-2" data-testid="risk-scheduled-status">
             <h4 class="font-medium">{{ t('accountRisk.scheduledAccounts') }}</h4>
             <div class="max-h-72 space-y-2 overflow-y-auto">
               <div v-for="check in scheduledChecks" :key="check.account_id" class="rounded bg-gray-50 p-3 dark:bg-dark-700" data-testid="risk-scheduled-account">
                 <p>#{{ check.account_id }} {{ check.account_name }}</p>
-                <p class="text-xs text-gray-500">{{ t('accountRisk.nextProbe') }} {{ formatTime(check.next_probe_at) }}</p>
-                <p v-if="check.last_probe_at" class="text-xs text-gray-500">{{ formatTime(check.last_probe_at) }} · {{ check.last_probe_result }}</p>
+                <p class="text-xs text-gray-500">{{ t('accountRisk.nextProbe') }} {{ formatNotificationTime(check.next_probe_at) }}</p>
+                <p v-if="check.last_probe_at" class="text-xs text-gray-500">{{ formatNotificationTime(check.last_probe_at) }} · {{ check.last_probe_result }}</p>
               </div>
             </div>
           </div>
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">
           <h3 class="font-semibold">{{ t('accountRisk.history') }}</h3>
-          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.action" class="text-xs" data-testid="risk-event-action">{{ t(`accountRisk.action.${event.action}`) }}</p><p v-if="event.kind !== 'rate_limit_429' && (event.occurrences || 0) > 1" class="text-xs">{{ t('accountRisk.occurrences', { count: event.occurrences }) }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
+          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatNotificationTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.action" class="text-xs" data-testid="risk-event-action">{{ t(`accountRisk.action.${event.action}`) }}</p><p v-if="event.kind !== 'rate_limit_429' && (event.occurrences || 0) > 1" class="text-xs">{{ t('accountRisk.occurrences', { count: event.occurrences }) }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
         </section>
       </form>
     </div>
@@ -194,6 +194,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { accountRiskAPI, type AccountRiskConfig, type AccountRiskRule, type AccountRiskManualResult } from '@/api/admin/accountRisk'
+import { formatNotificationTime } from '@/utils/beijingTime'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const props = defineProps<{ groups: { id: number; name: string; platform: string }[]; initialGroup?: string | number }>()
@@ -232,7 +233,6 @@ const valid = computed(() => {
 })
 const stale = computed(() => !view.value?.observation.checked_at || now.value - Date.parse(view.value.observation.checked_at) > 10000)
 let generation = 0, timer: ReturnType<typeof setInterval> | undefined
-function formatTime(value: string) { return new Date(value).toLocaleString() }
 async function open() {
   show.value = true
   groupID.value = openAIGroups.value.some(g => g.id === Number(props.initialGroup)) ? Number(props.initialGroup) : (openAIGroups.value[0]?.id ?? 0)

@@ -756,7 +756,7 @@ func opsAlertEmailVariables(rule *OpsAlertRule, event *OpsAlertEvent) map[string
 		"operator":          "-",
 		"metric_value":      "-",
 		"threshold_value":   "-",
-		"triggered_at":      time.Now().UTC().Format(time.RFC3339),
+		"triggered_at":      formatNotificationTime(time.Now()),
 		"alert_description": "-",
 	}
 	if rule != nil {
@@ -778,7 +778,7 @@ func opsAlertEmailVariables(rule *OpsAlertRule, event *OpsAlertEvent) map[string
 			variables["threshold_value"] = fmt.Sprintf("%.2f", *event.ThresholdValue)
 		}
 		if !event.FiredAt.IsZero() {
-			variables["triggered_at"] = event.FiredAt.UTC().Format(time.RFC3339)
+			variables["triggered_at"] = formatNotificationTime(event.FiredAt)
 		}
 		if strings.TrimSpace(event.Description) != "" {
 			variables["alert_description"] = strings.TrimSpace(event.Description)
@@ -815,7 +815,7 @@ func buildOpsAlertEmailBody(rule *OpsAlertRule, event *OpsAlertEvent) string {
 		htmlEscape(metric),
 		htmlEscape(rule.Operator),
 		htmlEscape(fmt.Sprintf("%s (threshold %s)", value, threshold)),
-		event.FiredAt.Format(time.RFC3339),
+		formatNotificationTime(event.FiredAt),
 		htmlEscape(event.Description),
 	)
 }

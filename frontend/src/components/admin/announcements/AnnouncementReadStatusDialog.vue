@@ -46,7 +46,7 @@
 
         <template #cell-read_at="{ value }">
           <span class="text-sm text-gray-500 dark:text-dark-400">
-            {{ value ? formatDateTime(value) : t('admin.announcements.unread') }}
+            {{ value ? formatNotificationTime(value) : t('admin.announcements.unread') }}
           </span>
         </template>
       </DataTable>
@@ -74,7 +74,7 @@ import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import { formatDateTime } from '@/utils/format'
+import { formatNotificationTime } from '@/utils/beijingTime'
 import type { AnnouncementUserReadStatus } from '@/types'
 import type { Column } from '@/components/common/types'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'

@@ -14,7 +14,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   vi.spyOn(console, 'error').mockImplementation(() => {})
-  useAnnouncementStore().announcements = [{ id: 1, title: 'Notice', content: 'Details', notify_mode: 'silent', created_at: '2026-09-30', updated_at: '2026-09-30' }]
+  useAnnouncementStore().announcements = [{ id: 1, title: 'Notice', content: 'Details', notify_mode: 'silent', created_at: '2026-11-24T23:20:39Z', updated_at: '2026-09-30' }]
 })
 afterEach(() => { vi.restoreAllMocks(); document.body.style.overflow = '' })
 
@@ -23,6 +23,7 @@ describe('announcement read confirmation', () => {
     markRead.mockRejectedValue(new Error('offline'))
     const wrapper = mount(AnnouncementBell, { global: { stubs: { Teleport: true, Transition: true, Icon: true } } })
     await wrapper.get('button').trigger('click')
+    expect(wrapper.get('time').attributes('title')).toBe('2026-11-25 07:20:39 (UTC+08:00)')
     await wrapper.get('.group.relative').trigger('click')
     await flushPromises()
     const confirm = () => wrapper.findAll('button').find(button => button.text() === 'announcements.markRead')!

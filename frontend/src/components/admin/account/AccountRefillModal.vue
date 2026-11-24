@@ -200,7 +200,7 @@
             <label class="block"><span class="input-label">{{ t('accountRefill.lowBalanceThreshold') }}</span><input v-model.number="form.notifications.low_balance_threshold" type="number" min="0" max="10000000" step="0.01" class="input" data-testid="refill-balance-threshold" /></label>
             <p class="input-hint">{{ t('accountRefill.lowBalanceHint') }}</p>
             <button v-admin-write type="button" class="btn btn-secondary" data-testid="refill-notification-test" :disabled="busy || dirty || conflict || !(form.notifications.channel === 'qq' ? view.qq_secret_configured : view.webhook_configured)" @click="testNotification">{{ t('accountRefill.testNotification') }}</button>
-            <div v-if="view.notification_status?.at" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" role="status"><p>{{ view.notification_status.message }}</p><p class="mt-1 text-xs text-gray-500">{{ date(view.notification_status.at) }}</p></div>
+            <div v-if="view.notification_status?.at" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" role="status"><p>{{ view.notification_status.message }}</p><p class="mt-1 text-xs text-gray-500">{{ formatNotificationTime(view.notification_status.at) }}</p></div>
           </div>
         </fieldset>
       </form>
@@ -359,6 +359,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { formatNotificationTime } from '@/utils/beijingTime'
 import { formatSupplierTime } from '@/utils/supplierTime'
 import { getCodexFingerprintModeOptions } from '@/utils/codexFingerprintMode'
 import BaseDialog from '@/components/common/BaseDialog.vue'

@@ -2263,7 +2263,7 @@ func contentModerationEmailSourceID(log *ContentModerationLog) string {
 
 func contentModerationEmailVariables(log *ContentModerationLog, cfg *ContentModerationConfig) map[string]string {
 	variables := map[string]string{
-		"triggered_at":        time.Now().UTC().Format(time.RFC3339),
+		"triggered_at":        contentModerationNotificationTime(log),
 		"group_name":          "-",
 		"moderation_category": "-",
 		"moderation_score":    "0.000",
@@ -2271,9 +2271,6 @@ func contentModerationEmailVariables(log *ContentModerationLog, cfg *ContentMode
 		"ban_threshold":       "0",
 	}
 	if log != nil {
-		if !log.CreatedAt.IsZero() {
-			variables["triggered_at"] = log.CreatedAt.UTC().Format(time.RFC3339)
-		}
 		if strings.TrimSpace(log.GroupName) != "" {
 			variables["group_name"] = strings.TrimSpace(log.GroupName)
 		}
@@ -3353,7 +3350,7 @@ func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log
 	}
 	if s.emailService.notificationEmailService != nil {
 		variables := map[string]string{
-			"triggered_at":     log.CreatedAt.UTC().Format(time.RFC3339),
+			"triggered_at":     contentModerationNotificationTime(log),
 			"model":            defaultContentModerationString(log.Model, "-"),
 			"group_name":       defaultContentModerationString(log.GroupName, "-"),
 			"upstream_message": defaultContentModerationString(log.Error, "-"),

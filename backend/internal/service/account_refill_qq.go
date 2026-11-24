@@ -209,7 +209,7 @@ func (s *AccountRefillService) TestNotification(ctx context.Context, revision in
 		if err := saveRefillState(&state, save); err != nil {
 			return err
 		}
-		s.sendRefillNotification(ctx, &state, "King 补号通知测试\n不会触发购买、导入或删除账号")
+		s.sendRefillNotification(ctx, &state, "King 补号通知测试\n不会触发购买、导入或删除账号\n北京时间："+formatNotificationTime(state.LastNotificationTest))
 		return saveRefillState(&state, save)
 	})
 }

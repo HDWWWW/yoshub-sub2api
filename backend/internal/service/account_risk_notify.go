@@ -74,6 +74,19 @@ func riskNotificationName(name string) string {
 	return string(runes)
 }
 
+// Older queued probe events carry the cooldown deadline in their reason text.
+func riskNotificationReason(e AccountRiskEvent) string {
+	const marker = "，凭据刷新冷却至 "
+	if e.Kind == accountRiskProbe401 && e.Action == "cooldown" {
+		if prefix, stamp, found := strings.Cut(e.Reason, marker); found {
+			if deadline, err := time.Parse(time.RFC3339, stamp); err == nil {
+				return prefix + marker + formatNotificationTime(deadline)
+			}
+		}
+	}
+	return e.Reason
+}
+
 func (s *AccountRiskService) wakeNotifications() {
 	select {
 	case s.notificationWake <- struct{}{}:
@@ -172,7 +185,7 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 	case "pause":
 		action = "已暂停此账号调度，消息复测通过后自动恢复，现有请求继续完成。"
 	}
-	content := fmt.Sprintf("SUB2API 风控检测告警\n分组：#%d %s\n账号：#%d %s\n时间：%s\n原因：%s\n处理：%s", groupID, groupName, event.AccountID, event.AccountName, event.At.Format(time.RFC3339), event.Reason, action)
+	content := fmt.Sprintf("SUB2API 风控检测告警\n分组：#%d %s\n账号：#%d %s\n北京时间：%s\n原因：%s\n处理：%s", groupID, groupName, event.AccountID, event.AccountName, formatNotificationTime(event.At), riskNotificationReason(event), action)
 	if event.Occurrences > 1 {
 		content += fmt.Sprintf("\n合并异常次数：%d", event.Occurrences)
 	}

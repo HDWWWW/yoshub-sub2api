@@ -49,7 +49,7 @@ func buildContentModerationViolationEmailBody(siteName string, log *ContentModer
 </body>
 </html>`,
 		html.EscapeString(userName),
-		html.EscapeString(time.Now().Format("2006-01-02 15:04:05")),
+		html.EscapeString(contentModerationNotificationTime(log)),
 		html.EscapeString(defaultContentModerationString(log.GroupName, "-")),
 		html.EscapeString(defaultContentModerationString(log.HighestCategory, "-")),
 		log.HighestScore,
@@ -99,7 +99,7 @@ func buildContentModerationAccountDisabledEmailBody(siteName string, log *Conten
 </body>
 </html>`,
 		html.EscapeString(userName),
-		html.EscapeString(time.Now().Format("2006-01-02 15:04:05")),
+		html.EscapeString(contentModerationNotificationTime(log)),
 		html.EscapeString(defaultContentModerationString(log.GroupName, "-")),
 		html.EscapeString(defaultContentModerationString(log.HighestCategory, "-")),
 		log.HighestScore,
@@ -107,6 +107,13 @@ func buildContentModerationAccountDisabledEmailBody(siteName string, log *Conten
 		threshold,
 		html.EscapeString(siteName),
 	)
+}
+
+func contentModerationNotificationTime(log *ContentModerationLog) string {
+	if log != nil && !log.CreatedAt.IsZero() {
+		return formatNotificationTime(log.CreatedAt)
+	}
+	return formatNotificationTime(time.Now())
 }
 
 func defaultContentModerationString(value string, fallback string) string {
@@ -159,7 +166,7 @@ func buildCyberPolicyNoticeEmailBody(siteName string, log *ContentModerationLog)
 		html.EscapeString(userName),
 		policyName,
 		policyCode,
-		html.EscapeString(log.CreatedAt.Format("2006-01-02 15:04:05")),
+		html.EscapeString(contentModerationNotificationTime(log)),
 		html.EscapeString(defaultContentModerationString(log.Model, "-")),
 		html.EscapeString(defaultContentModerationString(log.Error, "-")),
 		reviewAdvice,

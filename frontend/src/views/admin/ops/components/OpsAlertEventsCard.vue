@@ -8,7 +8,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { opsAPI, type AlertEventsQuery } from '@/api/admin/ops'
 import type { AlertEvent } from '../types'
-import { formatDateTime } from '../utils/opsFormatters'
+import { formatNotificationTime } from '@/utils/beijingTime'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -422,7 +422,7 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
                 {{ formatStatusLabel(row.status) }}
               </span>
               <span class="ml-auto text-[11px] text-gray-500 dark:text-gray-400">
-                {{ formatDateTime(row.fired_at || row.created_at) }}
+                {{ formatNotificationTime(row.fired_at || row.created_at) }}
               </span>
             </div>
             <div class="text-xs font-semibold text-gray-900 dark:text-white">{{ row.title || '-' }}</div>
@@ -488,7 +488,7 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
               :title="row.title || ''"
             >
               <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
-                {{ formatDateTime(row.fired_at || row.created_at) }}
+                {{ formatNotificationTime(row.fired_at || row.created_at) }}
               </td>
               <td class="whitespace-nowrap px-4 py-3">
                 <div class="flex items-center gap-2">
@@ -617,11 +617,11 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
               <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.alertEvents.detail.firedAt') }}</div>
-              <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ formatDateTime(selected.fired_at || selected.created_at) }}</div>
+              <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ formatNotificationTime(selected.fired_at || selected.created_at) }}</div>
             </div>
             <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
               <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.alertEvents.detail.resolvedAt') }}</div>
-              <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ selected.resolved_at ? formatDateTime(selected.resolved_at) : '-' }}</div>
+              <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ selected.resolved_at ? formatNotificationTime(selected.resolved_at) : '-' }}</div>
             </div>
             <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
               <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.alertEvents.detail.ruleId') }}</div>
@@ -680,7 +680,7 @@ const empty = computed(() => events.value.length === 0 && !loading.value)
               </thead>
               <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
                 <tr v-for="it in history" :key="it.id" class="hover:bg-gray-50 dark:hover:bg-dark-700/50">
-                  <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ formatDateTime(it.fired_at || it.created_at) }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ formatNotificationTime(it.fired_at || it.created_at) }}</td>
                   <td class="px-3 py-2 text-xs">
                     <span class="inline-flex items-center rounded-full px-2 py-1 text-[10px] font-bold ring-1 ring-inset" :class="statusBadgeClass(it.status)">
                       {{ formatStatusLabel(it.status) }}

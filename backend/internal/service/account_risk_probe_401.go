@@ -98,7 +98,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 		blockedUntil = now.Add(oauth401Cooldown(s.cfg))
 		until = &blockedUntil
 		action = "cooldown"
-		reason += fmt.Sprintf("，凭据刷新冷却至 %s", blockedUntil.Format(time.RFC3339))
+		reason += fmt.Sprintf("，凭据刷新冷却至 %s", formatNotificationTime(blockedUntil))
 	}
 	changed, err := scheduling.ApplyProbe401(r.GroupID, source, owner, reason, until)
 	if err != nil {

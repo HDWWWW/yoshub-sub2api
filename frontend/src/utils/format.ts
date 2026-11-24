@@ -4,6 +4,7 @@
  */
 
 import { i18n, getLocale } from '@/i18n'
+import { formatNotificationTime } from './beijingTime'
 
 /**
  * 格式化相对时间
@@ -438,7 +439,7 @@ export function formatRelativeWithDateTime(date: string | Date | null | undefine
   if (!date) return ''
 
   const relativeTime = formatRelativeTime(date)
-  const dateTime = formatDateTime(date)
+  const dateTime = formatNotificationTime(date)
 
   // 如果是 "从未" 或空字符串，只返回相对时间
   if (!dateTime || relativeTime === i18n.global.t('common.time.never')) {

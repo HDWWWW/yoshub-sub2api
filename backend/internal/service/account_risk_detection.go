@@ -352,10 +352,12 @@ func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountR
 	if r == nil {
 		r = &AccountRiskRule{GroupID: groupID, Config: DefaultAccountRiskConfig(), Events: []AccountRiskEvent{}, Observation: AccountRiskObservation{Mode: "disabled", Message: "检测未启用"}}
 	}
-	if len(r.Events) > 50 {
-		r.Events = r.Events[:50]
+	visible := *r
+	visible.Events = slices.Clone(r.Events[:min(len(r.Events), 50)])
+	for i, event := range visible.Events {
+		visible.Events[i].Reason = riskNotificationReason(event)
 	}
-	v := &AccountRiskView{AccountRiskRule: r, WebhookStatus: "unavailable", TestAccounts: []AccountRiskTestAccount{}}
+	v := &AccountRiskView{AccountRiskRule: &visible, WebhookStatus: "unavailable", TestAccounts: []AccountRiskTestAccount{}}
 	accounts, err := s.accounts.ListByGroup(ctx, groupID)
 	if err != nil {
 		return nil, err

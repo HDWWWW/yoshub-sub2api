@@ -237,8 +237,8 @@ func (s *AccountRefillService) notifyRefillTimeoutRetry(ctx context.Context, sta
 	if state.Config.Notifications.Channel == "qq" {
 		state.TimeoutNoticeRetryAt = time.Time{}
 	}
-	content := fmt.Sprintf("Sub2API 补号超时重试提醒\n监测分组：#%d\n健康储备：%d 个\n超时阈值：%d 分钟\n%s\n处理：超时订单不再阻塞自动补号，也不占补号缺口和在途名额，无需等待原单处理。\n处理结果：%s\n旧单仍会核对，可能后续交付并计费。\n时间：%s",
-		state.Config.GroupID, notice.ready, int(refillTimeoutRetryDuration(state.Config)/time.Minute), strings.Join(details, "\n"), result, now.In(refillTimezone).Format("2006-01-02 15:04:05"))
+	content := fmt.Sprintf("Sub2API 补号超时重试提醒\n监测分组：#%d\n健康储备：%d 个\n超时阈值：%d 分钟\n%s\n处理：超时订单不再阻塞自动补号，也不占补号缺口和在途名额，无需等待原单处理。\n处理结果：%s\n旧单仍会核对，可能后续交付并计费。\n北京时间：%s",
+		state.Config.GroupID, notice.ready, int(refillTimeoutRetryDuration(state.Config)/time.Minute), strings.Join(details, "\n"), result, formatNotificationTime(now))
 	state.TimeoutNoticeContent = content
 	if err := persist(); err != nil {
 		return err

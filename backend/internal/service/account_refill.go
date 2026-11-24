@@ -427,7 +427,7 @@ func ImportedAccountExpiryWithGrace(expires *int64, extra map[string]any, minute
 	return &deadline, copyExtra
 }
 
-var refillTimezone = time.FixedZone("Asia/Shanghai", 8*60*60)
+var refillTimezone = beijingLocation
 
 func refillInWindow(c AccountRefillConfig, now time.Time) bool {
 	if !c.WindowEnabled {

@@ -424,8 +424,8 @@ func opsScheduledReportEmailVariables(report *opsScheduledReport, now time.Time)
 	return map[string]string{
 		"report_name":       name,
 		"report_type":       reportType,
-		"report_start_time": start.Format(time.RFC3339),
-		"report_end_time":   end.Format(time.RFC3339),
+		"report_start_time": formatNotificationTime(start),
+		"report_end_time":   formatNotificationTime(end),
 	}
 }
 
@@ -650,7 +650,7 @@ func buildOpsSummaryEmailHTML(title string, start, end time.Time, overview *OpsD
 
 	return fmt.Sprintf(`
 <h2>%s</h2>
-<p><b>Period</b>: %s ~ %s (UTC)</p>
+<p><b>Period</b>: %s ~ %s</p>
 <ul>
   <li><b>Total Requests</b>: %d</li>
   <li><b>Success</b>: %d</li>
@@ -668,8 +668,8 @@ func buildOpsSummaryEmailHTML(title string, start, end time.Time, overview *OpsD
 </ul>
 `,
 		htmlEscape(strings.TrimSpace(title)),
-		htmlEscape(start.UTC().Format(time.RFC3339)),
-		htmlEscape(end.UTC().Format(time.RFC3339)),
+		htmlEscape(formatNotificationTime(start)),
+		htmlEscape(formatNotificationTime(end)),
 		overview.RequestCountTotal,
 		overview.SuccessCount,
 		overview.ErrorCountSLA,
@@ -712,7 +712,7 @@ func buildOpsErrorDigestEmailHTML(title string, start, end time.Time, list *OpsE
 		}
 		rows += fmt.Sprintf(
 			"<tr><td>%s</td><td>%s</td><td>%d</td><td>%s</td></tr>",
-			htmlEscape(item.CreatedAt.UTC().Format(time.RFC3339)),
+			htmlEscape(formatNotificationTime(item.CreatedAt)),
 			htmlEscape(item.Platform),
 			item.StatusCode,
 			htmlEscape(truncateString(item.Message, 180)),
@@ -724,7 +724,7 @@ func buildOpsErrorDigestEmailHTML(title string, start, end time.Time, list *OpsE
 
 	return fmt.Sprintf(`
 <h2>%s</h2>
-<p><b>Period</b>: %s ~ %s (UTC)</p>
+<p><b>Period</b>: %s ~ %s</p>
 <p><b>Total Errors</b>: %d</p>
 <h3>Recent</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
@@ -733,8 +733,8 @@ func buildOpsErrorDigestEmailHTML(title string, start, end time.Time, list *OpsE
 </table>
 `,
 		htmlEscape(strings.TrimSpace(title)),
-		htmlEscape(start.UTC().Format(time.RFC3339)),
-		htmlEscape(end.UTC().Format(time.RFC3339)),
+		htmlEscape(formatNotificationTime(start)),
+		htmlEscape(formatNotificationTime(end)),
 		total,
 		rows,
 	)
@@ -766,7 +766,7 @@ func buildOpsAccountHealthEmailHTML(title string, start, end time.Time, avail *O
 
 	return fmt.Sprintf(`
 <h2>%s</h2>
-<p><b>Period</b>: %s ~ %s (UTC)</p>
+<p><b>Period</b>: %s ~ %s</p>
 <ul>
   <li><b>Total Accounts</b>: %d</li>
   <li><b>Available</b>: %d</li>
@@ -776,8 +776,8 @@ func buildOpsAccountHealthEmailHTML(title string, start, end time.Time, avail *O
 <p>Note: This report currently reflects account availability status only.</p>
 `,
 		htmlEscape(strings.TrimSpace(title)),
-		htmlEscape(start.UTC().Format(time.RFC3339)),
-		htmlEscape(end.UTC().Format(time.RFC3339)),
+		htmlEscape(formatNotificationTime(start)),
+		htmlEscape(formatNotificationTime(end)),
 		total,
 		available,
 		rateLimited,

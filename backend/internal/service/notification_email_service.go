@@ -715,6 +715,12 @@ func renderNotificationEmail(event, subject, htmlBody string, variables map[stri
 	if err := validateNotificationEmailTemplate(event, subject, htmlBody); err != nil {
 		return NotificationEmailPreview{}, err
 	}
+	// Saved copies of the previous report template append a literal UTC label.
+	// Remove only that label next to the period placeholder at render time.
+	if event == NotificationEmailEventOpsScheduledReport {
+		subject = strings.ReplaceAll(subject, "{{report_end_time}} (UTC)", "{{report_end_time}}")
+		htmlBody = strings.ReplaceAll(htmlBody, "{{report_end_time}} (UTC)", "{{report_end_time}}")
+	}
 	renderedSubject, err := renderNotificationEmailString(event, subject, variables, nil, false)
 	if err != nil {
 		return NotificationEmailPreview{}, err
@@ -907,7 +913,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"reset_url":           "https://example.com/reset-password?token=preview",
 			"subscription_group":  "Claude Pro",
 			"subscription_days":   "30",
-			"expiry_time":         "2026-06-18 12:00",
+			"expiry_time":         "2026-06-18 12:00:00 (UTC+08:00)",
 			"days_remaining":      "3",
 			"current_balance":     "12.34",
 			"threshold":           "20.00",
@@ -923,7 +929,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"quota_limit":         "100.00",
 			"quota_remaining":     "20.00",
 			"quota_threshold":     "20%",
-			"triggered_at":        "2026-05-20 12:00:00",
+			"triggered_at":        "2026-05-20 12:00:00 (UTC+08:00)",
 			"group_name":          "默认分组",
 			"moderation_category": "violence",
 			"moderation_score":    "0.982",
@@ -939,8 +945,8 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"alert_description":   "最近 10 分钟错误率超过阈值",
 			"report_name":         "日报",
 			"report_type":         "daily_summary",
-			"report_start_time":   "2026-07-18T01:00:26Z",
-			"report_end_time":     "2026-07-19T01:00:26Z",
+			"report_start_time":   "2026-07-18 09:00:26 (UTC+08:00)",
+			"report_end_time":     "2026-07-19 09:00:26 (UTC+08:00)",
 			"report_html":         "<h2>日报</h2><p>请求量：2,374</p>",
 		}
 		addNotificationEmailOpsSummarySampleVariables(variables)
@@ -955,7 +961,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"reset_url":           "https://example.com/reset-password?token=preview",
 		"subscription_group":  "Claude Pro",
 		"subscription_days":   "30",
-		"expiry_time":         "2026-06-18 12:00",
+		"expiry_time":         "2026-06-18 12:00:00 (UTC+08:00)",
 		"days_remaining":      "3",
 		"current_balance":     "12.34",
 		"threshold":           "20.00",
@@ -971,7 +977,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"quota_limit":         "100.00",
 		"quota_remaining":     "20.00",
 		"quota_threshold":     "20%",
-		"triggered_at":        "2026-05-20 12:00:00",
+		"triggered_at":        "2026-05-20 12:00:00 (UTC+08:00)",
 		"group_name":          "Default group",
 		"moderation_category": "violence",
 		"moderation_score":    "0.982",
@@ -987,8 +993,8 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"alert_description":   "Error rate exceeded threshold in the last 10 minutes.",
 		"report_name":         "Daily summary",
 		"report_type":         "daily_summary",
-		"report_start_time":   "2026-07-18T01:00:26Z",
-		"report_end_time":     "2026-07-19T01:00:26Z",
+		"report_start_time":   "2026-07-18 09:00:26 (UTC+08:00)",
+		"report_end_time":     "2026-07-19 09:00:26 (UTC+08:00)",
 		"report_html":         "<h2>Daily summary</h2><p>Requests: 2,374</p>",
 	}
 	addNotificationEmailOpsSummarySampleVariables(variables)
@@ -1522,7 +1528,7 @@ func notificationEmailOpsScheduledReportTemplate(locale string) string {
       <table class="meta" role="presentation">
         <tr><td class="meta-label">报表</td><td>{{report_name}}</td></tr>
         <tr><td class="meta-label">类型</td><td>{{report_type}}</td></tr>
-        <tr><td class="meta-label">统计周期</td><td>{{report_start_time}} 至 {{report_end_time}} (UTC)</td></tr>
+        <tr><td class="meta-label">统计周期</td><td>{{report_start_time}} 至 {{report_end_time}}</td></tr>
       </table>
 
       <div style="display: {{report_summary_display}};">
@@ -1617,7 +1623,7 @@ func notificationEmailOpsScheduledReportTemplate(locale string) string {
       <table class="meta" role="presentation">
         <tr><td class="meta-label">Report</td><td>{{report_name}}</td></tr>
         <tr><td class="meta-label">Type</td><td>{{report_type}}</td></tr>
-        <tr><td class="meta-label">Reporting period</td><td>{{report_start_time}} to {{report_end_time}} (UTC)</td></tr>
+        <tr><td class="meta-label">Reporting period</td><td>{{report_start_time}} to {{report_end_time}}</td></tr>
       </table>
 
       <div style="display: {{report_summary_display}};">

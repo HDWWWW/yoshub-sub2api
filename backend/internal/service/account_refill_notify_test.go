@@ -35,6 +35,7 @@ func TestRefillNeededNotificationWithAutomationOffIsDurableAndNeverOrders(t *tes
 	require.Len(t, n.messages, 1)
 	require.Contains(t, n.messages[0], "自动补号已关闭，未自动补号")
 	require.Contains(t, n.messages[0], "监测分组：#2")
+	require.Regexp(t, `北京时间：\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \(UTC\+08:00\)`, n.messages[0])
 	require.Contains(t, n.messages[0], "健康储备不足")
 	require.Contains(t, n.messages[0], "当前待补：1 个")
 	require.NotContains(t, n.messages[0], "开始补号")
