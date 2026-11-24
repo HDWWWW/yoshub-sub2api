@@ -26,6 +26,7 @@ func TestSmartWSRateLimitRecoveryRequiresUnacceptedRequest(t *testing.T) {
 			usage  int
 		}{
 			{"rejected", []string{smartWSRateLimitFixture}, true, 0},
+			{"slow_down_code_only", []string{`{"type":"error","error":{"code":"slow_down","message":"temporarily overloaded"}}`}, true, 0},
 			{"control_then_rejected", []string{`{"type":"codex.rate_limits","rate_limits":{}}`, smartWSRateLimitFixture}, true, 0},
 			{"keepalive_then_rejected", []string{`{"type":"keepalive"}`, smartWSRateLimitFixture}, true, 0},
 			{"keepalive_with_usage_then_rejected", []string{`{"type":"keepalive","usage":{"input_tokens":0,"output_tokens":0}}`, smartWSRateLimitFixture}, false, 0},
@@ -67,6 +68,13 @@ func TestSmartWSRateLimitRecoveryRequiresUnacceptedRequest(t *testing.T) {
 				if tc.usage > 0 {
 					require.NotNil(t, result)
 					require.Equal(t, tc.usage, result.Usage.InputTokens)
+					if stream {
+						require.Equal(t, http.StatusOK, rec.Code)
+						require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+						data := strings.TrimPrefix(strings.TrimSpace(rec.Body.String()), "event: response.failed\ndata: ")
+						require.Equal(t, "response.failed", gjson.Get(data, "type").Str)
+						require.EqualValues(t, tc.usage, gjson.Get(data, "response.usage.input_tokens").Int())
+					}
 				}
 				if tc.retry {
 					require.NotContains(t, rec.Body.String(), `"type":"error"`)

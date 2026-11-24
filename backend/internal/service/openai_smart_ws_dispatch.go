@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/smartws"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -98,10 +99,10 @@ const smartWSHTTPFailureKey = "openai_smart_ws_http_failure"
 const smartWSHTTPPartialKey = "openai_smart_ws_http_partial"
 
 type smartWSHTTPFailure struct {
-	payload, tail, request []byte
-	headers                http.Header
-	started                time.Time
-	httpFallback           bool
+	payload, tail, request, wire []byte
+	headers                      http.Header
+	started                      time.Time
+	httpFallback                 bool
 }
 
 func smartWSResponseID(payload []byte) string {
@@ -155,11 +156,46 @@ func readSmartWSFailedTail(ctx context.Context, lease *openAIWSConnLease, first 
 	return lastError
 }
 
+// Downstream relays decide whether to replay at the first error. The pool has
+// already checked ownership of tail. Prefer a billable terminal from this turn
+// and keep the original failure separately for side effects and accounting.
+func smartWSBillableFailureFrame(first, tail []byte, responseID, model string, createdAt int64) []byte {
+	if isOpenAIContentPolicyRejection(first) || gjson.GetBytes(first, "type").Str != "error" {
+		return first
+	}
+	if gjson.GetBytes(tail, "type").Str == "response.failed" {
+		if usage, ok := extractOpenAIUsageFromJSONBytesOrdered(tail, true); ok && openAIUsageHasTokens(&usage) && gjson.GetBytes(tail, "response.usage").IsObject() {
+			return tail
+		}
+	}
+	// Some providers report usage on the bare error itself. Responses clients
+	// consume response.usage on a failed terminal. Keep ordinary 4xx unchanged.
+	status := openAIHTTPWSEventErrorStatus(first)
+	usage, ok := extractOpenAIUsageFromJSONBytes(first)
+	if (status != http.StatusTooManyRequests && status < 500) || !ok || !openAIUsageHasTokens(&usage) {
+		return first
+	}
+	u := gjson.GetBytes(first, "usage")
+	if !u.IsObject() {
+		u = gjson.GetBytes(first, "response.usage")
+	}
+	if id := smartWSResponseID(first); id != "" {
+		responseID = id
+	}
+	if !u.IsObject() {
+		return first
+	}
+	frame := buildOpenAIResponseFailedPayload(responseID, model, createdAt, first, "")
+	frame, _ = sjson.SetRawBytes(frame, "response.usage", []byte(u.Raw))
+	frame, _ = sjson.SetBytes(frame, "response.error.status_code", status)
+	return frame
+}
+
 // Capture at the adapter boundary: buffered and streaming converters can
 // return before accounting, but must not lose an observed failure's usage.
-func rememberSmartWSHTTPFailure(c *gin.Context, headers http.Header, request, payload, tail []byte, started time.Time) {
+func rememberSmartWSHTTPFailure(c *gin.Context, headers http.Header, request, payload, tail, wire []byte, started time.Time) {
 	c.Set(smartWSHTTPFailureKey, &smartWSHTTPFailure{payload: append([]byte(nil), payload...),
-		tail: append([]byte(nil), tail...), request: request, headers: headers.Clone(), started: started})
+		tail: append([]byte(nil), tail...), request: request, headers: headers.Clone(), started: started, wire: wire})
 }
 
 // Keep observed usage at the transport boundary, including events a formatter
@@ -297,11 +333,12 @@ func (s *OpenAIGatewayService) finalizeSmartWSHTTPFailure(c *gin.Context, accoun
 		return result, err
 	}
 	if !c.Writer.Written() {
-		return result, s.writeSmartWSHTTPError(c, account, response, failure.payload, gjson.GetBytes(failure.request, "model").String())
+		return result, s.writeSmartWSHTTPError(c, account, response, failure.wire, gjson.GetBytes(failure.request, "model").String())
 	}
 	// Existing formatters own the wire format. This branch covers an early
 	// failure after metadata/keepalive but before a formatter emitted the error.
-	payload := failure.payload
+	payload := s.redactAgentIdentitySensitiveBody(c.Request.Context(), account, failure.wire)
+	payload = smartWSClientFrame(c, account, payload)
 	if strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/chat/completions") {
 		if nested := gjson.GetBytes(payload, "response.error"); nested.IsObject() {
 			payload = []byte(`{"error":` + nested.Raw + `}`)
@@ -637,7 +674,18 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 	// Keep the compact policy writer first; otherwise use the protocol that
 	// is already on the wire, not the upstream response's content type.
 	if !isPolicy || !writeOpenAICompactSSEBridge(c, downstreamStatus, clientPayload) {
-		if stopSmartWSKeepaliveAndCheckSSE(c) {
+		sse := stopSmartWSKeepaliveAndCheckSSE(c)
+		// A caller requesting streamed Responses needs the billable terminal even
+		// before its first byte. An HTTP 503 would bypass its SSE usage parser.
+		if !sse && !c.Writer.Written() && !isPolicy && (resp.StatusCode == 429 || resp.StatusCode >= 500) &&
+			openAIUsageHasTokens(&usage) && strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses") {
+			v, _ := c.Get(smartWSHTTPFailureKey)
+			if f, ok := v.(*smartWSHTTPFailure); ok && f != nil && !f.httpFallback && gjson.GetBytes(f.request, "stream").Bool() {
+				setSSEHeaders(c)
+				sse = true
+			}
+		}
+		if sse {
 			writeSmartWSCommittedSSEError(c, downstreamStatus, clientPayload)
 		} else {
 			c.Data(downstreamStatus, contentType, clientPayload)

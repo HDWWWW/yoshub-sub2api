@@ -164,7 +164,7 @@ func smartWSIsExplicitTemporaryRejection(payload []byte) bool {
 	}
 	for _, path := range []string{"error.code", "response.error.code"} {
 		switch gjson.GetBytes(payload, path).String() {
-		case "server_is_overloaded", "service_unavailable", "service_unavailable_error":
+		case "server_is_overloaded", "slow_down", "service_unavailable", "service_unavailable_error":
 			return true
 		}
 	}

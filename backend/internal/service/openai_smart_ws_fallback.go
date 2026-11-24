@@ -313,7 +313,7 @@ func (b *smartWSFallbackBody) observePayload(payload []byte) {
 }
 
 func (b *smartWSFallbackBody) rememberFailure(payload, tail []byte) {
-	rememberSmartWSHTTPFailure(b.c, b.headers, b.request, payload, tail, b.observation.start)
+	rememberSmartWSHTTPFailure(b.c, b.headers, b.request, payload, tail, payload, b.observation.start)
 	v, _ := b.c.Get(smartWSHTTPFailureKey)
 	if failure, ok := v.(*smartWSHTTPFailure); ok {
 		failure.httpFallback = true

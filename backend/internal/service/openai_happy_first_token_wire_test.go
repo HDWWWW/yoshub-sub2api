@@ -267,22 +267,23 @@ func TestHappyFirstTokenSmartWSWirePayloads(t *testing.T) {
 					require.Len(t, events, 1)
 					err := events[0]
 					t.Logf("notification=%t; WS create=1; terminal=%s", on, err.Raw)
-					// SmartWS retains a same-turn failed tail for accounting; the
-					// streaming formatter receives the first (non-policy) failure.
-					if pass && err.Get("type").Str == "response.failed" && tc.name != "failed" {
-						// Passthrough normalizes a bare error after visible output
-						// to a terminal frame for the current response.
+					// Both modes must expose the authoritative same-turn usage before
+					// downstream consumers decide whether the operation can be retried.
+					if tc.name == "bare_then_failed" || tc.name == "failed" {
+						expected, deleteErr := sjson.Delete(failed, "trace")
+						require.NoError(t, deleteErr)
+						require.JSONEq(t, expected, err.Raw)
+					} else {
+						require.Equal(t, "response.failed", err.Get("type").Str)
 						require.Equal(t, "resp_parity", err.Get("response.id").Str)
+						require.EqualValues(t, 17, err.Get("response.created_at").Int())
+						require.EqualValues(t, 9, err.Get("response.usage.input_tokens").Int())
 						message := gjson.Get(tc.tail[0], "error.message").Str
 						if message == "" {
 							message = gjson.Get(tc.tail[0], "message").Str
 						}
 						require.Equal(t, message, err.Get("response.error.message").Str)
 						require.Equal(t, "server_error", err.Get("response.error.code").Str)
-					} else {
-						expected, deleteErr := sjson.Delete(tc.tail[0], "trace")
-						require.NoError(t, deleteErr)
-						require.JSONEq(t, expected, err.Raw)
 					}
 					require.False(t, err.Get("trace").Exists())
 					if on {

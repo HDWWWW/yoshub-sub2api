@@ -50,6 +50,10 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 		frameLimit = s.cfg.Gateway.OpenAIWS.MaxUpstreamFrameBytes
 	}
 	var response *http.Response
+	// Pool observers run on the serial reader. A synthesized terminal must use
+	// the identity already delivered in response.created, if present.
+	var createdID, createdModel string
+	var createdAt int64
 	readTimeout := time.Duration(config.DefaultSmartWSReadTimeoutSeconds) * time.Second
 	if s.cfg != nil && s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds > 0 {
 		readTimeout = time.Duration(s.cfg.Gateway.OpenAIWS.SmartWSReadTimeoutSeconds) * time.Second
@@ -79,8 +83,9 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 				dispatch.replayUnsafe.Store(true)
 			}
 			first = dispatch.failurePayload(first)
-			rememberSmartWSHTTPFailure(c, response.Header, raw, first, tail, observation.start)
-			return first
+			wire := smartWSBillableFailureFrame(first, tail, createdID, createdModel, createdAt)
+			rememberSmartWSHTTPFailure(c, response.Header, raw, first, tail, wire, observation.start)
+			return wire
 		},
 		OnDispatch: func() {
 			observation.dispatched = true
@@ -103,6 +108,11 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 			dispatch.observe(c, payload)
 			observation.event(payload)
 			typ := gjson.GetBytes(payload, "type").String()
+			if typ == "response.created" {
+				createdID = smartWSResponseID(payload)
+				createdModel = gjson.GetBytes(payload, "response.model").Str
+				createdAt = gjson.GetBytes(payload, "response.created_at").Int()
+			}
 			if (typ == "error" || typ == "response.failed") && alert401 != nil && explicitStream401(payload) {
 				alert401()
 			}
