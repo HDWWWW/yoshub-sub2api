@@ -725,10 +725,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		}
 		auth401 := (r.Config.Probe401Enabled || r.Config.Notify401Enabled) && result.UpstreamStatus == http.StatusUnauthorized && result.auth401 != nil && job.pending.ExpiresAt.After(now)
 		if auth401 {
-			at := result.auth401.receivedAt
-			if at.IsZero() {
-				at = now
-			}
+			at := result.auth401.observedAt(now)
 			reclaimed, err := s.risk401Reclaimed(ctx, &job.account, result.auth401.ownerID, at)
 			if err != nil {
 				return err

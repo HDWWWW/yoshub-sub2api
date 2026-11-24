@@ -81,6 +81,29 @@ func TestAccountRiskSupplierReclaimProbe401(t *testing.T) {
 	}
 }
 
+func TestAccountRiskSupplierReclaimQueuedProbeKeepsReceiptTime(t *testing.T) {
+	for _, stop := range []bool{false, true} {
+		s, store, accounts, _, now := riskHarness()
+		r := store.state.Rules[7]
+		r.Config.Probe401Enabled, r.Config.Notify401Enabled = stop, true
+		job := riskDueJob(t, s, accounts, now)
+		cutoff := now.Truncate(time.Second).Add(310 * time.Second)
+		accounts.pool[0].Extra = riskLeaseExtra(cutoff)
+		e := readRiskProbe401(&job.account, r.Config.Model, strings.NewReader(`{"detail":"Unauthorized"}`))
+		require.NotNil(t, e)
+		e.receivedAt = cutoff.Add(-time.Nanosecond)
+		ctx := context.Background()
+		require.NoError(t, s.finishProbe(ctx, job, AccountRiskProbeResult{UpstreamStatus: 401, auth401: e}, errors.New("rejected"), cutoff))
+		require.Len(t, r.Events, 1)
+		require.Equal(t, e.receivedAt, r.Events[0].At)
+		notifier := &riskNoticeStub{}
+		s.notifier = notifier
+		require.NoError(t, s.deliverNotification(ctx, cutoff.Add(time.Minute)))
+		require.Len(t, notifier.messages, 1)
+		require.True(t, accounts.pool[0].Schedulable)
+	}
+}
+
 type riskOutsideGroup struct{ *riskTestAccounts }
 
 func (r riskOutsideGroup) ListByGroup(ctx context.Context, id int64) ([]Account, error) {

@@ -23,6 +23,13 @@ type riskProbe401Evidence struct {
 	failure    credential401Failure
 }
 
+func (e *riskProbe401Evidence) observedAt(fallback time.Time) time.Time {
+	if !e.receivedAt.IsZero() {
+		return e.receivedAt
+	}
+	return fallback
+}
+
 func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe401Evidence {
 	if owner == nil || owner.Platform != PlatformOpenAI || reader == nil || !owner.ShouldHandleErrorCode(http.StatusUnauthorized) || (owner.IsPoolMode() && !owner.IsCustomErrorCodesEnabled()) {
 		return nil
@@ -49,7 +56,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 	if evidence.failure == "" || !r.Config.Probe401Enabled {
 		r.Observation.LastProbeResult = "自动风控探测收到上游 HTTP 401"
 		if r.Config.Notify401Enabled {
-			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, now, accountRiskProbe401, "notify_only", r.Observation.LastProbeResult)
+			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, "notify_only", r.Observation.LastProbeResult)
 		}
 		return nil, time.Time{}, nil
 	}
@@ -57,7 +64,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 	alertStale := func() {
 		r.Observation.LastProbeResult = stale
 		if r.Config.Notify401Enabled {
-			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, now, accountRiskProbe401, "notify_only", stale)
+			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, "notify_only", stale)
 		}
 	}
 	source, err := s.probeAccount(ctx, job, now)
@@ -115,7 +122,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 			}
 		}
 	}
-	appendRisk401Event(r, owner.ID, owner.Name, now, accountRiskProbe401, action, r.Observation.LastProbeResult)
+	appendRisk401Event(r, owner.ID, owner.Name, evidence.observedAt(now), accountRiskProbe401, action, r.Observation.LastProbeResult)
 	return owner, blockedUntil, nil
 }
 

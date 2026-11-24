@@ -89,6 +89,9 @@ func (s *AccountRiskService) runProbeWithinLease(ctx context.Context, account *A
 		defer cancel()
 	}
 	result, err := s.probe.RunRiskProbe(ctx, account, config)
+	if e := result.auth401; e != nil && deadline != nil && (e.reclaimAt == nil || deadline.Before(*e.reclaimAt)) {
+		e.reclaimAt = deadline
+	}
 	if errors.Is(context.Cause(ctx), errRiskSupplierReclaimed) {
 		// A 401 received just before reclaim can be queued after the timer fires.
 		if e := result.auth401; e == nil || e.receivedAt.IsZero() || supplierReclaimed(deadline, e.receivedAt) {
