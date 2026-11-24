@@ -193,7 +193,7 @@ func (s *AccountRefillService) runMuzeFallback(ctx context.Context, state *accou
 	if state.Usage[now.In(refillTimezone).Format("2006-01-02")].Count >= c.DailyMaxCount {
 		return blocked("备用补号已达到本日数量上限")
 	}
-	quote, connectionID, err := s.routedQuote(ctx, state, provider, "pro20x", persist)
+	quote, connectionID, err := s.routedQuote(ctx, state, refillRoute{provider: provider, plan: "pro20x"}, persist)
 	if err != nil {
 		return blocked(err.Error())
 	}

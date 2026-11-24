@@ -51,7 +51,7 @@
             </div>
             <div v-if="form.muze_fallback" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="refill-muze-fallback">
               <label class="block sm:max-w-sm"><span class="input-label">{{ t('accountRefill.primarySupplier') }}</span>
-                <select v-model="form.primary_provider" class="input" data-testid="refill-primary-provider">
+                <select v-model="form.primary_provider" class="input" data-testid="refill-primary-provider" @change="clearUnusedRotationProducts">
                   <option value="1208">1208</option><option value="muze">Muze</option>
                 </select>
               </label>
@@ -96,20 +96,43 @@
               <p class="text-sm text-gray-500">{{ t('accountRefill.rotationHint') }}</p>
               <div v-for="(step, index) in form.rotation" :key="index" class="flex flex-wrap items-end gap-3" data-testid="refill-rotation-step">
                 <span class="pb-2 text-sm tabular-nums">{{ index + 1 }}.</span>
-                <label class="min-w-32 flex-1"><span class="input-label">{{ t('accountRefill.rotationProvider') }}</span><select v-model="step.provider" class="input" :data-testid="`refill-rotation-provider-${index}`"><option :value="undefined">{{ t('accountRefill.followPrimary') }}</option><option value="1208">1208</option><option value="muze">Muze</option></select></label>
-                <label class="min-w-32 flex-1"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="step.plan" class="input" :data-testid="`refill-rotation-plan-${index}`"><option value="pro20x">Pro20x</option><option value="pro5x">Pro5x</option></select></label>
+                <label class="min-w-32 flex-1"><span class="input-label">{{ t('accountRefill.rotationProvider') }}</span><select v-model="step.provider" class="input" :data-testid="`refill-rotation-provider-${index}`" @change="clearUnusedRotationProducts"><option :value="undefined">{{ t('accountRefill.followPrimary') }}</option><option value="1208">1208</option><option value="muze">Muze</option></select></label>
+                <label class="min-w-48 flex-1"><span class="input-label">{{ t('accountRefill.plan') }}</span>
+                  <select :value="step.muze_product_id ? `sku:${step.muze_product_id}` : step.plan" class="input" :data-testid="`refill-rotation-plan-${index}`" @change="setRotationPlan(step, ($event.target as HTMLSelectElement).value)">
+                    <template v-if="isMuzeStep(step)">
+                      <optgroup :label="t('accountRefill.rotationAutoTier')">
+                        <option value="pro20x">Pro20x · {{ t('accountRefill.rotationAutoTier') }}</option>
+                        <option value="pro5x">Pro5x · {{ t('accountRefill.rotationAutoTier') }}</option>
+                      </optgroup>
+                      <optgroup :label="t('accountRefill.rotationExactProduct')">
+                        <option v-if="step.muze_product_id && !findMuzeProduct(step.muze_product_id)" :value="`sku:${step.muze_product_id}`">{{ step.muze_product_id }} · {{ t('accountRefill.muzeUnlisted') }}</option>
+                        <option v-for="item in muzeProducts" :key="item.product" :value="`sku:${item.product}`" :disabled="!supportsRotationProduct(item)">{{ item.label || item.product }} · {{ item.blocked_reason || t('accountRefill.rotationAvailable', { count: item.available_now }) }}</option>
+                      </optgroup>
+                    </template>
+                    <template v-else><option value="pro20x">Pro20x</option><option value="pro5x">Pro5x</option></template>
+                  </select>
+                </label>
                 <label class="w-28"><span class="input-label">{{ t('accountRefill.rotationCount') }}</span><input v-model.number="step.count" class="input" type="number" min="1" max="100" step="1" :data-testid="`refill-rotation-count-${index}`" /></label>
                 <button type="button" class="btn btn-secondary" :disabled="index === 0" :aria-label="t('accountRefill.rotationUp')" @click="moveRotation(index)">↑</button>
                 <button type="button" class="btn btn-secondary" :disabled="form.rotation.length <= 1" @click="form.rotation.splice(index, 1)">{{ t('accountRefill.rotationRemove') }}</button>
               </div>
+              <div v-if="rotationHasMuze" class="space-y-1 text-xs text-gray-500">
+                <p>{{ t('accountRefill.rotationProductHint') }}</p>
+                <div class="flex flex-wrap items-center gap-3">
+                  <span>{{ t('accountRefill.muzeUpdated') }} {{ date(view.muze?.checked_at) }}</span>
+                  <button type="button" class="text-primary-600 underline" :disabled="catalogBusy || busy || !view.muze?.token_configured" data-testid="refill-rotation-products-refresh" @click="refreshMuzeCatalog">{{ t('accountRefill.muzeRefresh') }}</button>
+                  <span v-if="catalogError" role="alert" class="text-amber-700">{{ catalogError }}</span>
+                </div>
+              </div>
               <button type="button" class="btn btn-secondary" data-testid="refill-rotation-add" :disabled="form.rotation.length >= 20" @click="form.rotation.push({ plan: 'pro5x', count: 1 })">{{ t('accountRefill.rotationAdd') }}</button>
               <p class="text-sm font-medium" data-testid="refill-rotation-preview">{{ rotationPreview }} → {{ t('accountRefill.rotationRepeat') }}</p>
-              <p v-if="view.config.rotation_enabled" class="text-sm text-gray-500">{{ t('accountRefill.rotationNext') }}: {{ providerLabel(view.next_provider || view.config.primary_provider) }} · {{ view.next_plan }} · {{ t('accountRefill.rotationPosition', { position: view.rotation_cursor + 1 }) }}</p>
+              <p v-if="view.config.rotation_enabled" class="text-sm text-gray-500">{{ t('accountRefill.rotationNext') }}: {{ providerLabel(view.next_provider || view.config.primary_provider) }} · {{ rotationPlanLabel(view.next_plan, view.next_muze_product_id) }} · {{ t('accountRefill.rotationPosition', { position: view.rotation_cursor + 1 }) }}</p>
             </div>
             <div class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" data-testid="refill-primary-quote">
               <template v-if="automaticProvider === 'muze'">
                 <p>Muze · <span v-if="automaticMuzeProduct">{{ automaticMuzeProduct.label || automaticMuzeProduct.product }} · </span>{{ t('accountRefill.muzeAvailable') }}: <strong>{{ number(automaticMuzeProduct?.available_now) }}</strong> {{ t('accountRefill.muzeUnit') }}</p>
                 <p v-if="automaticMuzeProduct" class="mt-1 text-xs">{{ t('accountRefill.muzeStock', { remaining: automaticMuzeProduct.remaining, stock: automaticMuzeProduct.stock }) }}</p>
+                <p v-if="automaticMuzeID && !automaticMuzeProduct" class="mt-2 text-amber-700">{{ automaticMuzeID }} · {{ t('accountRefill.muzeUnlisted') }}</p>
                 <p v-if="automaticMuzeProduct?.blocked_reason" class="mt-2 text-amber-700">{{ automaticMuzeProduct.blocked_reason }}</p>
               </template>
               <template v-else>
@@ -444,7 +467,33 @@ let timer: ReturnType<typeof setInterval> | undefined
 const openAIGroups = computed(() => groups.value.filter(g => g.platform === 'openai' && g.status === 'active'))
 const ruleGroups = computed(() => groups.value.filter(g => g.platform === 'openai'))
 const providerLabel = (value?: string) => value === 'muze' ? 'Muze' : '1208'
-const rotationPreview = computed(() => form.value?.rotation?.map(step => `${providerLabel(step.provider || form.value?.primary_provider)} · ${step.plan === 'pro20x' ? 'Pro20x' : 'Pro5x'} × ${step.count}`).join(' → '))
+type RotationStep = RefillConfig['rotation'][number]
+const isMuzeStep = (step: RotationStep) => (step.provider || form.value?.primary_provider) === 'muze'
+const rotationHasMuze = computed(() => !!form.value?.rotation_enabled && form.value.rotation?.some(isMuzeStep))
+const findMuzeProduct = (id: string) => muzeProducts.value.find(item => item.product === id)
+const supportsRotationProduct = (item: MuzeProduct) => ['pro5x', 'pro20x'].includes(item.plan) && ['standard', 'studio'].includes(item.mode)
+function clearUnusedRotationProducts() {
+  for (const step of form.value?.rotation || []) {
+    if (!isMuzeStep(step)) delete step.muze_product_id
+  }
+}
+function setRotationPlan(step: RotationStep, value: string) {
+  if (value.startsWith('sku:')) {
+    const item = findMuzeProduct(value.slice(4))
+    if (item && supportsRotationProduct(item) && isMuzeStep(step)) {
+      step.plan = item.plan
+      step.muze_product_id = item.product
+    }
+  } else if (value === 'pro5x' || value === 'pro20x') {
+    step.plan = value
+    delete step.muze_product_id
+  }
+}
+function rotationPlanLabel(plan: string, productID?: string) {
+  if (productID) return findMuzeProduct(productID)?.label || productID
+  return plan === 'pro20x' ? 'Pro20x' : 'Pro5x'
+}
+const rotationPreview = computed(() => form.value?.rotation?.map(step => `${providerLabel(step.provider || form.value?.primary_provider)} · ${rotationPlanLabel(step.plan, step.muze_product_id)} × ${step.count}`).join(' → '))
 const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || webhook.value !== '' || qqSecret.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
 const walletItems = computed(() => [{ key: 'balance', value: view.value?.wallet?.balance }, { key: 'held', value: view.value?.wallet?.held }, { key: 'available', value: view.value?.wallet?.available ?? view.value?.catalog?.available }])
 const usageItems = computed(() => {
@@ -455,7 +504,8 @@ const automaticPlan = computed(() => form.value?.rotation_enabled ? (dirty.value
 const automaticProvider = computed(() => form.value?.rotation_enabled
   ? (dirty.value ? form.value.rotation[0]?.provider : view.value?.next_provider) || form.value?.primary_provider
   : form.value?.primary_provider)
-const automaticMuzeProduct = computed(() => preferredMuzeProduct(automaticPlan.value))
+const automaticMuzeID = computed(() => dirty.value ? (form.value?.rotation_enabled ? form.value.rotation[0]?.muze_product_id : undefined) : view.value?.next_muze_product_id)
+const automaticMuzeProduct = computed(() => automaticMuzeID.value ? findMuzeProduct(automaticMuzeID.value) : preferredMuzeProduct(automaticPlan.value))
 const backupMuzeProduct = computed(() => preferredMuzeProduct('pro20x'))
 const muzePurchaseBlocked = computed(() => isMuze.value && (muzeDirty.value || catalogBusy.value || !canBuyMuze(muzeProduct.value)))
 const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === automaticPlan.value && q.enabled))
@@ -651,9 +701,10 @@ async function refreshMuzeCatalog() {
   } catch (e) { if (id === catalogRequest) catalogError.value = message(e) }
   finally { if (id === catalogRequest) catalogBusy.value = false }
 }
-watch([isMuze, selectedGroup, () => view.value?.muze?.token_configured, () => props.show], () => {
+const needsMuzeCatalog = computed(() => isMuze.value || (activeTab.value === 'rules' && rotationHasMuze.value))
+watch([needsMuzeCatalog, selectedGroup, () => view.value?.muze?.token_configured, () => props.show], () => {
   catalogRequest++; catalogBusy.value = false; catalogError.value = ''
-  if (props.show && isMuze.value && selectedGroup.value > 0 && view.value?.muze?.token_configured) void refreshMuzeCatalog()
+  if (props.show && needsMuzeCatalog.value && selectedGroup.value > 0 && view.value?.muze?.token_configured) void refreshMuzeCatalog()
 })
 async function saveMuze() {
   if (busy.value || dirty.value || conflict.value || manualPending.value) return

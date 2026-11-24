@@ -253,9 +253,9 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	}
 	routes := make([]refillRoute, schedule.Quantity)
 	var walletSlots, muzeSlots []int
-	var muzePlans []string
+	var muzeRoutes []refillRoute
 	for i := range routes {
-		route := refillRoute{c.automaticProvider(), schedule.Plan}
+		route := refillRoute{provider: c.automaticProvider(), plan: schedule.Plan}
 		if schedule.Plan == "" {
 			route = refillNextRoute(c, state.RotationCursor+i)
 		}
@@ -265,7 +265,7 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		routes[i] = route
 		if route.provider == refillProviderMuze {
 			muzeSlots = append(muzeSlots, i)
-			muzePlans = append(muzePlans, route.plan)
+			muzeRoutes = append(muzeRoutes, route)
 		} else {
 			walletSlots = append(walletSlots, i)
 		}
@@ -274,7 +274,7 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	var connectionID string
 	var total float64
 	if len(muzeSlots) > 0 {
-		batch, id, err := s.muzePurchaseQuote(ctx, state, muzePlans, false, persist)
+		batch, id, err := s.muzePurchaseQuote(ctx, state, muzeRoutes, persist)
 		if err != nil {
 			return blocked(err.Error())
 		}
@@ -342,7 +342,7 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		if provider == refillProviderMuze {
 			connection = connectionID
 		}
-		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), Provider: provider, MuzeConnectionID: connection, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, DailyBatchID: batchID, Force: true,
+		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), Provider: provider, MuzeProductPinned: routes[i].muzeProductID != "", MuzeConnectionID: connection, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, DailyBatchID: batchID, Force: true,
 			Status: "submitting", Mode: "daily", Reason: "每日定时强制补号", Plan: quote.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ConfigRevision: state.Revision, RotationGeneration: state.RotationGeneration,
 			ReasonDetail:       fmt.Sprintf("北京时间 %s 定时补号，共 %d 个；忽略健康储备、待核对、在途上限和普通冷却。", due.Format("2006-01-02 15:04"), len(quotes)),

@@ -31,9 +31,10 @@ type AccountRefillGroupStore interface {
 }
 
 type AccountRefillRotationStep struct {
-	Provider string `json:"provider,omitempty"` // Empty inherits the group primary.
-	Plan     string `json:"plan"`
-	Count    int    `json:"count"`
+	MuzeProductID string `json:"muze_product_id,omitempty"` // Empty retains automatic tier selection.
+	Provider      string `json:"provider,omitempty"`        // Empty inherits the group primary.
+	Plan          string `json:"plan"`
+	Count         int    `json:"count"`
 }
 
 type AccountRefillConfig struct {
@@ -216,6 +217,7 @@ type AccountRefillJob struct {
 	FallbackForJobID       string                      `json:"fallback_for_job_id,omitempty"`
 	Provider               string                      `json:"provider,omitempty"`
 	MuzeProductID          string                      `json:"muze_product_id,omitempty"`
+	MuzeProductPinned      bool                        `json:"muze_product_pinned,omitempty"` // Preserve an explicit SKU on replacement orders.
 	MuzeStudio             bool                        `json:"muze_studio,omitempty"`
 	MuzeConnectionID       string                      `json:"muze_connection_id,omitempty"`
 	SubmissionStartedAt    *time.Time                  `json:"submission_started_at,omitempty"`
@@ -288,27 +290,28 @@ type AccountRefillAccount struct {
 }
 
 type AccountRefillEvaluation struct {
-	TimeoutRetryJobID    string `json:"timeout_retry_job_id,omitempty"`
-	TimeoutRetryProvider string `json:"timeout_retry_provider,omitempty"`
-	TimeoutRetryPlan     string `json:"timeout_retry_plan,omitempty"`
-	waitingForReview     bool
-	ExpiryTargets        []AccountRefillExpiryTarget `json:"expiry_targets,omitempty"`
-	Error                string                      `json:"error,omitempty"`
-	CheckedAt            time.Time                   `json:"checked_at"`
-	Ready                int                         `json:"ready"`
-	Healthy              int                         `json:"healthy"`
-	Expiring             int                         `json:"expiring"`
-	Pending              int                         `json:"pending"`
-	TimedOutPending      int                         `json:"timed_out_pending"`
-	InUse                int                         `json:"in_use"`
-	Capacity             int                         `json:"capacity"`
-	PendingCapacity      int                         `json:"pending_capacity"`
-	ForecastAccounts     int                         `json:"forecast_accounts"`
-	ForecastCapacity     int                         `json:"forecast_capacity"`
-	ForecastReady        int                         `json:"forecast_ready"`
-	Needed               int                         `json:"needed"`
-	Reason               string                      `json:"reason"`
-	Accounts             []AccountRefillAccount      `json:"accounts"`
+	TimeoutRetryJobID         string `json:"timeout_retry_job_id,omitempty"`
+	TimeoutRetryMuzeProductID string `json:"timeout_retry_muze_product_id,omitempty"`
+	TimeoutRetryProvider      string `json:"timeout_retry_provider,omitempty"`
+	TimeoutRetryPlan          string `json:"timeout_retry_plan,omitempty"`
+	waitingForReview          bool
+	ExpiryTargets             []AccountRefillExpiryTarget `json:"expiry_targets,omitempty"`
+	Error                     string                      `json:"error,omitempty"`
+	CheckedAt                 time.Time                   `json:"checked_at"`
+	Ready                     int                         `json:"ready"`
+	Healthy                   int                         `json:"healthy"`
+	Expiring                  int                         `json:"expiring"`
+	Pending                   int                         `json:"pending"`
+	TimedOutPending           int                         `json:"timed_out_pending"`
+	InUse                     int                         `json:"in_use"`
+	Capacity                  int                         `json:"capacity"`
+	PendingCapacity           int                         `json:"pending_capacity"`
+	ForecastAccounts          int                         `json:"forecast_accounts"`
+	ForecastCapacity          int                         `json:"forecast_capacity"`
+	ForecastReady             int                         `json:"forecast_ready"`
+	Needed                    int                         `json:"needed"`
+	Reason                    string                      `json:"reason"`
+	Accounts                  []AccountRefillAccount      `json:"accounts"`
 }
 
 type accountRefillState struct {

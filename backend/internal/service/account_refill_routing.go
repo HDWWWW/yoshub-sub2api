@@ -82,12 +82,13 @@ func migrateRetiredRefillProvider(raw string, state *accountRefillState) error {
 
 // Reserve in the supplier's native unit. 1208 uses wallet points; Muze uses
 // prepaid units and a concrete destination captured with the order.
-func (s *AccountRefillService) routedQuote(ctx context.Context, state *accountRefillState, provider, plan string, persist func() error) (*RefillQuote, string, error) {
+func (s *AccountRefillService) routedQuote(ctx context.Context, state *accountRefillState, route refillRoute, persist func() error) (*RefillQuote, string, error) {
+	provider, plan := route.provider, route.plan
 	if time.Now().Before(state.providerBackoff(provider)) {
 		return nil, "", invalidManualRefill(refillProviderName(provider) + " 正在退避")
 	}
 	if provider == refillProviderMuze {
-		return s.singleMuzeQuote(ctx, state, plan, false, persist)
+		return s.singleMuzeQuote(ctx, state, route, persist)
 	}
 	q, err := s.manualRefillQuote(ctx, state, plan, persist)
 	return q, "", err
@@ -112,17 +113,19 @@ func supplyUnavailable(message string) error {
 }
 
 type refillSupplyShortage struct {
-	Provider    string    `json:"provider,omitempty"`
-	BackupJobID string    `json:"backup_job_id,omitempty"`
-	Plan        string    `json:"plan"`
-	FirstAt     time.Time `json:"first_at"`
-	LastAt      time.Time `json:"last_at"`
-	Checks      int       `json:"checks"`
+	MuzeProductID string    `json:"muze_product_id,omitempty"`
+	Provider      string    `json:"provider,omitempty"`
+	BackupJobID   string    `json:"backup_job_id,omitempty"`
+	Plan          string    `json:"plan"`
+	FirstAt       time.Time `json:"first_at"`
+	LastAt        time.Time `json:"last_at"`
+	Checks        int       `json:"checks"`
 }
 
-func (s *AccountRefillService) automaticPrimaryQuote(ctx context.Context, state *accountRefillState, primary, plan string, persist func() error) (*RefillQuote, string, error) {
+func (s *AccountRefillService) automaticPrimaryQuote(ctx context.Context, state *accountRefillState, route refillRoute, persist func() error) (*RefillQuote, string, error) {
+	primary, plan := route.provider, route.plan
 	if primary == refillProviderMuze {
-		return s.routedQuote(ctx, state, refillProviderMuze, plan, persist)
+		return s.routedQuote(ctx, state, route, persist)
 	}
 	if state.Catalog == nil {
 		return nil, "", errors.New("缺少 1208 报价")
@@ -162,7 +165,7 @@ func (s *AccountRefillService) automaticPrimaryQuote(ctx context.Context, state 
 
 func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accountRefillState, route refillRoute, now time.Time, persist func() error) (*RefillQuote, string, bool, error) {
 	primary, plan := route.provider, route.plan
-	q, connection, err := s.automaticPrimaryQuote(ctx, state, primary, plan, persist)
+	q, connection, err := s.automaticPrimaryQuote(ctx, state, route, persist)
 	rule := state.Config.MuzeFallback
 	var unavailable *refillSupplyUnavailable
 	shortage := state.MuzeFallback.Shortage
@@ -178,17 +181,18 @@ func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accoun
 		}
 		return q, connection, false, err
 	}
-	if shortage != nil && shortage.Provider == supplier && shortage.Plan == plan && shortage.BackupJobID != "" {
+	sameStep := shortage != nil && shortage.Provider == supplier && shortage.Plan == plan && shortage.MuzeProductID == route.muzeProductID
+	if sameStep && shortage.BackupJobID != "" {
 		delivered := slices.ContainsFunc(state.Jobs, func(j AccountRefillJob) bool {
 			return j.ID == shortage.BackupJobID && j.Status == "imported" && j.AccountID > 0
 		})
 		if !delivered {
 			return nil, "", false, errors.New("本轮缺货已创建备用订单，等待主号商恢复或需求变化")
 		}
-		shortage = nil // A delivered backup covers its slot. Re-evaluate any remaining gap.
+		sameStep = false // A delivered backup covers its slot. Re-evaluate any remaining gap.
 	}
-	if shortage == nil || shortage.Provider != supplier || shortage.Plan != plan {
-		shortage = &refillSupplyShortage{Provider: supplier, Plan: plan, FirstAt: now}
+	if !sameStep {
+		shortage = &refillSupplyShortage{Provider: supplier, Plan: plan, MuzeProductID: route.muzeProductID, FirstAt: now}
 		state.MuzeFallback.Shortage = shortage
 	}
 	if shortage.Checks == 0 || now.Sub(shortage.LastAt) >= time.Duration(state.Config.CheckSeconds)*time.Second {
@@ -203,7 +207,7 @@ func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accoun
 			return nil, "", false, errors.New("等待在途备用订单完成")
 		}
 	}
-	q, connection, err = s.routedQuote(ctx, state, otherRefillProvider(primary), "pro20x", persist)
+	q, connection, err = s.routedQuote(ctx, state, refillRoute{provider: otherRefillProvider(primary), plan: "pro20x"}, persist)
 	return q, connection, true, err
 }
 func (j AccountRefillJob) isBackup() bool { return j.FallbackForJobID != "" || j.SupplyFallback }

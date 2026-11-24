@@ -130,6 +130,7 @@ type AccountRefillView struct {
 	DailyScheduleStatus       AccountRefillDailyScheduleStatus            `json:"daily_schedule_status"`
 	Rules                     []AccountRefillRuleSummary                  `json:"rules"`
 	RotationCursor            int                                         `json:"rotation_cursor"`
+	NextMuzeProductID         string                                      `json:"next_muze_product_id,omitempty"`
 	NextProvider              string                                      `json:"next_provider"`
 	NextPlan                  string                                      `json:"next_plan"`
 	WebhookConfigured         bool                                        `json:"webhook_configured"`
@@ -189,10 +190,11 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	if err != nil {
 		return nil, err
 	}
+	next := nextRefillPurchaseRoute(&state)
 	return &AccountRefillView{DailyScheduleStatuses: state.DailyScheduleStatuses, Muze: state.Muze.view(), DailyScheduleStatus: state.DailyScheduleStatus, WebhookConfigured: state.EncryptedWebhook != "", QQSecretConfigured: state.EncryptedQQSecret != "", NotificationStatus: state.NotificationStatus, Config: state.Config, Revision: state.Revision, TokenConfigured: state.EncryptedToken != "", Key: state.Key, Wallet: state.Wallet, LeaseSyncAt: state.LeaseSyncAt, LeaseSyncMessage: state.LeaseSyncMessage,
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
-		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state), NextProvider: refillPublicProvider(nextRefillPurchaseRoute(&state).provider), WorkdayCalendar: state.WorkdayCalendar.view(),
+		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: next.plan, NextProvider: refillPublicProvider(next.provider), NextMuzeProductID: next.muzeProductID, WorkdayCalendar: state.WorkdayCalendar.view(),
 		MuzeFallbackStatus:  refillMuzeFallbackStatus(&state),
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),
 		ForecastObservation: s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
@@ -619,7 +621,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		reconcileRefillFailureReplacements(&state)
 		route := nextRefillPurchaseRoute(&state)
 		if state.Evaluation.TimeoutRetryJobID != "" {
-			route = refillRoute{state.Evaluation.TimeoutRetryProvider, state.Evaluation.TimeoutRetryPlan}
+			route = refillRoute{provider: state.Evaluation.TimeoutRetryProvider, plan: state.Evaluation.TimeoutRetryPlan, muzeProductID: state.Evaluation.TimeoutRetryMuzeProductID}
 		}
 		primary := route.provider
 		if time.Now().Before(state.providerBackoff(primary)) {
@@ -773,7 +775,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 			return persist()
 		}
-		job := AccountRefillJob{ID: uuid.NewString(), Provider: orderProvider, SupplyFallback: supplyFallback, MuzeConnectionID: connectionID, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+		job := AccountRefillJob{ID: uuid.NewString(), Provider: orderProvider, MuzeProductPinned: !supplyFallback && route.muzeProductID != "", SupplyFallback: supplyFallback, MuzeConnectionID: connectionID, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			RotationGeneration: state.RotationGeneration,
 			Mode:               state.Config.Mode,
 			ReasonDetail:       accountRefillReasonDetail(state.Config, state.Evaluation),

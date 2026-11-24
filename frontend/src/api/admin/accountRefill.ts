@@ -26,7 +26,7 @@ export interface RefillConfig {
   daily_schedule?: { enabled: boolean; time: string; quantity: number; plan?: string; day_mode?: '' | 'china_workday' }
   daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string; day_mode?: '' | 'china_workday' }[] | null
 	rotation_enabled: boolean
-	rotation: { provider?: '' | '1208' | 'muze'; plan: string; count: number }[]
+	rotation: { provider?: '' | '1208' | 'muze'; plan: string; muze_product_id?: string; count: number }[]
   notifications: { channel?: '' | 'wecom' | 'qq'; qq_app_id?: string; qq_target_type?: 'group' | 'c2c'; qq_target_openid?: string; refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
@@ -133,9 +133,10 @@ export interface RefillView {
   muze?: MuzeCatalog
   daily_schedule_status?: { next_at: string; last_at: string; last_quantity: number; last_batch_id?: string; retry_at: string; message: string }
   daily_schedule_statuses?: Record<string, { next_at: string; last_at: string; last_quantity: number; message: string }>
-	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_provider?: string; next_plan: string }[]
+	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_provider?: string; next_plan: string; next_muze_product_id?: string }[]
 	rotation_cursor: number
 	next_provider?: string
+	next_muze_product_id?: string
 	next_plan: string
   webhook_configured: boolean
   qq_secret_configured?: boolean

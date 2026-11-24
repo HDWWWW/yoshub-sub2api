@@ -191,7 +191,7 @@ func (s *AccountRefillService) MuzeCatalog(ctx context.Context) (MuzeRefillView,
 
 // Quote all requested plans against one inventory snapshot, subtracting shared
 // unsubmitted reservations. Resolve the push destination before reserving.
-func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *accountRefillState, plans []string, exact bool, persist func() error) ([]RefillQuote, string, error) {
+func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *accountRefillState, routes []refillRoute, persist func() error) ([]RefillQuote, string, error) {
 	if state.Muze.EncryptedToken == "" {
 		return nil, "", invalidManualRefill("请先配置 Muze API Key")
 	}
@@ -217,13 +217,15 @@ func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *acc
 		return nil, "", err
 	}
 	// Compare vendor supply first so a local hold cannot trigger supplier failover.
-	if _, ok := allocateMuzeProducts(products, plans, exact, newMuzeHolds()); !ok {
-		if exact && len(plans) == 1 {
+	if _, ok := allocateMuzeProducts(products, routes, newMuzeHolds()); !ok {
+		if len(routes) == 1 && routes[0].muzeProductID != "" {
+			id := routes[0].muzeProductID
 			for _, p := range products {
-				if p.Product == plans[0] && p.BlockedReason != "" {
-					return nil, "", supplyUnavailable("Muze " + p.Product + "：" + p.BlockedReason)
+				if p.Product == id && p.BlockedReason != "" {
+					return nil, "", supplyUnavailable("Muze " + id + "：" + p.BlockedReason)
 				}
 			}
+			return nil, "", supplyUnavailable("Muze 指定商品 " + id + " 库存或次数不足，或商品已下架")
 		}
 		return nil, "", supplyUnavailable("Muze 所选套餐库存或次数不足")
 	}
@@ -231,7 +233,7 @@ func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *acc
 	if err != nil {
 		return nil, "", err
 	}
-	quotes, ok := allocateMuzeProducts(products, plans, exact, held)
+	quotes, ok := allocateMuzeProducts(products, routes, held)
 	if !ok {
 		return nil, "", invalidManualRefill("Muze 所选套餐库存或次数不足（含本地预占）")
 	}
@@ -249,8 +251,8 @@ func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *acc
 	return quotes, id, nil
 }
 
-func (s *AccountRefillService) singleMuzeQuote(ctx context.Context, state *accountRefillState, plan string, exact bool, persist func() error) (*RefillQuote, string, error) {
-	quotes, connection, err := s.muzePurchaseQuote(ctx, state, []string{plan}, exact, persist)
+func (s *AccountRefillService) singleMuzeQuote(ctx context.Context, state *accountRefillState, route refillRoute, persist func() error) (*RefillQuote, string, error) {
+	quotes, connection, err := s.muzePurchaseQuote(ctx, state, []refillRoute{route}, persist)
 	if err != nil {
 		return nil, "", err
 	}
@@ -264,35 +266,44 @@ func newMuzeHolds() muzeHolds {
 }
 func (h muzeHolds) add(plan, id string) { h.tier[plan]++; h.sku[id]++ }
 
-// Existing automated rules select a tier; manual orders select an exact listed SKU.
-// SKU stock is independent, but all versions draw from the same tier allowance.
-func allocateMuzeProducts(products []MuzeProduct, plans []string, exact bool, held muzeHolds) ([]RefillQuote, bool) {
-	quotes := make([]RefillQuote, 0, len(plans))
-	for _, requested := range plans {
-		tier := muzeTier(requested)
-		var selected *MuzeProduct
-		for i := range products {
-			p := &products[i]
-			if tier == "" || muzeTier(p.Product) != tier || (exact && p.Product != requested) || p.Closed || p.Expired || p.BlockedReason != "" || p.AvailableNow <= 0 {
+// Reserve exact SKUs first so an automatic tier slot cannot consume the only
+// stock for a later pinned slot in the same daily batch. Return original order.
+func allocateMuzeProducts(products []MuzeProduct, routes []refillRoute, held muzeHolds) ([]RefillQuote, bool) {
+	quotes := make([]RefillQuote, len(routes))
+	for _, pinned := range []bool{true, false} {
+		for i, route := range routes {
+			if (route.muzeProductID != "") != pinned {
 				continue
 			}
-			if p.Remaining <= held.tier[tier] || p.Stock <= held.sku[p.Product] {
-				continue
+			p := selectMuzeProduct(products, route, held)
+			if p == nil {
+				return nil, false
 			}
-			if selected == nil || p.Product == tier {
-				selected = p
-			}
-			if p.Product == tier {
-				break
-			}
+			held.add(route.plan, p.Product)
+			quotes[i] = RefillQuote{Plan: route.plan, Service: "refill", Enabled: true, muzeProductID: p.Product, muzeStudio: p.Mode == "studio"}
 		}
-		if selected == nil {
-			return nil, false
-		}
-		held.add(tier, selected.Product)
-		quotes = append(quotes, RefillQuote{Plan: tier, Service: "refill", Enabled: true, muzeProductID: selected.Product, muzeStudio: selected.Mode == "studio"})
 	}
 	return quotes, true
+}
+
+func selectMuzeProduct(products []MuzeProduct, route refillRoute, held muzeHolds) *MuzeProduct {
+	var first *MuzeProduct
+	for i := range products {
+		p := &products[i]
+		if route.plan == "" || muzeTier(p.Product) != route.plan || (route.muzeProductID != "" && p.Product != route.muzeProductID) {
+			continue
+		}
+		if p.Closed || p.Expired || p.BlockedReason != "" || p.AvailableNow <= 0 || p.Remaining <= held.tier[route.plan] || p.Stock <= held.sku[p.Product] {
+			continue
+		}
+		if p.Product == route.plan || route.muzeProductID != "" {
+			return p
+		}
+		if first == nil {
+			first = p
+		}
+	}
+	return first
 }
 
 func (s *AccountRefillService) muzeReserved(ctx context.Context, state *accountRefillState) (muzeHolds, error) {

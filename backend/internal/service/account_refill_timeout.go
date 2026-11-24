@@ -84,6 +84,7 @@ func applyRefillTimeoutRetry(state *accountRefillState, jobs []AccountRefillJob,
 		state.Evaluation.TimeoutRetryJobID = job.ID
 		state.Evaluation.TimeoutRetryPlan = job.Plan
 		state.Evaluation.TimeoutRetryProvider = job.Provider
+		state.Evaluation.TimeoutRetryMuzeProductID = job.purchaseRoute().muzeProductID
 	}
 }
 

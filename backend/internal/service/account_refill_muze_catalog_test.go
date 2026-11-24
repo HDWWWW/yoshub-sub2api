@@ -34,12 +34,13 @@ func TestMuzeStockPerSKUQuotaPerTier(t *testing.T) {
 	held.add(legacy.Plan, legacy.muzeSKU())
 	products[0].Closed = false
 	products[0].Stock, products[0].AvailableNow = 17, 17
-	plans := slices.Repeat([]string{"pro20x"}, 19)
-	_, ok := allocateMuzeProducts(products, append(slices.Clone(plans), "pro20x"), false, held)
+	tier := refillRoute{plan: "pro20x"}
+	plans := slices.Repeat([]refillRoute{tier}, 19)
+	_, ok := allocateMuzeProducts(products, append(slices.Clone(plans), tier), held)
 	require.False(t, ok, "two SKUs must not double a shared 20-unit quota")
 	held = newMuzeHolds()
 	held.add(legacy.Plan, legacy.muzeSKU())
-	batch, ok := allocateMuzeProducts(products, plans, false, held)
+	batch, ok := allocateMuzeProducts(products, plans, held)
 	require.True(t, ok)
 	require.Len(t, batch, 19)
 	for i, q := range batch {
