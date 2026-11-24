@@ -134,7 +134,14 @@ func TestSmartWS_FirstFailedEventRetainsUsageAndError(t *testing.T) {
 			require.Equal(t, "priority", result.UpstreamResponseServiceTier)
 			require.NotNil(t, result.ReasoningEffort)
 			require.Equal(t, "high", *result.ReasoningEffort)
-			require.JSONEq(t, payload, rec.Body.String())
+			if chat {
+				require.JSONEq(t, payload, rec.Body.String())
+			} else {
+				require.Equal(t, http.StatusOK, rec.Code)
+				require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+				data := strings.TrimPrefix(strings.TrimSpace(rec.Body.String()), "event: response.failed\ndata: ")
+				require.JSONEq(t, payload, data)
+			}
 			require.Zero(t, httpTransport.callCount)
 			var failure *UpstreamFailoverError
 			require.ErrorAs(t, err, &failure)

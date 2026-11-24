@@ -83,7 +83,10 @@ func (s *OpenAIGatewayService) tryIndependentSmartWS(c *gin.Context, req *http.R
 				dispatch.replayUnsafe.Store(true)
 			}
 			first = dispatch.failurePayload(first)
-			wire := smartWSBillableFailureFrame(first, tail, createdID, createdModel, createdAt)
+			wire := first
+			if c.GetBool(smartWSClientResponsesStreamKey) {
+				wire = smartWSBillableFailureFrame(first, tail, createdID, createdModel, createdAt)
+			}
 			rememberSmartWSHTTPFailure(c, response.Header, raw, first, tail, wire, observation.start)
 			return wire
 		},

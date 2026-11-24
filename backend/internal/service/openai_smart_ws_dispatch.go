@@ -93,6 +93,7 @@ func mergeSmartWSCyberPolicyUsage(c *gin.Context, usage *OpenAIUsage) {
 	c.Set(opsCyberPolicyKey, &updated)
 }
 
+const smartWSClientResponsesStreamKey = "openai_smart_ws_client_responses_stream"
 const smartWSDispatchKey = "openai_smart_ws_dispatch"
 const smartWSFailureDeliveredKey = "openai_smart_ws_failure_delivered"
 const smartWSHTTPFailureKey = "openai_smart_ws_http_failure"
@@ -677,10 +678,10 @@ func (s *OpenAIGatewayService) writeSmartWSHTTPError(c *gin.Context, account *Ac
 		sse := stopSmartWSKeepaliveAndCheckSSE(c)
 		// A caller requesting streamed Responses needs the billable terminal even
 		// before its first byte. An HTTP 503 would bypass its SSE usage parser.
-		if !sse && !c.Writer.Written() && !isPolicy && (resp.StatusCode == 429 || resp.StatusCode >= 500) &&
-			openAIUsageHasTokens(&usage) && strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses") {
+		if !sse && !c.Writer.Written() && !isPolicy && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) &&
+			openAIUsageHasTokens(&usage) && c.GetBool(smartWSClientResponsesStreamKey) {
 			v, _ := c.Get(smartWSHTTPFailureKey)
-			if f, ok := v.(*smartWSHTTPFailure); ok && f != nil && !f.httpFallback && gjson.GetBytes(f.request, "stream").Bool() {
+			if f, ok := v.(*smartWSHTTPFailure); ok && f != nil && !f.httpFallback {
 				setSSEHeaders(c)
 				sse = true
 			}

@@ -293,7 +293,14 @@ func testSmartWSHandlerFailureDeliveredOnceAndUsageRecordedOnce(t *testing.T, co
 						}
 						require.EqualValues(t, 1, received.Load(), rec.Body.String())
 						require.Contains(t, rec.Body.String(), `"code":"`+code+`"`)
-						if !started || !stream {
+						if stream && !chat && !isPolicy {
+							require.Equal(t, http.StatusOK, rec.Code)
+							require.Contains(t, rec.Header().Get("Content-Type"), "text/event-stream")
+							require.Equal(t, 1, strings.Count(rec.Body.String(), "local test failure"))
+							for _, field := range []string{`"input_tokens":17`, `"output_tokens":3`} {
+								require.Contains(t, rec.Body.String(), field)
+							}
+						} else if !started || !stream {
 							wantStatus := http.StatusInternalServerError
 							if isPolicy {
 								wantStatus = http.StatusBadRequest

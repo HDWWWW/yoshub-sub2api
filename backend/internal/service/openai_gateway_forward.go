@@ -185,6 +185,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	rememberOpenCodeInboundBody(c, originalBody)
 	requestView := newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
+	if c != nil && c.Request != nil {
+		c.Set(smartWSClientResponsesStreamKey, reqStream && strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/responses"))
+	}
 	originalModel := reqModel
 
 	if account.Platform == PlatformGrok {
