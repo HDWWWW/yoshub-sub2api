@@ -22,16 +22,16 @@ func (s *OpenAIGatewayService) observeAccountRisk429(ctx context.Context, a *Acc
 	if s == nil || s.accountRisk == nil || status != http.StatusTooManyRequests {
 		return false
 	}
-	return s.observeRiskBurst(ctx, a, status, nil, false, uuid.NewString())
+	return s.observeRiskBurst(ctx, a, status, nil, false, uuid.NewString(), time.Now().UTC())
 }
 
-func (s *OpenAIGatewayService) observeRiskBurst(ctx context.Context, a *Account, status int, message []byte, custom bool, token string) bool {
+func (s *OpenAIGatewayService) observeRiskBurst(ctx context.Context, a *Account, status int, message []byte, custom bool, token string, observedAt time.Time) bool {
 	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	var err error
 	for attempt := 0; attempt < 5; attempt++ {
 		var stopped bool
-		stopped, err = s.accountRisk.handleRiskBurst(persist, a, token, time.Now().UTC(), status, message, custom)
+		stopped, err = s.accountRisk.handleRiskBurst(persist, a, token, observedAt, status, message, custom)
 		if stopped {
 			reason := "account_risk_429"
 			if custom {
@@ -64,6 +64,12 @@ func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, to
 func (s *AccountRiskService) handleRiskBurst(ctx context.Context, account *Account, token string, now time.Time, status int, message []byte, custom bool) (bool, error) {
 	if s == nil || s.counter429 == nil || account == nil || account.Platform != PlatformOpenAI {
 		return false, nil
+	}
+	if custom && status == http.StatusUnauthorized {
+		reclaimed, err := s.risk401Reclaimed(ctx, account, 0, now)
+		if err != nil || reclaimed {
+			return false, err
+		}
 	}
 	state, err := s.store.Read(ctx)
 	if err != nil {

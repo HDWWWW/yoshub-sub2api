@@ -53,6 +53,16 @@ func (a *Account) SourceExpiresAt() (*time.Time, string) {
 	return a.ExpiresAt, "local"
 }
 
+// supplierReclaimAt is the deadline shown in the supplier column. A local
+// retention deadline or a pending supplier lookup is not a known reclaim time.
+func (a *Account) supplierReclaimAt() (*time.Time, string) {
+	at, origin := a.SourceExpiresAt()
+	if origin != "supplier_api" && origin != "import" {
+		return nil, origin
+	}
+	return at, origin
+}
+
 // NativeAccountExtra removes only the import extension's private metadata.
 func NativeAccountExtra(extra map[string]any) map[string]any {
 	if extra == nil {

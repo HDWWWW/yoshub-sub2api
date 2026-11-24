@@ -30,9 +30,6 @@ func (s *AccountRiskService) runProbeAttempts(ctx context.Context, job *accountR
 			if err := s.validateProbeReservation(ctx, job); err != nil {
 				return AccountRiskProbeResult{}, err
 			}
-			if _, err := s.probeAccount(ctx, job, time.Now()); err != nil {
-				return AccountRiskProbeResult{}, err
-			}
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		result, err = s.runProbe429Attempts(attemptCtx, job, attempt == 0)
@@ -80,14 +77,16 @@ func (s *AccountRiskService) runProbe429Attempts(ctx context.Context, job *accou
 			if readErr := s.validateProbeReservation(ctx, job); readErr != nil {
 				return result, readErr
 			}
-			if _, readErr := s.probeAccount(ctx, job, time.Now()); readErr != nil {
-				return result, readErr
-			}
 		}
 		if err = ctx.Err(); err != nil {
 			return result, err
 		}
-		result, err = s.probe.RunRiskProbe(ctx, &job.account, job.config)
+		// Recheck after acquiring the slot, including the first wire attempt.
+		account, readErr := s.probeAccount(ctx, job, time.Now())
+		if readErr != nil {
+			return AccountRiskProbeResult{}, readErr
+		}
+		result, err = s.runProbeWithinLease(ctx, account, job.config)
 		if ctx.Err() != nil {
 			return AccountRiskProbeResult{}, ctx.Err()
 		}

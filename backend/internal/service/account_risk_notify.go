@@ -138,6 +138,14 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 			}
 		}
 		if selected != nil {
+			reclaimed, err := s.queued401Reclaimed(claimCtx, selected)
+			if err != nil {
+				return err
+			}
+			if reclaimed {
+				selected.Notification = "cancelled"
+				return nil
+			}
 			selected.Notification, selected.NotificationAt = "sending", &now
 			state.NextNotificationAt = now.Add(3 * time.Second)
 			event = *selected

@@ -133,19 +133,24 @@ func (s *OpenAIGatewayService) customRiskStream(ctx context.Context, a *Account)
 	// Generate the ID lazily so successful streams do not need a UUID.
 	var once sync.Once
 	return func(payload []byte) {
+		observedAt := time.Now().UTC()
 		rules := s.accountRisk.customErrorRules(ctx, a)
 		if len(rules) == 0 {
 			return
 		}
 		status, message := explicitStreamStatus(payload), riskErrorText(payload, true)
+		if status == 0 && openAIStreamCredentialAuthFailure(payload) {
+			status = http.StatusUnauthorized
+		}
 		if !matchesCustomError(rules, status, message) {
 			return
 		}
-		once.Do(func() { s.observeRiskBurst(ctx, a, status, message, true, uuid.NewString()) })
+		once.Do(func() { s.observeRiskBurst(ctx, a, status, message, true, uuid.NewString(), observedAt) })
 	}
 }
 
 func (s *OpenAIGatewayService) observeRiskHandshake(ctx context.Context, a *Account, status int, body []byte) {
+	observedAt := time.Now().UTC()
 	s.observeBusiness401(ctx, a, status, "WebSocket 握手")
 	if s == nil || status < 400 {
 		return
@@ -156,7 +161,7 @@ func (s *OpenAIGatewayService) observeRiskHandshake(ctx context.Context, a *Acco
 	}
 	msg := riskErrorText(body, false)
 	if matchesCustomError(rules, status, msg) {
-		s.observeRiskBurst(ctx, a, status, msg, true, uuid.NewString())
+		s.observeRiskBurst(ctx, a, status, msg, true, uuid.NewString(), observedAt)
 	}
 }
 
@@ -165,6 +170,7 @@ func (s *OpenAIGatewayService) observeRiskHTTP(ctx context.Context, a *Account, 
 		return
 	}
 	status := resp.StatusCode
+	observedAt := time.Now().UTC()
 	s.observeBusiness401(ctx, a, status, "HTTP")
 	rules := s.accountRisk.customErrorRules(ctx, a)
 	if len(rules) == 0 {
@@ -173,7 +179,7 @@ func (s *OpenAIGatewayService) observeRiskHTTP(ctx context.Context, a *Account, 
 	observe := func(body []byte) {
 		msg := riskErrorText(body, false)
 		if matchesCustomError(rules, status, msg) {
-			s.observeRiskBurst(ctx, a, status, msg, true, uuid.NewString())
+			s.observeRiskBurst(ctx, a, status, msg, true, uuid.NewString(), observedAt)
 		}
 	}
 	if resp.Body == nil {

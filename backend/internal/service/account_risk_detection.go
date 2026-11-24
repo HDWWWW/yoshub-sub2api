@@ -254,6 +254,7 @@ type AccountRiskStore interface {
 }
 
 type accountRiskAccounts interface {
+	GetByIDs(context.Context, []int64) ([]*Account, error)
 	ListByGroup(context.Context, int64) ([]Account, error)
 	GetByID(context.Context, int64) (*Account, error)
 }
@@ -442,10 +443,25 @@ func (s *AccountRiskService) candidates(ctx context.Context, groupID int64, now 
 	if len(accounts) > 2000 {
 		return nil, errors.New("account sample exceeds limit")
 	}
+	owners, err := s.probeCredentialOwners(ctx, accounts)
+	if err != nil {
+		return nil, err
+	}
 	pool := make([]Account, 0, len(accounts))
-	for _, a := range accounts {
-		if a.Platform == PlatformOpenAI && a.IsSchedulable() && !EvaluateAccountSchedulingThreshold(&a, nil, now).ShouldPause {
-			pool = append(pool, a)
+	for i := range accounts {
+		a := &accounts[i]
+		if a.Platform != PlatformOpenAI || !a.isSchedulableAt(now) || EvaluateAccountSchedulingThreshold(a, nil, now).ShouldPause {
+			continue
+		}
+		var owner *Account
+		if a.IsShadow() {
+			owner = owners[*a.ParentAccountID]
+			if owner == nil {
+				continue
+			}
+		}
+		if !supplierReclaimed(riskProbeDeadline(a, owner), now) {
+			pool = append(pool, *a)
 		}
 	}
 	pool = accountsWithExpiryPriority(pool, s.cfg, now)
@@ -664,9 +680,6 @@ func (s *AccountRiskService) runProbe(parent context.Context, job *accountRiskJo
 	// Check the persisted rule and current membership immediately before dispatch.
 	err := s.validateProbeReservation(ctx, job)
 	if err == nil {
-		_, err = s.probeAccount(ctx, job, time.Now())
-	}
-	if err == nil {
 		result, err = s.runProbeAttempts(ctx, job)
 	}
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
@@ -706,7 +719,25 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		if isScheduledRiskProbe(job.pending.Kind) && !r.Config.ProbeEnabled {
 			return nil
 		}
+		if errors.Is(probeErr, errRiskSupplierReclaimed) {
+			o.LastProbeResult = errRiskSupplierReclaimed.Error()
+			return nil
+		}
 		auth401 := (r.Config.Probe401Enabled || r.Config.Notify401Enabled) && result.UpstreamStatus == http.StatusUnauthorized && result.auth401 != nil && job.pending.ExpiresAt.After(now)
+		if auth401 {
+			at := result.auth401.receivedAt
+			if at.IsZero() {
+				at = now
+			}
+			reclaimed, err := s.risk401Reclaimed(ctx, &job.account, result.auth401.ownerID, at)
+			if err != nil {
+				return err
+			}
+			if reclaimed || supplierReclaimed(result.auth401.reclaimAt, at) {
+				o.LastProbeResult = errRiskSupplierReclaimed.Error()
+				return nil
+			}
+		}
 		if job.pauseToken != "" {
 			if !auth401 {
 				return s.finishCapacityPause(ctx, state, stop, job, result, probeErr, now)

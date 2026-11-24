@@ -147,6 +147,20 @@ func (a *riskTestAccounts) GetByID(_ context.Context, id int64) (*Account, error
 	return nil, a.err
 }
 
+func (a *riskTestAccounts) GetByIDs(ctx context.Context, ids []int64) ([]*Account, error) {
+	var out []*Account
+	for _, id := range ids {
+		account, err := a.GetByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if account != nil {
+			out = append(out, account)
+		}
+	}
+	return out, nil
+}
+
 type riskTestGroups struct {
 	reverse  bool
 	inactive bool

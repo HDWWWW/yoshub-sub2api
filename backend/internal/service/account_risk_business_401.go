@@ -40,6 +40,7 @@ func (s *OpenAIGatewayService) recordBusiness401(ctx context.Context, groupID in
 		return
 	}
 	risk := s.accountRisk
+	observedAt := time.Now().UTC()
 	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	for {
@@ -49,7 +50,11 @@ func (s *OpenAIGatewayService) recordBusiness401(ctx context.Context, groupID in
 			if rule == nil || !rule.Config.Notify401Enabled {
 				return nil
 			}
-			appendRisk401Event(rule, account.ID, account.Name, time.Now().UTC(), accountRiskBusiness401, "gateway", "业务请求收到上游 401（"+source+"）")
+			reclaimed, err := risk.risk401Reclaimed(persist, account, 0, observedAt)
+			if err != nil || reclaimed {
+				return err
+			}
+			appendRisk401Event(rule, account.ID, account.Name, observedAt, accountRiskBusiness401, "gateway", "业务请求收到上游 401（"+source+"）")
 			queued = true
 			return nil
 		})

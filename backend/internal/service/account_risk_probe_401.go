@@ -15,10 +15,12 @@ const accountRiskProbe401 = "probe_401"
 // Only an upstream HTTP response produces evidence. Never retain the body,
 // tokens, or a provider-controlled string in the rule, logs, or notification.
 type riskProbe401Evidence struct {
-	ownerID   int64
-	ownerName string
-	identity  [32]byte
-	failure   credential401Failure
+	receivedAt time.Time
+	reclaimAt  *time.Time
+	ownerID    int64
+	ownerName  string
+	identity   [32]byte
+	failure    credential401Failure
 }
 
 func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe401Evidence {

@@ -81,12 +81,26 @@ func (s *AccountRiskService) pausedProbeAccount(ctx context.Context, groupID, ac
 	if a.Schedulable || a.Extra[AccountRiskCapacityPauseExtraKey] != token || riskCapacityIdentity(a) != signature {
 		return nil, errors.New("capacity pause ownership changed")
 	}
+	if err := s.capacityProbeAllowed(ctx, a, now); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+func (s *AccountRiskService) capacityProbeAllowed(ctx context.Context, a *Account, now time.Time) error {
+	deadline, err := s.accountProbeDeadline(ctx, a)
+	if err != nil {
+		return err
+	}
+	if supplierReclaimed(deadline, now) {
+		return errRiskSupplierReclaimed
+	}
 	check := *a
 	check.Schedulable = true
 	if !check.isSchedulableAt(now) || EvaluateAccountSchedulingThreshold(&check, nil, now).ShouldPause {
-		return nil, errors.New("account has another scheduling restriction")
+		return errors.New("account has another scheduling restriction")
 	}
-	return a, nil
+	return nil
 }
 
 // Paused accounts are excluded from regular sampling but remain in this durable
@@ -147,11 +161,7 @@ func (s *AccountRiskService) tickCapacityPauses(ctx context.Context, state *Acco
 			continue
 		}
 		if err == nil {
-			check := *a
-			check.Schedulable = true
-			if !check.isSchedulableAt(now) || EvaluateAccountSchedulingThreshold(&check, nil, now).ShouldPause {
-				err = errors.New("account has another scheduling restriction")
-			}
+			err = s.capacityProbeAllowed(ctx, a, now)
 		}
 		if err != nil {
 			p.NextProbeAt = riskAfter(now, r.Config.ProbeIntervalSeconds)
