@@ -214,6 +214,8 @@ type AccountRefillJob struct {
 	SupplyFallback         bool                        `json:"supply_fallback,omitempty"`
 	FallbackForJobID       string                      `json:"fallback_for_job_id,omitempty"`
 	Provider               string                      `json:"provider,omitempty"`
+	MuzeProductID          string                      `json:"muze_product_id,omitempty"`
+	MuzeStudio             bool                        `json:"muze_studio,omitempty"`
 	MuzeConnectionID       string                      `json:"muze_connection_id,omitempty"`
 	SubmissionStartedAt    *time.Time                  `json:"submission_started_at,omitempty"`
 	TimeoutIgnoredAt       *time.Time                  `json:"timeout_ignored_at,omitempty"`

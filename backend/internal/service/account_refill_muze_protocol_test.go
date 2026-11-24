@@ -6,11 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestMuzeHTTPProtocol(t *testing.T) {
@@ -22,7 +23,7 @@ func TestMuzeHTTPProtocol(t *testing.T) {
 		require.Equal(t, "Bearer "+muzeFixtureToken, r.Header.Get("Authorization"))
 		switch r.URL.Path {
 		case "/products":
-			fmt.Fprint(w, `{"products":[{"id":"pro20x","mode":"standard","remaining":20,"cardStock":0},{"id":"pro20xv2","mode":"studio","remaining":20,"cardStock":4},{"id":"pro5x","remaining":3,"cardStock":10}]}`)
+			fmt.Fprint(w, `{"products":[{"id":"pro20x","mode":"standard","closed":true,"remaining":20,"cardStock":0},{"id":"pro20xv2","label":"Pro 20x V2","mode":"studio","remaining":20,"cardStock":5},{"id":"pro5x","closed":true,"remaining":0,"cardStock":0},{"id":"pro5xv2","remaining":0,"cardStock":3}]}`)
 		case "/connections":
 			fmt.Fprint(w, `{"connections":[{"id":"c1","isDefault":true,"enabled":true,"provider":"sub2api"}]}`)
 		case "/orders":
@@ -48,9 +49,14 @@ func TestMuzeHTTPProtocol(t *testing.T) {
 	p.base = server.URL
 	products, err := p.Products(ctx, muzeFixtureToken)
 	require.NoError(t, err)
-	require.Len(t, products, 2)
+	require.Len(t, products, 4)
+	require.True(t, products[0].Closed)
 	require.Zero(t, products[0].AvailableNow)
-	require.Equal(t, 3, products[1].AvailableNow)
+	require.Equal(t, MuzeProduct{Product: "pro20xv2", Label: "Pro 20x V2", Plan: "pro20x", Mode: "studio", Stock: 5, Remaining: 20, AvailableNow: 5}, products[1])
+	require.Zero(t, products[2].AvailableNow)
+	require.Equal(t, "studio", products[3].Mode)
+	require.Equal(t, 3, products[3].Stock)
+	require.Zero(t, products[3].AvailableNow)
 	j.MuzeConnectionID, err = p.ResolveConnection(ctx, muzeFixtureToken, "")
 	require.NoError(t, err)
 	require.Equal(t, "c1", j.MuzeConnectionID)

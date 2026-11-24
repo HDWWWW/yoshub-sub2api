@@ -380,6 +380,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/refill/check", h.Admin.Account.CheckAccountRefill)
 		accounts.POST("/refill/notifications/test", h.Admin.Account.TestAccountRefillNotification)
 		accounts.POST("/refill/manual", h.Admin.Account.ManualAccountRefill)
+		accounts.GET("/refill/muze/products", h.Admin.Account.GetMuzeRefillCatalog)
 		accounts.PUT("/refill/muze", h.Admin.Account.ConfigureMuzeRefill)
 		accounts.POST("/refill/jobs/:job_id/muze-reconcile", h.Admin.Account.ReconcileMuzeRefill)
 		accounts.POST("/refill/jobs/:job_id/retry", h.Admin.Account.RetryAccountRefill)

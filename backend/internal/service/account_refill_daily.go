@@ -267,12 +267,9 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	var total float64
 	if provider == refillProviderMuze {
 		var err error
-		connectionID, err = s.muzePurchaseQuote(ctx, state, plans, persist)
+		quotes, connectionID, err = s.muzePurchaseQuote(ctx, state, plans, false, persist)
 		if err != nil {
 			return blocked(err.Error())
-		}
-		for _, plan := range plans {
-			quotes = append(quotes, RefillQuote{Plan: plan, Enabled: true, Service: "refill"})
 		}
 	} else {
 		if state.EncryptedToken == "" {
@@ -327,7 +324,7 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	jobs := make([]AccountRefillJob, 0, len(quotes))
 	grace := c.ImportExpiryGraceMinutes
 	for _, quote := range quotes {
-		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), Provider: provider, MuzeConnectionID: connectionID, DailyBatchID: batchID, Force: true,
+		jobs = append(jobs, AccountRefillJob{ID: uuid.NewString(), Provider: provider, MuzeConnectionID: connectionID, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, DailyBatchID: batchID, Force: true,
 			Status: "submitting", Mode: "daily", Reason: "每日定时强制补号", Plan: quote.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ConfigRevision: state.Revision, RotationGeneration: state.RotationGeneration,
 			ReasonDetail:       fmt.Sprintf("北京时间 %s 定时补号，共 %d 个；忽略健康储备、待核对、在途上限和普通冷却。", due.Format("2006-01-02 15:04"), len(quotes)),

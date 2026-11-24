@@ -66,6 +66,7 @@ export interface RefillConfig {
 }
 export interface RefillJob {
   provider?: 'muze' | 'fendudu'
+  muze_product_id?: string
   supplier_refund_phase?: string
   submission_started_at?: string
   daily_batch_id?: string
@@ -108,10 +109,28 @@ export interface RefillCapacityObservation {
   sustained_seconds: number; required_seconds: number; utilization_percent: number; samples: number; ready: boolean
   no_capacity?: boolean
 }
+export interface MuzeProduct {
+  product: string
+  label: string
+  plan: string
+  mode: string
+  closed: boolean
+  expired: boolean
+  stock: number
+  remaining: number
+  available_now: number
+  blocked_reason: string
+}
+export interface MuzeCatalog {
+  token_configured: boolean
+  connection_id: string
+  products: MuzeProduct[] | null
+  checked_at: string | null
+}
 export interface RefillView {
   muze_fallback_status?: { consecutive_failures: number; last_at: string | null; message: string }
   workday_calendar?: { years: number[]; synced_at: string; checked_at: string; message: string }
-  muze?: { token_configured: boolean; connection_id: string; products: { product: string; label: string; available_now: number; remaining?: number; stock?: number; blocked_reason: string; expired: boolean }[] | null; checked_at: string | null }
+  muze?: MuzeCatalog
   daily_schedule_status?: { next_at: string; last_at: string; last_quantity: number; last_batch_id?: string; retry_at: string; message: string }
   daily_schedule_statuses?: Record<string, { next_at: string; last_at: string; last_quantity: number; message: string }>
 	rules: { group_id: number; enabled: boolean; monitor_enabled: boolean; rotation_enabled: boolean; next_plan: string }[]
@@ -154,6 +173,9 @@ export const accountRefillAPI = {
   },
   async setImportThreshold(percent: number) {
     return (await apiClient.put<{ percent: number }>('/admin/accounts/refill/import-threshold', { percent })).data.percent
+  },
+  async muzeProducts(groupID: number) {
+    return (await apiClient.get<MuzeCatalog>('/admin/accounts/refill/muze/products', { params: { group_id: groupID }, timeout: 40000 })).data
   },
   async configureMuze(groupID: number, api_token: string, connection_id: string, revision: number) {
     return (await apiClient.put<RefillView>('/admin/accounts/refill/muze', { api_token, connection_id, revision }, { params: { group_id: groupID }, timeout: 70000 })).data

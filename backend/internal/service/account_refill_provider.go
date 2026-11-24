@@ -18,12 +18,14 @@ import (
 const refillProviderURL = "https://pro.llmrefund.com/api/customer/developer/v1"
 
 type RefillQuote struct {
-	Service      string  `json:"service"`
-	Plan         string  `json:"plan"`
-	Price        float64 `json:"price"`
-	PriceVersion int64   `json:"price_version"`
-	Enabled      bool    `json:"enabled"`
-	Terms        string  `json:"terms"`
+	muzeProductID string
+	muzeStudio    bool
+	Service       string  `json:"service"`
+	Plan          string  `json:"plan"`
+	Price         float64 `json:"price"`
+	PriceVersion  int64   `json:"price_version"`
+	Enabled       bool    `json:"enabled"`
+	Terms         string  `json:"terms"`
 }
 type RefillCatalog struct {
 	Available float64       `json:"available"`

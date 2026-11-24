@@ -16,6 +16,7 @@ import (
 type muzeTestProvider struct {
 	t             *testing.T
 	store         *refillTestStore
+	products      []MuzeProduct
 	available     int
 	orders        int
 	orderError    error
@@ -32,7 +33,10 @@ func (p *muzeTestProvider) ResolveConnection(_ context.Context, _ string, id str
 	return id, nil
 }
 func (p *muzeTestProvider) Products(context.Context, string) ([]MuzeProduct, error) {
-	return []MuzeProduct{{Product: "pro20x", AvailableNow: p.available}}, nil
+	if p.products != nil {
+		return p.products, nil
+	}
+	return []MuzeProduct{{Product: "pro20x", Remaining: p.available, Stock: p.available, AvailableNow: p.available}}, nil
 }
 func (p *muzeTestProvider) Order(_ context.Context, _ string, j AccountRefillJob) (*muzeOrder, error) {
 	state, err := decodeAccountRefillState(p.store.raw)
@@ -41,7 +45,10 @@ func (p *muzeTestProvider) Order(_ context.Context, _ string, j AccountRefillJob
 	require.Equal(p.t, j.ID, state.Jobs[0].ID)
 	p.orders++
 	p.store.failSave = p.failAfterPost
-	p.cycle = &muzeCycle{ID: "rvc_fixture", RequestID: j.ID, Product: j.Plan, PushProvider: "sub2api", PushConfigID: j.MuzeConnectionID, Status: "using", CreatedAt: j.SubmissionStartedAt.Format(time.RFC3339Nano)}
+	p.cycle = &muzeCycle{ID: "rvc_fixture", RequestID: j.ID, Product: j.muzeSKU(), PushProvider: "sub2api", PushConfigID: j.MuzeConnectionID, Status: "using", CreatedAt: j.SubmissionStartedAt.Format(time.RFC3339Nano)}
+	if j.MuzeStudio {
+		p.cycle.RequestID = ""
+	}
 	return &muzeOrder{ID: "rvc_fixture"}, p.orderError
 }
 func (p *muzeTestProvider) Cycle(context.Context, string, string) (*muzeCycle, error) {

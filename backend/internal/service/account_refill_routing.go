@@ -81,8 +81,7 @@ func (s *AccountRefillService) routedQuote(ctx context.Context, state *accountRe
 		return nil, "", invalidManualRefill(refillProviderName(provider) + " 正在退避")
 	}
 	if provider == refillProviderMuze {
-		id, err := s.muzePurchaseQuote(ctx, state, []string{plan}, persist)
-		return &RefillQuote{Service: "refill", Plan: plan, Enabled: true}, id, err
+		return s.singleMuzeQuote(ctx, state, plan, false, persist)
 	}
 	q, err := s.manualRefillQuote(ctx, state, plan, persist)
 	return q, "", err

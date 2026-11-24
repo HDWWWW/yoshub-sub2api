@@ -33,7 +33,11 @@ func invalidManualRefill(message string) error {
 
 func validateManualRefillRequest(r ManualAccountRefillRequest, now time.Time) error {
 	parts := strings.Split(r.RequestID, ":")
-	if (r.Provider != "" && r.Provider != refillProviderMuze) || len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !slices.Contains([]string{"pro5x", "pro20x"}, r.Plan) {
+	validPlan := r.Plan == "pro5x" || r.Plan == "pro20x"
+	if r.Provider == refillProviderMuze {
+		validPlan = validMuzeIdentifier(r.Plan, false) && muzeTier(r.Plan) != ""
+	}
+	if (r.Provider != "" && r.Provider != refillProviderMuze) || len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !validPlan {
 		return invalidManualRefill("手动补号参数无效")
 	}
 	stamp, err := strconv.ParseInt(parts[0], 10, 64)
@@ -84,7 +88,11 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		// the original accepted order, even if configuration changed afterwards.
 		for _, j := range state.Jobs {
 			if j.ID == jobID || j.ManualRequestID == request.RequestID {
-				if j.Provider != request.Provider || j.Plan != request.Plan || j.Force != request.Force || (j.ConfigRevision != 0 && j.ConfigRevision != request.Revision) {
+				expectedPlan := j.Plan
+				if j.Provider == refillProviderMuze {
+					expectedPlan = j.muzeSKU()
+				}
+				if j.Provider != request.Provider || expectedPlan != request.Plan || j.Force != request.Force || (j.ConfigRevision != 0 && j.ConfigRevision != request.Revision) {
 					return invalidManualRefill("同一请求不能修改套餐或配置版本，请核对原任务")
 				}
 				return nil
@@ -149,7 +157,13 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			return invalidManualRefill(err.Error())
 		}
 		persist := func() error { return saveRefillState(&state, save) }
-		quote, connectionID, err := s.routedQuote(ctx, &state, request.Provider, request.Plan, persist)
+		var quote *RefillQuote
+		var connectionID string
+		if request.Provider == refillProviderMuze {
+			quote, connectionID, err = s.singleMuzeQuote(ctx, &state, request.Plan, true, persist)
+		} else {
+			quote, connectionID, err = s.routedQuote(ctx, &state, request.Provider, request.Plan, persist)
+		}
 		if err != nil {
 			return err
 		}
@@ -160,9 +174,9 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		}
 		grace := c.ImportExpiryGraceMinutes
 		job := AccountRefillJob{ID: jobID, Provider: request.Provider, ManualRequestID: request.RequestID, ConfigRevision: request.Revision, Force: request.Force,
-			Status: "submitting", Reason: "手动补号", Plan: request.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+			Status: "submitting", Reason: "手动补号", Plan: quote.Plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			ReasonDetail:       "管理员手动提交 1 个账号，沿用提交时保存的推送设置。",
-			ExpiryGraceMinutes: &grace, GroupID: c.GroupID, Concurrency: c.importConcurrencyForPlan(request.Plan),
+			ExpiryGraceMinutes: &grace, GroupID: c.GroupID, Concurrency: c.importConcurrencyForPlan(quote.Plan),
 			DeliveryGroupIDs: slices.Clone(c.DeliveryGroupIDs), DeliveryConfig: c.Delivery,
 			CreatedAt: now, UpdatedAt: now, NextAttemptAt: now}
 		if request.Force {
@@ -170,7 +184,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			job.ReasonDetail = "管理员强制购买 1 个账号，忽略原任务待核对和在途上限；原订单继续核对，可能仍会交付并计费。"
 		}
 		if request.Provider == refillProviderMuze {
-			job.MuzeConnectionID = connectionID
+			job.MuzeConnectionID, job.MuzeProductID, job.MuzeStudio = connectionID, quote.muzeProductID, quote.muzeStudio
 			job.Reason = "muze" + job.Reason
 			job.ReasonDetail += " muze扣减 1 次预购次数，不折算原号商积分；推号后按本单保存的设置应用。"
 		}

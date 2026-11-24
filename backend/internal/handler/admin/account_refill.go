@@ -295,6 +295,22 @@ func (h *AccountHandler) DismissAccountRefill(c *gin.Context) {
 	h.GetAccountRefill(c)
 }
 
+func (h *AccountHandler) GetMuzeRefillCatalog(c *gin.Context) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 35*time.Second)
+	defer cancel()
+	catalog, err := svc.MuzeCatalog(ctx)
+	if err != nil {
+		refillResponseError(c, err)
+		return
+	}
+	response.Success(c, catalog)
+}
+
 func (h *AccountHandler) ConfigureMuzeRefill(c *gin.Context) {
 	svc, ok := h.refillForRequest(c)
 	if !ok {

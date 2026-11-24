@@ -24,6 +24,9 @@ const muzeProviderURL = "https://shop.supacoder.top/api/my"
 type MuzeProduct struct {
 	Product       string `json:"product"`
 	Label         string `json:"label"`
+	Plan          string `json:"plan"`
+	Mode          string `json:"mode"`
+	Closed        bool   `json:"closed"`
 	AvailableNow  int    `json:"available_now"`
 	Remaining     int    `json:"remaining"`
 	Stock         int    `json:"stock"`
@@ -101,6 +104,23 @@ type httpMuzeProvider struct {
 
 func newHTTPMuzeProvider() *httpMuzeProvider {
 	return &httpMuzeProvider{base: muzeProviderURL, client: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+
+// The supplier shares prepaid quota across versions of the same local tier.
+var muzeTierPattern = regexp.MustCompile(`^(pro5x|pro20x)(?:v[1-9][0-9]*)?$`)
+
+func muzeTier(product string) string {
+	if matches := muzeTierPattern.FindStringSubmatch(product); matches != nil {
+		return matches[1]
+	}
+	return ""
+}
+
+func (j AccountRefillJob) muzeSKU() string {
+	if j.MuzeProductID != "" {
+		return j.MuzeProductID
+	}
+	return j.Plan // Orders reserved before the catalog upgrade always used the standard SKU.
 }
 
 var muzeTokenPattern = regexp.MustCompile(`^tk_[A-Fa-f0-9]{64}$`)
@@ -201,20 +221,37 @@ func (p *httpMuzeProvider) Products(ctx context.Context, token string) ([]MuzePr
 	if data.Products == nil {
 		return nil, errors.New("muze 未返回产品配额")
 	}
-	var products []MuzeProduct
+	products := make([]MuzeProduct, 0, len(data.Products))
 	seen := map[string]bool{}
 	for _, r := range data.Products {
-		if (r.ID != "pro20x" && r.ID != "pro5x") || (r.Mode != "" && r.Mode != "standard") {
-			continue
+		if !validMuzeIdentifier(r.ID, false) {
+			return nil, errors.New("muze 商品标识无效")
 		}
 		if seen[r.ID] || r.Remaining == nil || r.CardStock == nil || *r.Remaining < 0 || *r.CardStock < 0 {
 			return nil, errors.New("muze 商品配额或库存无效")
 		}
 		seen[r.ID] = true
-		item := MuzeProduct{Product: r.ID, Label: r.Label, Remaining: *r.Remaining, Stock: *r.CardStock, Expired: r.Expired, AvailableNow: min(*r.Remaining, *r.CardStock)}
+		mode := r.Mode
+		tier := muzeTier(r.ID)
+		if mode == "" && tier != "" {
+			// Only the original, documented SKUs have an implicit purchase protocol.
+			switch r.ID {
+			case tier:
+				mode = "standard"
+			case tier + "v2":
+				mode = "studio"
+			}
+		}
+		item := MuzeProduct{Product: r.ID, Label: muzePublicMessage(r.Label, token), Plan: tier, Mode: mode, Closed: r.Closed, Remaining: *r.Remaining, Stock: *r.CardStock, Expired: r.Expired, AvailableNow: min(*r.Remaining, *r.CardStock)}
 		switch {
-		case r.Closed || r.Expired || r.BlockedReason != "":
-			item.BlockedReason = "该套餐当前暂停接单"
+		case strings.TrimSpace(r.BlockedReason) != "":
+			item.BlockedReason = muzePublicMessage(r.BlockedReason, token)
+		case r.Expired:
+			item.BlockedReason = "该套餐已到期"
+		case r.Closed:
+			item.BlockedReason = "号商已暂停该商品接单"
+		case tier == "" || (mode != "studio" && mode != "standard"):
+			item.BlockedReason = "此商品暂未匹配到可用补号规则"
 		case item.Stock == 0:
 			item.BlockedReason = "该套餐当前无库存"
 		case item.Remaining == 0:
@@ -224,9 +261,6 @@ func (p *httpMuzeProvider) Products(ctx context.Context, token string) ([]MuzePr
 			item.AvailableNow = 0
 		}
 		products = append(products, item)
-	}
-	if len(products) == 0 {
-		return nil, errors.New("muze 未提供普通 Pro5x / Pro20x 套餐")
 	}
 	return products, nil
 }
@@ -256,23 +290,43 @@ func (p *httpMuzeProvider) ResolveConnection(ctx context.Context, token, id stri
 	return found, nil
 }
 func (p *httpMuzeProvider) Order(ctx context.Context, token string, j AccountRefillJob) (*muzeOrder, error) {
-	if _, err := uuid.Parse(j.ID); err != nil || (j.Plan != "pro5x" && j.Plan != "pro20x") || !validMuzeIdentifier(j.MuzeConnectionID, false) {
+	if _, err := uuid.Parse(j.ID); err != nil || j.Plan == "" || muzeTier(j.muzeSKU()) != j.Plan || !validMuzeIdentifier(j.MuzeConnectionID, false) {
 		return nil, errors.New("muze 下单参数无效")
 	}
 	body := struct {
-		RequestID    string  `json:"requestId"`
+		RequestID    string  `json:"requestId,omitempty"`
 		Product      string  `json:"product"`
 		Count        int     `json:"count"`
 		ConnectionID string  `json:"connectionId"`
 		Groups       []int64 `json:"groups"`
-	}{j.ID, j.Plan, 1, j.MuzeConnectionID, j.DeliveryGroupIDs}
+	}{j.ID, j.muzeSKU(), 1, j.MuzeConnectionID, j.DeliveryGroupIDs}
+	if j.MuzeStudio {
+		// Studio processes one order per call, without a client idempotency key.
+		body.RequestID = ""
+	}
 	var reply struct {
 		RequestID string
 		Orders    []muzeWireOrder
 		Order     *muzeWireOrder
+		Product   *struct {
+			ID string `json:"id"`
+		}
 	}
 	if err := p.request(ctx, token, http.MethodPost, "/orders", body, &reply); err != nil {
 		return nil, err
+	}
+	if j.MuzeStudio {
+		// The documented studio receipt contains order and product, without a requestId.
+		r := reply.Order
+		if r == nil || reply.Orders != nil || !validMuzeIdentifier(r.ID, false) || !r.singleOrder() ||
+			(r.RequestID != "" && r.RequestID != j.ID) || (r.ConnectionID != "" && r.ConnectionID != j.MuzeConnectionID) {
+			return nil, errors.New("Muze 工作室未返回匹配的单笔订单")
+		}
+		sku := j.muzeSKU()
+		if (reply.Product != nil && reply.Product.ID != sku) || (r.Product != "" && r.Product != sku) || (reply.Product == nil && r.Product == "") {
+			return nil, errors.New("Muze 工作室回执与所选商品不匹配")
+		}
+		return &muzeOrder{ID: r.ID, ExpiresAt: r.cycle().expiresAt()}, nil
 	}
 	if reply.Orders == nil && reply.Order != nil {
 		reply.Orders = []muzeWireOrder{*reply.Order}
@@ -281,7 +335,7 @@ func (p *httpMuzeProvider) Order(ctx context.Context, token string, j AccountRef
 		return nil, errors.New("muze 未确认唯一订单")
 	}
 	r := reply.Orders[0]
-	if !validMuzeIdentifier(r.ID, false) || (reply.Order != nil && reply.Order.ID != r.ID) || (reply.RequestID != "" && reply.RequestID != j.ID) || (r.RequestID != "" && r.RequestID != j.ID) || (reply.RequestID == "" && r.RequestID == "") || (r.Product != "" && r.Product != j.Plan) || !r.singleOrder() {
+	if !validMuzeIdentifier(r.ID, false) || (reply.Order != nil && reply.Order.ID != r.ID) || (reply.RequestID != "" && reply.RequestID != j.ID) || (r.RequestID != "" && r.RequestID != j.ID) || (reply.RequestID == "" && r.RequestID == "") || (r.Product != "" && r.Product != j.muzeSKU()) || !r.singleOrder() {
 		return nil, errors.New("muze 回执与本次购买不匹配")
 	}
 	return &muzeOrder{ID: r.ID, ExpiresAt: r.cycle().expiresAt()}, nil
@@ -310,7 +364,7 @@ func (p *httpMuzeProvider) FindOrder(ctx context.Context, token string, j Accoun
 		if o.RequestID != j.ID {
 			continue
 		}
-		if id != "" || !validMuzeIdentifier(o.ID, false) || o.Product != j.Plan || !o.singleOrder() {
+		if id != "" || !validMuzeIdentifier(o.ID, false) || o.Product != j.muzeSKU() || !o.singleOrder() {
 			return nil, errors.New("muze 同一请求对应的订单不唯一或套餐不符")
 		}
 		id = o.ID

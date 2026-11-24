@@ -158,55 +158,82 @@ func (s *AccountRefillService) refreshMuzeProducts(ctx context.Context, state *a
 	return persist()
 }
 
+// MuzeCatalog refreshes only supplier inventory. Opening the picker never advances jobs.
+func (s *AccountRefillService) MuzeCatalog(ctx context.Context) (MuzeRefillView, error) {
+	var result MuzeRefillView
+	err := withAccountRefillConfigLock(ctx, s.store, 8*time.Second, func(raw string, save func(string) error) error {
+		state, err := s.decodeRefillWithMuze(ctx, raw)
+		if err != nil {
+			return err
+		}
+		f := &state.Muze
+		now := time.Now()
+		if f.EncryptedToken == "" {
+			return errors.New("请先配置 Muze API Key")
+		}
+		if now.Before(f.RetryAt) {
+			return errors.New("Muze 商品列表暂时无法刷新，请稍后重试")
+		}
+		// Coalesce simultaneous modal opens while allowing quick manual refreshes.
+		if f.CheckedAt == nil || now.Sub(*f.CheckedAt) >= 10*time.Second || f.Products == nil {
+			if err := s.refreshMuzeProducts(ctx, &state, now, true, func() error { return saveRefillState(&state, save) }); err != nil {
+				return err
+			}
+			if !f.RetryAt.IsZero() {
+				return errors.New("Muze 商品列表暂时无法刷新，请稍后重试")
+			}
+		}
+		result = f.view()
+		return nil
+	})
+	return result, err
+}
+
 // Quote all requested plans against one inventory snapshot, subtracting shared
 // unsubmitted reservations. Resolve the push destination before reserving.
-func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *accountRefillState, plans []string, persist func() error) (string, error) {
+func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *accountRefillState, plans []string, exact bool, persist func() error) ([]RefillQuote, string, error) {
 	if state.Muze.EncryptedToken == "" {
-		return "", invalidManualRefill("请先配置 Muze API Key")
+		return nil, "", invalidManualRefill("请先配置 Muze API Key")
 	}
 	if time.Now().Before(state.Muze.RetryAt) {
-		return "", invalidManualRefill("Muze 正在退避，请稍后重试")
+		return nil, "", invalidManualRefill("Muze 正在退避，请稍后重试")
 	}
 	token, err := s.encryptor.Decrypt(state.Muze.EncryptedToken)
 	if err != nil {
-		return "", invalidManualRefill("Muze API Key 解密失败")
+		return nil, "", invalidManualRefill("Muze API Key 解密失败")
 	}
 	client := s.muzeClient()
 	products, err := client.Products(ctx, token)
 	if err != nil {
 		state.Muze.RetryAt = time.Now().Add(refillRetryDelay(err, 1))
 		if err := persist(); err != nil {
-			return "", err
+			return nil, "", err
 		}
-		return "", invalidManualRefill("无法读取 Muze 产品次数")
+		return nil, "", invalidManualRefill("无法读取 Muze 产品次数")
 	}
 	now := time.Now()
 	state.Muze.Products, state.Muze.CheckedAt = products, &now
 	if err := persist(); err != nil {
-		return "", err
+		return nil, "", err
 	}
-	counts := map[string]int{}
-	for _, plan := range plans {
-		counts[plan]++
-	}
-	for plan, count := range counts {
-		reserved, err := s.muzeReserved(ctx, state, plan)
-		if err != nil {
-			return "", err
-		}
-		available := 0
-		for _, item := range products {
-			if item.Product == plan && !item.Expired && item.BlockedReason == "" {
-				available = item.AvailableNow
-				break
+	// Compare vendor supply first so a local hold cannot trigger supplier failover.
+	if _, ok := allocateMuzeProducts(products, plans, exact, newMuzeHolds()); !ok {
+		if exact && len(plans) == 1 {
+			for _, p := range products {
+				if p.Product == plans[0] && p.BlockedReason != "" {
+					return nil, "", supplyUnavailable("Muze " + p.Product + "：" + p.BlockedReason)
+				}
 			}
 		}
-		if available < count {
-			return "", supplyUnavailable("Muze 所选套餐库存或次数不足")
-		}
-		if available-reserved < count {
-			return "", invalidManualRefill("Muze 所选套餐库存或次数不足（含本地预占）")
-		}
+		return nil, "", supplyUnavailable("Muze 所选套餐库存或次数不足")
+	}
+	held, err := s.muzeReserved(ctx, state)
+	if err != nil {
+		return nil, "", err
+	}
+	quotes, ok := allocateMuzeProducts(products, plans, exact, held)
+	if !ok {
+		return nil, "", invalidManualRefill("Muze 所选套餐库存或次数不足（含本地预占）")
 	}
 	id, err := client.ResolveConnection(ctx, token, state.Muze.ConnectionID)
 	if err != nil {
@@ -214,23 +241,69 @@ func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *acc
 		if errors.As(err, &remote) && remote.code == 429 {
 			state.Muze.RetryAt = now.Add(refillRetryDelay(err, 1))
 			if err := persist(); err != nil {
-				return "", err
+				return nil, "", err
 			}
 		}
-		return "", invalidManualRefill("无法确认 Muze 推送连接，请检查已启用的 Sub2API 连接")
+		return nil, "", invalidManualRefill("无法确认 Muze 推送连接，请检查已启用的 Sub2API 连接")
 	}
-	return id, nil
+	return quotes, id, nil
 }
 
-func (s *AccountRefillService) muzeReserved(ctx context.Context, state *accountRefillState, plan string) (int, error) {
-	count := 0
+func (s *AccountRefillService) singleMuzeQuote(ctx context.Context, state *accountRefillState, plan string, exact bool, persist func() error) (*RefillQuote, string, error) {
+	quotes, connection, err := s.muzePurchaseQuote(ctx, state, []string{plan}, exact, persist)
+	if err != nil {
+		return nil, "", err
+	}
+	return &quotes[0], connection, nil
+}
+
+type muzeHolds struct{ tier, sku map[string]int }
+
+func newMuzeHolds() muzeHolds {
+	return muzeHolds{tier: make(map[string]int), sku: make(map[string]int)}
+}
+func (h muzeHolds) add(plan, id string) { h.tier[plan]++; h.sku[id]++ }
+
+// Existing automated rules select a tier; manual orders select an exact listed SKU.
+// SKU stock is independent, but all versions draw from the same tier allowance.
+func allocateMuzeProducts(products []MuzeProduct, plans []string, exact bool, held muzeHolds) ([]RefillQuote, bool) {
+	quotes := make([]RefillQuote, 0, len(plans))
+	for _, requested := range plans {
+		tier := muzeTier(requested)
+		var selected *MuzeProduct
+		for i := range products {
+			p := &products[i]
+			if tier == "" || muzeTier(p.Product) != tier || (exact && p.Product != requested) || p.Closed || p.Expired || p.BlockedReason != "" || p.AvailableNow <= 0 {
+				continue
+			}
+			if p.Remaining <= held.tier[tier] || p.Stock <= held.sku[p.Product] {
+				continue
+			}
+			if selected == nil || p.Product == tier {
+				selected = p
+			}
+			if p.Product == tier {
+				break
+			}
+		}
+		if selected == nil {
+			return nil, false
+		}
+		held.add(tier, selected.Product)
+		quotes = append(quotes, RefillQuote{Plan: tier, Service: "refill", Enabled: true, muzeProductID: selected.Product, muzeStudio: selected.Mode == "studio"})
+	}
+	return quotes, true
+}
+
+func (s *AccountRefillService) muzeReserved(ctx context.Context, state *accountRefillState) (muzeHolds, error) {
+	held := newMuzeHolds()
 	add := func(other accountRefillState) {
 		if other.Muze.TokenHash != state.Muze.TokenHash {
 			return
 		}
 		for _, j := range other.Jobs {
-			if j.Provider == refillProviderMuze && j.Plan == plan && j.pending() && j.SupplierID == "" {
-				count++
+			if j.Provider == refillProviderMuze && j.pending() && j.SupplierID == "" {
+				held.add(j.Plan, j.muzeSKU())
 			}
 		}
 	}
@@ -238,7 +311,7 @@ func (s *AccountRefillService) muzeReserved(ctx context.Context, state *accountR
 	if stores, ok := s.rootService().store.(AccountRefillGroupStore); ok {
 		rows, err := stores.ListRules(ctx)
 		if err != nil {
-			return 0, invalidManualRefill("无法核对其他分组的muze次数预占")
+			return held, invalidManualRefill("无法核对其他分组的muze次数预占")
 		}
 		for id, raw := range rows {
 			if id == s.ruleGroupID {
@@ -246,12 +319,12 @@ func (s *AccountRefillService) muzeReserved(ctx context.Context, state *accountR
 			}
 			other, err := decodeAccountRefillState(raw)
 			if err != nil {
-				return 0, err
+				return held, err
 			}
 			add(other)
 		}
 	}
-	return count, nil
+	return held, nil
 }
 
 // ReconcileMuze binds a supplier-confirmed order after a lost POST response.
@@ -290,7 +363,20 @@ func (s *AccountRefillService) ReconcileMuze(ctx context.Context, jobID, supplie
 			if err != nil {
 				return errors.New("无法核对muze原订单")
 			}
-			if err := validateMuzeCycle(cycle, *j); err != nil {
+			if cycle == nil || cycle.ID != supplierID {
+				return errors.New("Muze 返回的订单与指定订单号不符")
+			}
+			candidate := *j
+			if j.MuzeStudio && cycle.RequestID == "" {
+				// Studio has no client key. Only an administrator-supplied order can
+				// be linked this way, using positive SKU, destination and time evidence.
+				created, parseErr := time.Parse(time.RFC3339Nano, cycle.CreatedAt)
+				if cycle.Product != j.muzeSKU() || cycle.PushConfigID != j.MuzeConnectionID || parseErr != nil || created.After(j.SubmissionStartedAt.Add(5*time.Minute)) || created.After(time.Now().Add(30*time.Second)) {
+					return errors.New("Muze 工作室原订单的商品、推送连接或下单时间与本任务不匹配")
+				}
+				candidate.SupplierID = supplierID
+			}
+			if err := validateMuzeCycle(cycle, candidate); err != nil {
 				return err
 			}
 			j.SupplierID, j.Status, j.Error = supplierID, "processing", ""
@@ -298,6 +384,7 @@ func (s *AccountRefillService) ReconcileMuze(ctx context.Context, jobID, supplie
 			if expires := cycle.expiresAt(); expires != nil {
 				j.SupplierExpiresAt = expires
 			}
+			state.Muze.CheckedAt = nil
 			j.NextAttemptAt = time.Now()
 			return saveRefillState(&state, save)
 		}

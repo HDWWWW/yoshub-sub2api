@@ -10,8 +10,14 @@ import (
 	"time"
 )
 
+const muzeStudioReview = "Muze 工作室订单回执待核对，请到号商「我的订单」确认原订单 ID 后关联"
+
+func (j AccountRefillJob) awaitingStudioReceipt() bool {
+	return j.Provider == refillProviderMuze && j.MuzeStudio && j.SupplierID == "" && j.SubmissionStartedAt != nil
+}
+
 func validateMuzeCycle(c *muzeCycle, j AccountRefillJob) error {
-	if c == nil || !validMuzeIdentifier(c.ID, false) || j.SubmissionStartedAt == nil || j.MuzeConnectionID == "" || (j.SupplierID != "" && c.ID != j.SupplierID) || (c.RequestID != "" && c.RequestID != j.ID) || (c.Product != "" && c.Product != j.Plan) {
+	if c == nil || !validMuzeIdentifier(c.ID, false) || j.SubmissionStartedAt == nil || j.MuzeConnectionID == "" || (j.SupplierID != "" && c.ID != j.SupplierID) || (c.RequestID != "" && c.RequestID != j.ID) || (c.Product != "" && c.Product != j.muzeSKU()) {
 		return errors.New("muze 订单编号、请求或套餐与本任务不匹配")
 	}
 	// Before a supplier ID is bound, only a matching request ID is proof of ownership.
@@ -33,7 +39,7 @@ func validateMuzeCycle(c *muzeCycle, j AccountRefillJob) error {
 func (s *AccountRefillService) advanceMuzeJobs(ctx context.Context, state *accountRefillState, now time.Time, persist func() error) error {
 	index := -1
 	for i, j := range state.Jobs {
-		recoverable := j.SupplierID == "" && j.SubmissionStartedAt != nil
+		recoverable := j.SupplierID == "" && j.SubmissionStartedAt != nil && !j.MuzeStudio
 		if j.Provider != refillProviderMuze || !j.pending() || now.Before(j.NextAttemptAt) || (j.Status == "blocked" && !recoverable) || j.Status == "import_failed" || (!state.Config.PushEnabled && j.Status == "awaiting_push") {
 			continue
 		}
@@ -59,6 +65,10 @@ func (s *AccountRefillService) advanceMuzeJob(ctx context.Context, state *accoun
 	j.UpdatedAt = now
 	if j.SupplierID == "" {
 		if j.SubmissionStartedAt != nil {
+			if j.MuzeStudio {
+				j.Status, j.Error = "blocked", muzeStudioReview
+				return persist()
+			}
 			cycle, err := s.recoverMuzeOrder(ctx, token, state, *j)
 			j.Attempts++
 			if err != nil {
@@ -98,6 +108,9 @@ func (s *AccountRefillService) advanceMuzeJob(ctx context.Context, state *accoun
 			}
 			if err != nil || order == nil || !validMuzeIdentifier(order.ID, false) {
 				j.Status, j.Error = "blocked", "muze 下单结果待确认，正在按原请求编号核对"
+				if j.MuzeStudio {
+					j.Error = muzeStudioReview
+				}
 				j.NextAttemptAt = nextRefillOrderPoll(err)
 				var remote *refillProviderError
 				if errors.As(err, &remote) {

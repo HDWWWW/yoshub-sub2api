@@ -10,7 +10,7 @@ import (
 // Concurrent purchases of the same plan (even in the same second) stay independent.
 func (s *AccountRefillService) recoverMuzeOrder(ctx context.Context, token string, state *accountRefillState, j AccountRefillJob) (*muzeCycle, error) {
 	reader, ok := s.muzeClient().(muzeOrderFinder)
-	if !ok || j.SubmissionStartedAt == nil {
+	if !ok || j.SubmissionStartedAt == nil || j.MuzeStudio {
 		return nil, errors.New("请在 muze 核对此请求的原订单")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)

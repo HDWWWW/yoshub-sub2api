@@ -782,7 +782,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 			}
 			return persist()
 		}
-		job := AccountRefillJob{ID: uuid.NewString(), Provider: orderProvider, SupplyFallback: supplyFallback, MuzeConnectionID: connectionID, Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
+		job := AccountRefillJob{ID: uuid.NewString(), Provider: orderProvider, SupplyFallback: supplyFallback, MuzeConnectionID: connectionID, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, Status: "submitting", Reason: state.Evaluation.Reason, Plan: plan, Price: quote.Price, PriceVersion: quote.PriceVersion,
 			RotationGeneration: state.RotationGeneration,
 			Mode:               state.Config.Mode,
 			ReasonDetail:       accountRefillReasonDetail(state.Config, state.Evaluation),

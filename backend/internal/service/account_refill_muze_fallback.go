@@ -92,7 +92,7 @@ func refillMuzeFailures(state *accountRefillState) []AccountRefillJob {
 
 func refillMuzeStalled(state *accountRefillState, j AccountRefillJob, now time.Time) bool {
 	return state.Config.MuzeFallback != nil && refillPrimaryAutomaticJob(state, j) && j.MuzeFallbackJobID == "" &&
-		j.pending() && j.AccountID == 0 && !j.CreatedAt.IsZero() &&
+		j.pending() && !j.awaitingStudioReceipt() && j.AccountID == 0 && !j.CreatedAt.IsZero() &&
 		!now.Before(j.CreatedAt.Add(time.Duration(state.Config.MuzeFallback.TimeoutMinutes)*time.Minute))
 }
 
@@ -197,7 +197,7 @@ func (s *AccountRefillService) runMuzeFallback(ctx context.Context, state *accou
 	}
 	grace := c.ImportExpiryGraceMinutes
 	job := AccountRefillJob{ID: uuid.NewString(), Provider: provider, Price: quote.Price, PriceVersion: quote.PriceVersion, FallbackForJobID: sourceJob.ID,
-		MuzeConnectionID: connectionID, ConfigRevision: state.Revision,
+		MuzeConnectionID: connectionID, MuzeProductID: quote.muzeProductID, MuzeStudio: quote.muzeStudio, ConfigRevision: state.Revision,
 		Status: "submitting", Plan: "pro20x", Mode: c.Mode, RotationGeneration: state.RotationGeneration,
 		Reason: refillProviderName(provider) + "自动备用补号", ReasonDetail: fmt.Sprintf("%s。%s 原任务 %s 继续核对，%s 补入 1 个 Pro20x。", reason, refillProviderName(sourceJob.Provider), refillSupplierTaskID(sourceJob), refillProviderName(provider)),
 		GroupID: c.GroupID, Concurrency: c.importConcurrencyForPlan("pro20x"), DeliveryGroupIDs: slices.Clone(c.DeliveryGroupIDs),

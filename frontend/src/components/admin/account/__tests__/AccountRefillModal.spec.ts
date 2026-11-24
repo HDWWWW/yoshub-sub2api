@@ -3,8 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountRefillModal from '../AccountRefillModal.vue'
 import type { Proxy } from '@/types'
 
-const { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, saveAs, showSuccess, configureMuze, reconcileMuze, testNotification } = vi.hoisted(() => ({ getImportThreshold: vi.fn(), setImportThreshold: vi.fn(), get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn(), configureMuze: vi.fn(), reconcileMuze: vi.fn(), testNotification: vi.fn() }))
-vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, configureMuze, reconcileMuze, testNotification } }))
+const { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, saveAs, showSuccess, muzeProducts, configureMuze, reconcileMuze, testNotification } = vi.hoisted(() => ({ getImportThreshold: vi.fn(), setImportThreshold: vi.fn(), get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn(), muzeProducts: vi.fn(), configureMuze: vi.fn(), reconcileMuze: vi.fn(), testNotification: vi.fn() }))
+vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, muzeProducts, configureMuze, reconcileMuze, testNotification } }))
 vi.mock('file-saver', () => ({ saveAs }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { name: 'TotpStepUpDialog', props: ['controller'], template: '<div />' } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
@@ -66,12 +66,12 @@ describe('AccountRefillModal', () => {
   expect(manual).not.toHaveBeenCalled()
   w.unmount()
  })
- it('defaults both manual suppliers to Pro20x while preserving a pending Pro5x order', async () => {
+ it('uses the 1208 default, shows an empty unconfigured Muze catalog and preserves a pending order', async () => {
   const w = await open()
   await w.findAll('nav button').find(b => b.text() === 'accountRefill.manual')!.trigger('click')
   expect(w.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]').element.value).toBe('pro20x')
   await w.findAll('nav button').find(b => b.text() === 'accountRefill.muze')!.trigger('click')
-  expect(w.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]').element.value).toBe('pro20x')
+  expect(w.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]').element.value).toBe('')
   w.unmount()
   const pending = { request_id: `${Date.now()}:fixture`, plan: 'pro5x', revision: 1, group_id: 2 }
   sessionStorage.setItem('yoshub:manual-refill:pending:v2', JSON.stringify([pending]))
@@ -879,7 +879,7 @@ describe('Muze manual refill', () => {
   const w = mount(AccountRefillModal, { props: { show: true, initialTab: 'muze' }, global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' } } } })
   await flushPromises(); return w
  }
- beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(muzeResponse()); manual.mockResolvedValue(muzeResponse()) })
+ beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); get.mockResolvedValue(muzeResponse()); manual.mockResolvedValue(muzeResponse()); muzeProducts.mockResolvedValue(muzeResponse().muze) })
  afterEach(() => vi.useRealTimers())
  it('shows the supplier deadline after manual submission without adding retention', async () => {
   const supplierExpiry = Date.parse('2026-11-24T16:15:00Z') / 1000
@@ -944,6 +944,36 @@ describe('Muze manual refill', () => {
   expect(JSON.stringify(sessionStorage)).not.toContain('rvak_fixture')
   expect(manual).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled()
   w.unmount()
+ })
+ it('selects the stocked V2 from the supplied catalog and pins the exact SKU when retrying', async () => {
+  const data = muzeResponse()
+  const makeProduct = (product: string, plan: string, remaining: number, stock: number, closed = false) => ({
+    product, plan, label: `Vendor ${product}`, mode: product === plan ? 'standard' : 'studio', remaining, stock, closed,
+    available_now: closed ? 0 : Math.min(remaining, stock), blocked_reason: closed ? 'paused' : '', expired: false
+  })
+  const products = [makeProduct('pro20x', 'pro20x', 20, 0, true), makeProduct('pro5x', 'pro5x', 0, 0, true),
+    makeProduct('pro5xv2', 'pro5x', 0, 3), makeProduct('pro20xv2', 'pro20x', 20, 5)]
+  data.muze.products = products
+  get.mockResolvedValue(data); muzeProducts.mockResolvedValue(data.muze); manual.mockRejectedValue({ status: 503 })
+  const w = await openMuze()
+  const select = w.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]')
+  expect(muzeProducts).toHaveBeenCalledWith(2)
+  expect(Array.from(select.element.options, o => o.text)).toEqual(products.map(p => p.label))
+  expect(select.element.value).toBe('pro20xv2')
+  expect(w.get('[data-testid="refill-manual-concurrency"]').text()).toBe('60')
+  await select.setValue('pro5xv2')
+  expect(w.get('[data-testid="manual-refill-submit"]').attributes('disabled')).toBeDefined()
+  expect(w.get('[data-testid="manual-refill-force"]').attributes('disabled')).toBeDefined()
+  await select.setValue('pro20xv2')
+  await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+  const receipt = structuredClone(manual.mock.calls[0]![0])
+  expect(receipt).toMatchObject({ provider: 'muze', plan: 'pro20xv2' }); w.unmount()
+  get.mockResolvedValue(muzeResponse()); muzeProducts.mockResolvedValue(muzeResponse().muze)
+  const reopened = await openMuze()
+  expect(reopened.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]').element.value).toBe('pro20xv2')
+  await reopened.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+  expect(manual).toHaveBeenLastCalledWith(receipt)
+  reopened.unmount()
  })
  it('links an uncertain supplier order without posting another purchase', async () => {
   const data = { ...muzeResponse(), jobs: [{ ...responseWithJobs(1).jobs[0]!, provider: 'muze', supplier_id: '', status: 'blocked', submission_started_at: new Date().toISOString() }] }
