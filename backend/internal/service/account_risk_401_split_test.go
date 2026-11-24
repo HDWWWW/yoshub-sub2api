@@ -163,9 +163,9 @@ func TestSmartWSOfficialClientErrorWire(t *testing.T) {
 }
 
 func TestSmartWSHeaderOverridesOnHandshakeAndFallback(t *testing.T) {
-	var handshake http.Header
+	handshakeHeaders := make(chan http.Header, 1)
 	gateway, a, up := forcedWSService(t, func(w http.ResponseWriter, r *http.Request) {
-		handshake = r.Header.Clone()
+		handshakeHeaders <- r.Header.Clone()
 		w.WriteHeader(http.StatusUpgradeRequired)
 	})
 	a.Credentials[credKeyHeaderOverrideEnabled] = true
@@ -177,6 +177,12 @@ func TestSmartWSHeaderOverridesOnHandshakeAndFallback(t *testing.T) {
 	c.Request = c.Request.WithContext(ctx)
 	_, err := gateway.Forward(ctx, c, a, []byte(`{"model":"gpt-5.1","stream":true,"input":"hi"}`))
 	require.Error(t, err)
+	var handshake http.Header
+	select {
+	case handshake = <-handshakeHeaders:
+	default:
+		t.Fatal("SmartWS did not send the upgrade request")
+	}
 	require.Equal(t, "17", handshake.Get("X-Reported-Key"))
 	require.Empty(t, handshake.Get("X-Reported-Request"))
 	require.Equal(t, 1, up.callCount)

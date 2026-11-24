@@ -77,7 +77,6 @@ func normalizeObservedUpstreamResponseModel(model string) string {
 func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType string) {
 	if o.on401 != nil && (eventType == "error" || eventType == "response.failed") && explicitStream401(payload) {
 		o.on401()
-		o.on401 = nil
 	}
 	model := firstValidTrimmedGJSONString(payload, "response.model", "model")
 	terminal := isUpstreamResponseModelTerminalEvent(eventType)
