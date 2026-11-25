@@ -1648,6 +1648,8 @@ func isRetryableCodexModelsManifestTransportError(err error) bool {
 }
 
 type openAIModelsRequest struct {
+	sourceAccount       *Account
+	riskGroupID         int64
 	url                 string
 	headers             http.Header
 	proxyURL            string
@@ -1850,6 +1852,7 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	}
 
 	request := openAIModelsRequest{
+		sourceAccount: account, riskGroupID: risk401RequestGroup(ctx),
 		url:                 requestURL.String(),
 		headers:             headers,
 		proxyURL:            proxyURL,
@@ -2034,6 +2037,9 @@ func (s *OpenAIGatewayService) fetchOpenAIModelsUpstream(ctx context.Context, re
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		s.reporter401().observe(reqCtx, request.riskGroupID, request.sourceAccount, resp.StatusCode, "获取模型列表")
+	}
 	if resp.StatusCode == http.StatusNotModified {
 		return &OpenAIModelsResponse{ETag: resp.Header.Get("ETag"), NotModified: true}, nil
 	}
@@ -2068,6 +2074,9 @@ func (s *OpenAIGatewayService) fetchOpenAIModelsUpstream(ctx context.Context, re
 		}
 	}
 	etag := resp.Header.Get("ETag")
+	if reporter := s.reporter401(); reporter != nil && bodyHasAccount401(body) {
+		reporter.observe(reqCtx, request.riskGroupID, request.sourceAccount, http.StatusUnauthorized, "获取模型列表")
+	}
 	return &OpenAIModelsResponse{Body: body, ETag: etag, upstreamETag: etag}, nil
 }
 

@@ -61,7 +61,7 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 	if err != nil {
 		return nil, err
 	}
-	// The manual preview uses draft settings but never requests credential actions.
+	// Draft parameters control the test. The saved group rule controls alerts.
 	config.Probe401Enabled = false
 	config.Notify401Enabled = false
 	id, now := uuid.NewString(), time.Now().UTC()
@@ -107,7 +107,8 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 		return out, nil
 	}
 	defer slot.ReleaseFunc()
-	result, err := s.probe.RunRiskProbe(ctx, a, config)
+	result, err := s.probe.RunRiskProbe(context.WithValue(ctx, risk401GroupKey{}, groupID), a, config)
+	s.reporter401().observe(ctx, groupID, a, result.UpstreamStatus, "风控面板手动测试")
 	out.InputTokens, out.OutputTokens = result.InputTokens, result.OutputTokens
 	if err != nil || !result.Completed {
 		return out, nil

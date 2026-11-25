@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/imroc/req/v3"
 )
@@ -139,7 +140,13 @@ func instrumentReqClient(client *req.Client) *req.Client {
 	}
 	client.GetTransport().WrapRoundTripFunc(func(rt http.RoundTripper) req.HttpRoundTripFunc {
 		timed := servertiming.WrapRoundTripper(rt)
-		return timed.RoundTrip
+		return func(request *http.Request) (*http.Response, error) {
+			response, err := timed.RoundTrip(request)
+			if response != nil && response.StatusCode == http.StatusUnauthorized {
+				service.ObserveAccountHTTPStatus(request.Context(), response.StatusCode)
+			}
+			return response, err
+		}
 	})
 	return client
 }

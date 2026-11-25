@@ -14,6 +14,7 @@ import (
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
 type OpenAIOAuthService struct {
+	alerts401            *Account401Reporter
 	sessionStore         *openai.SessionStore
 	proxyRepo            ProxyRepository
 	oauthClient          OpenAIOAuthClient
@@ -343,7 +344,7 @@ func (s *OpenAIOAuthService) enrichTokenInfoWithPrivacy(ctx context.Context, tok
 	// Fresh authorizations keep the native default; account refreshes carry
 	// the saved preference so an explicit opt-in is never silently reversed.
 	if privacyAccount != nil {
-		tokenInfo.PrivacyMode = applyAccountOpenAIPrivacy(ctx, s.privacyAccountRepo, s.proxyRepo, s.privacyClientFactory, privacyAccount, tokenInfo.AccessToken, true)
+		tokenInfo.PrivacyMode = applyAccountOpenAIPrivacy(ctx, s.privacyAccountRepo, s.proxyRepo, s.privacyClientFactory, privacyAccount, tokenInfo.AccessToken, true, s.alerts401)
 	} else {
 		tokenInfo.PrivacyMode = disableOpenAITraining(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL)
 	}
@@ -386,6 +387,7 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT_TYPE", "account is not an OAuth account")
 	}
 
+	ctx = s.alerts401.withScope(ctx, account.ID, "账号凭据刷新")
 	var proxyURL string
 	if account.ProxyID != nil {
 		if s.proxyRepo == nil {

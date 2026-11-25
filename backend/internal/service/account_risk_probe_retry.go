@@ -34,7 +34,7 @@ func (s *AccountRiskService) runProbeAttempts(ctx context.Context, job *accountR
 		attemptCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		result, err = s.runProbe429Attempts(attemptCtx, job, attempt == 0)
 		cancel()
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && result.UpstreamStatus != http.StatusUnauthorized {
 			return AccountRiskProbeResult{}, ctx.Err()
 		}
 		result.ConsecutiveMismatches = attempt
@@ -86,8 +86,8 @@ func (s *AccountRiskService) runProbe429Attempts(ctx context.Context, job *accou
 		if readErr != nil {
 			return AccountRiskProbeResult{}, readErr
 		}
-		result, err = s.runProbeWithinLease(ctx, account, job.config)
-		if ctx.Err() != nil {
+		result, err = s.runProbeWithinLease(context.WithValue(ctx, risk401GroupKey{}, job.pending.GroupID), account, job.config)
+		if ctx.Err() != nil && result.UpstreamStatus != http.StatusUnauthorized {
 			return AccountRiskProbeResult{}, ctx.Err()
 		}
 		if err == nil || result.UpstreamStatus != http.StatusTooManyRequests {

@@ -71,7 +71,8 @@ func TestAccountRiskSupplierReclaimProbe401(t *testing.T) {
 				require.NoError(t, s.finishProbe(context.Background(), job, AccountRiskProbeResult{UpstreamStatus: 401, auth401: e}, errors.New("rejected"), at))
 				require.Empty(t, store.state.ActiveProbes)
 				require.Equal(t, stop && offset < 0, !accounts.pool[0].Schedulable)
-				require.Equal(t, offset < 0, len(r.Events) == 1)
+				require.Len(t, r.Events, 1)
+				require.Equal(t, "pending", r.Events[0].Notification)
 				if offset >= 0 {
 					require.Nil(t, accounts.pool[0].TempUnschedulableUntil)
 					require.Contains(t, r.Observation.LastProbeResult, "回收")
@@ -193,16 +194,17 @@ func TestAccountRiskSupplierReclaimLiveAndQueued401(t *testing.T) {
 		observer.ObserveOpenAI([]byte(`{"type":"error","error":{"type":"authentication_error"}}`), "error")
 		observer.ObserveOpenAI([]byte(`{"type":"response.failed","response":{"error":{"status":401}}}`), "response.failed")
 		require.Empty(t, counter.counts)
-		require.Len(t, r.Events, 1)
+		require.Len(t, r.Events, 4, "each actual 401 alerts, including after reclaim")
 		require.True(t, accounts.pool[0].Schedulable)
-		// A legacy pending 401 recorded at reclaim is silenced, but the queued
-		// notification for a rejection before reclaim is still delivered.
-		appendRisk401Event(r, a.ID, a.Name, cutoff, accountRiskBusiness401, "gateway", "legacy")
-		require.NoError(t, s.deliverNotification(ctx, cutoff))
-		require.NoError(t, s.deliverNotification(ctx, cutoff.Add(time.Minute)))
-		require.Len(t, notifier.messages, 1)
-		require.Equal(t, "cancelled", r.Events[0].Notification)
-		require.Equal(t, "sent", r.Events[1].Notification)
+		for i := range 4 {
+			sentAt := cutoff.Add(time.Duration(i) * 3 * time.Second)
+			require.NoError(t, s.deliverNotification(ctx, sentAt))
+			require.NoError(t, s.deliverNotification(ctx, sentAt.Add(2999*time.Millisecond)))
+			require.Len(t, notifier.messages, i+1)
+		}
+		for _, event := range r.Events {
+			require.Equal(t, "sent", event.Notification)
+		}
 		// The cutoff is specific to 401 for business errors.
 		gw.observeRiskHTTP(ctx, &a, &http.Response{StatusCode: 503})
 		gw.observeRiskHTTP(ctx, &a, &http.Response{StatusCode: 503})

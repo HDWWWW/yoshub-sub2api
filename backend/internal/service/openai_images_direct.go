@@ -252,6 +252,7 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp 
 		}
 		return OpenAIUsage{}, 0, nil, err
 	}
+	upstreamResponseModelObserverFromContext(c).observe401Body(body)
 	results, err := parseCodexDirectImagesResponse(body)
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err

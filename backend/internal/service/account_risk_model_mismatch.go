@@ -24,7 +24,7 @@ func riskModelMismatchEnabled(c AccountRiskConfig) bool {
 }
 
 func riskEventNotificationEnabled(c AccountRiskConfig, event AccountRiskEvent) bool {
-	if event.Kind == accountRiskProbe401 || event.Kind == accountRiskBusiness401 {
+	if event.Kind == accountRiskProbe401 || event.Kind == accountRiskBusiness401 || event.Kind == accountRiskAccount401 {
 		return c.Notify401Enabled
 	}
 	if event.Kind == "model_mismatch" {

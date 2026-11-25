@@ -133,6 +133,7 @@ type OpenAIQuotaResetResult struct {
 // for OpenAI OAuth accounts. It reuses the privacy client factory so all calls
 // flow through the impersonated HTTP client (Cloudflare-friendly TLS fingerprint).
 type OpenAIQuotaService struct {
+	alerts401            *Account401Reporter
 	accountRepo          AccountRepository
 	proxyRepo            ProxyRepository
 	tokenProvider        *OpenAITokenProvider
@@ -165,6 +166,7 @@ func NewOpenAIQuotaService(
 // OAuth account. Returns infraerrors so the handler layer can map them to
 // stable error codes / HTTP statuses.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	ctx = s.alerts401.withScope(ctx, accountID, "查询账号用量")
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -390,6 +392,7 @@ func (s *OpenAIQuotaService) resetCredit(ctx context.Context, accountID int64, c
 		}
 	}
 
+	ctx = s.alerts401.withScope(ctx, accountID, "额度重置")
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -563,7 +566,7 @@ func (s *OpenAIQuotaService) recoverAgentIdentityTask(ctx context.Context, accou
 	if !account.IsOpenAIAgentIdentity() {
 		return nil
 	}
-	return ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, expectedTaskID)
+	return ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, expectedTaskID, s.alerts401)
 }
 
 func (s *OpenAIQuotaService) isAgentIdentityAccount(ctx context.Context, accountID int64) bool {
@@ -619,7 +622,7 @@ func (s *OpenAIQuotaService) buildCodexQuotaHeaders(ctx context.Context, account
 	if !account.IsOpenAIAgentIdentity() {
 		return headers, "", nil
 	}
-	if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, ""); err != nil {
+	if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, "", s.alerts401); err != nil {
 		return nil, "", err
 	}
 	key, err := agentIdentityKeyFromAccount(account)

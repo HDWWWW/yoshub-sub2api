@@ -1833,12 +1833,12 @@ func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) erro
 // EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
 // 未达到保存的隐私意图则重试，返回实际设置结果。
 func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Account) string {
-	return applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", false)
+	return applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", false, s.alerts401)
 }
 
 // ForceOpenAIPrivacy 强制重新应用保存的隐私意图，无论当前结果。
 func (s *adminServiceImpl) ForceOpenAIPrivacy(ctx context.Context, account *Account) string {
-	mode := applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", true)
+	mode := applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", true, s.alerts401)
 	if mode == "" {
 		return ""
 	}

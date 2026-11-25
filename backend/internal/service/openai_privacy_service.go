@@ -72,10 +72,11 @@ func MergeLockedOpenAIPrivacy(ctx context.Context, account, current *Account) {
 	}
 }
 
-func applyAccountOpenAIPrivacy(ctx context.Context, accountRepo AccountRepository, proxyRepo ProxyRepository, factory PrivacyClientFactory, account *Account, accessTokenOverride string, force bool) string {
+func applyAccountOpenAIPrivacy(ctx context.Context, accountRepo AccountRepository, proxyRepo ProxyRepository, factory PrivacyClientFactory, account *Account, accessTokenOverride string, force bool, alerts *Account401Reporter) string {
 	if account == nil || !account.IsOpenAIOAuth() || account.IsExcelOAuth() || account.IsCredentialShadow() || factory == nil {
 		return ""
 	}
+	ctx = alerts.withScope(ctx, account.ID, "设置账号隐私")
 	conditional, canReconcile := accountRepo.(openAIPrivacyStateRepository)
 	if canReconcile {
 		// The preference is already durable. A disconnected editor must not

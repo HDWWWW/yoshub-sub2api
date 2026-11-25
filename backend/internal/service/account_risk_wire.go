@@ -8,8 +8,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
-func ProvideAccountRiskService(store AccountRiskStore, accounts AccountRepository, groups GroupRepository, loads *ConcurrencyService, probe *AccountTestService, cfg *config.Config, refill *AccountRefillService, gateway *OpenAIGatewayService, counter429 AccountRisk429Counter) *AccountRiskService {
+func ProvideAccountRiskService(store AccountRiskStore, accounts AccountRepository, groups GroupRepository, loads *ConcurrencyService, probe *AccountTestService, cfg *config.Config, refill *AccountRefillService, gateway *OpenAIGatewayService, counter429 AccountRisk429Counter, reporter *Account401Reporter) *AccountRiskService {
 	s := NewAccountRiskService(store, accounts, groups, loads, probe, cfg)
+	s.notificationWake = reporter.wake
 	s.notifier = refill
 	s.counter429 = counter429
 	s.onProbe401Committed = func(ctx context.Context, a *Account, until time.Time, invalidate bool) {

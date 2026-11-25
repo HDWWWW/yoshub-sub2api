@@ -72,7 +72,7 @@ export interface AccountRiskRule {
     input_tokens: number
     output_tokens: number
   }
-  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'gateway' | 'stop' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
+  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'observed' | 'gateway' | 'stop' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
 }
 export interface AccountRiskManualResult {
   account_id: number

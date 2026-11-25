@@ -127,6 +127,7 @@ func (s *OpenAIQuotaService) QueryReferralEligibility(ctx context.Context, id in
 	if err != nil {
 		return nil, err
 	}
+	ctx = s.alerts401.withScope(ctx, id, "查询邀请资格")
 	callCtx, cancel := context.WithTimeout(ctx, openaiQuotaUpstreamTimeout)
 	defer cancel()
 	program := referralProgram(account)
@@ -187,6 +188,7 @@ func (s *OpenAIQuotaService) SendReferralInvite(ctx context.Context, id int64, i
 	if (eligibility.RequiresExplicitConfirmation == nil || *eligibility.RequiresExplicitConfirmation) && !input.Confirmed {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_REFERRAL_CONFIRMATION_REQUIRED", "confirm the recipient's consent before sending")
 	}
+	ctx = s.alerts401.withScope(ctx, id, "发送邀请")
 	callCtx, cancel := context.WithTimeout(ctx, openaiQuotaUpstreamTimeout)
 	defer cancel()
 	call, err := s.referralCall(callCtx, id, eligibility.ProgramID)

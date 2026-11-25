@@ -949,7 +949,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		applyOpenAICodexProbeHeaders(req.Header)
 	}
 	if credentialAccount.IsOpenAIAgentIdentity() {
-		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount)
+		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, s.openaiGatewayService.reporter401())
 		if authErr != nil {
 			return s.sendErrorAndEnd(c, "Failed to build Agent Identity authentication")
 		}
@@ -993,6 +993,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	s.observeTest401(ctx, account, resp.StatusCode, "手动测试")
 	defer func() { _ = resp.Body.Close() }()
 	if risk := riskProbeForContext(ctx); risk != nil {
 		return finishRiskProbeResponse(risk, resp, false)
@@ -1010,7 +1011,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 		if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 			expectedTaskID := credentialAccount.GetCredential("task_id")
-			if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID); err != nil {
+			if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID, s.openaiGatewayService.reporter401()); err != nil {
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
 			}
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
@@ -1028,7 +1029,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream
-	return s.processOpenAIStream(c, resp.Body)
+	return s.processOpenAIStream(c, resp.Body, account)
 }
 
 // testGrokAccountConnection routes Grok admin connectivity tests by explicit mode first,
@@ -1322,7 +1323,7 @@ func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx con
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Grok Responses API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIStream(c, resp.Body)
+	return s.processOpenAIStream(c, resp.Body, account)
 }
 
 func (s *AccountTestService) testGrokImageGeneration(c *gin.Context, ctx context.Context, account *Account, authToken, modelID, prompt, imageDataURL string) error {
@@ -2211,6 +2212,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
 	}
+	s.observeTest401(ctx, account, resp.StatusCode, "手动测试 Chat Completions")
 	defer func() { _ = resp.Body.Close() }()
 	if risk := riskProbeForContext(ctx); risk != nil {
 		return finishRiskProbeResponse(risk, resp, true)
@@ -2228,7 +2230,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIChatCompletionsStream(c, resp.Body)
+	return s.processOpenAIChatCompletionsStream(c, resp.Body, account)
 }
 
 // testOpenAICompactConnection probes native remote compaction v2 (streaming
@@ -2304,7 +2306,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	req.Header.Set("Accept", "text/event-stream")
 	ensureOpenAIRemoteCompactionV2BetaFeature(req.Header)
 	if credentialAccount.IsOpenAIAgentIdentity() {
-		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount)
+		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, s.openaiGatewayService.reporter401())
 		if authErr != nil {
 			return s.sendErrorAndEnd(c, "Failed to build Agent Identity authentication")
 		}
@@ -2352,19 +2354,21 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	s.observeTest401(ctx, account, resp.StatusCode, "手动测试 Compact")
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 	if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 		expectedTaskID := credentialAccount.GetCredential("task_id")
-		if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID); err != nil {
+		if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID, s.openaiGatewayService.reporter401()); err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
 		}
 		c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
 
+	s.observeTest401Body(ctx, account, resp.StatusCode, body, "手动测试 Compact")
 	compactionFound := openAICompactProbeFoundCompactionItem(body)
 	if s.accountRepo != nil {
 		updates := buildOpenAICompactProbeExtraUpdates(resp, body, nil, compactionFound, time.Now())
@@ -2939,7 +2943,7 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 
 // processOpenAIChatCompletionsStream processes SSE chunks from the
 // OpenAI-compatible Chat Completions API.
-func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader, account *Account) error {
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
@@ -2980,6 +2984,7 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 		seenJSON = true
 
 		if errData, ok := data["error"].(map[string]any); ok {
+			s.observeTest401Frame(c, account, jsonStr)
 			errorMsg := "Chat Completions API (/v1/chat/completions) returned an error"
 			if msg, ok := errData["message"].(string); ok && msg != "" {
 				errorMsg = msg
@@ -3014,7 +3019,7 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 }
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
-func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
+func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader, account *Account) error {
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 
@@ -3062,6 +3067,7 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
 		case "response.failed":
+			s.observeTest401Frame(c, account, jsonStr)
 			errorMsg := "OpenAI response failed"
 			if responseData, ok := data["response"].(map[string]any); ok {
 				if errData, ok := responseData["error"].(map[string]any); ok {
@@ -3072,6 +3078,7 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 			}
 			return s.sendErrorAndEnd(c, errorMsg)
 		case "error":
+			s.observeTest401Frame(c, account, jsonStr)
 			errorMsg := "Unknown error"
 			if errData, ok := data["error"].(map[string]any); ok {
 				if msg, ok := errData["message"].(string); ok {
@@ -3140,6 +3147,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	s.observeTest401(ctx, account, resp.StatusCode, "手动测试图片")
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
@@ -3151,6 +3159,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
+	s.observeTest401Body(ctx, account, resp.StatusCode, body, "手动测试图片")
 	// Parse {"data": [{"b64_json": "...", "revised_prompt": "..."}]}
 	var result struct {
 		Data []struct {
@@ -3238,7 +3247,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	req.Host = "chatgpt.com"
 	if credentialAccount.IsOpenAIAgentIdentity() {
-		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount)
+		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, s.openaiGatewayService.reporter401())
 		if authErr != nil {
 			return s.sendErrorAndEnd(c, "Failed to build Agent Identity authentication")
 		}
@@ -3277,6 +3286,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Image upstream request failed: %s", err.Error()))
 	}
+	s.observeTest401(ctx, account, resp.StatusCode, "手动测试图片")
 	defer func() {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
@@ -3298,6 +3308,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	}
 	body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
 
+	s.observeTest401Body(ctx, account, resp.StatusCode, body, "手动测试图片")
 	var results []openAIResponsesImageResult
 	if direct {
 		results, err = parseCodexDirectImagesResponse(body)

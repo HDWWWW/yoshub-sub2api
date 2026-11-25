@@ -1378,6 +1378,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, err
 	}
 
+	upstreamResponseModelObserverFromContext(c).observe401Body(body)
 	var usage OpenAIUsage
 	forEachOpenAISSEDataPayload(string(body), func(data []byte) {
 		s.parseOpenAIImagesSSEUsageBytes(data, &usage)
@@ -1511,6 +1512,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 	}
 
 	processData := func(dataBytes []byte) {
+		upstreamResponseModelObserverFromContext(c).observe401Frame(dataBytes, gjson.GetBytes(dataBytes, "type").Str)
 		if processDataDone || processDataErr != nil {
 			return
 		}

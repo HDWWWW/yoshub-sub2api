@@ -205,6 +205,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		logger.LegacyPrintf("service.openai_probe", "probe_request_failed: account_id=%d url=%s err=%v", accountID, probeURL, err)
 		return
 	}
+	s.observeTest401(ctx, account, resp.StatusCode, "Responses 能力检测")
 	defer func() { _ = resp.Body.Close() }()
 	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, responsesProbeMaxBodyBytes))
 	// 有界排空剩余响应体:既帮助连接复用,又避免行为异常的上游用超大响应体拖住探测。
@@ -216,6 +217,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
+	s.observeTest401Body(ctx, account, resp.StatusCode, bodyBytes, "Responses 能力检测")
 	// 本次响应不足以下结论时保持 unknown，与网络层失败、响应体读取失败一致：
 	// 标记一旦写成 false 就会一直粘住（只有下次账号创建/更新才重探），网关会静默
 	// 改走 /v1/chat/completions —— 对 Codex 客户端意味着 prompt 缓存前缀被打散。

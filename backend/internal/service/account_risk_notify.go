@@ -151,14 +151,6 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 			}
 		}
 		if selected != nil {
-			reclaimed, err := s.queued401Reclaimed(claimCtx, selected)
-			if err != nil {
-				return err
-			}
-			if reclaimed {
-				selected.Notification = "cancelled"
-				return nil
-			}
 			selected.Notification, selected.NotificationAt = "sending", &now
 			state.NextNotificationAt = now.Add(3 * time.Second)
 			event = *selected
@@ -176,6 +168,8 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 	}
 	action := "已关闭此账号调度，现有请求继续完成。"
 	switch event.Action {
+	case "observed":
+		action = "已记录本次上游 401。"
 	case "gateway":
 		action = "已记录业务请求的上游 401，调度状态由网关现有认证规则处理。"
 	case "cooldown":

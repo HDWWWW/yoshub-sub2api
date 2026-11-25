@@ -68,6 +68,7 @@ type TokenRefreshService struct {
 
 	// OpenAI privacy: 刷新成功后检查并设置 training opt-out
 	privacyClientFactory PrivacyClientFactory
+	alerts401            *Account401Reporter
 	proxyRepo            ProxyRepository
 
 	stopCh        chan struct{}
@@ -1461,7 +1462,7 @@ func isNonRetryableRefreshError(err error) bool {
 // ensureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
 // 未达到保存的隐私意图则重试，并持久化结果到 Extra。
 func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *Account) {
-	applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", false)
+	applyAccountOpenAIPrivacy(ctx, s.accountRepo, s.proxyRepo, s.privacyClientFactory, account, "", false, s.alerts401)
 }
 
 // ensureAntigravityPrivacy 后台刷新中检查 Antigravity OAuth 账号隐私状态。

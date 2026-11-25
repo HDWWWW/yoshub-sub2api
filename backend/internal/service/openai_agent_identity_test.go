@@ -119,10 +119,10 @@ func TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses(t *testi
 		"agent_runtime_id":  key.runtimeID,
 		"agent_private_key": privateKey,
 	}}
-	taskID, err := registerAgentIdentityTask(context.Background(), account)
+	taskID, err := registerAgentIdentityTask(context.Background(), account, nil)
 	require.NoError(t, err)
 	require.Equal(t, "task-plain", taskID)
-	taskID, err = registerAgentIdentityTask(context.Background(), account)
+	taskID, err = registerAgentIdentityTask(context.Background(), account, nil)
 	require.NoError(t, err)
 	require.Equal(t, "task-encrypted", taskID)
 }
@@ -185,7 +185,7 @@ func TestEnsureAgentIdentityTaskSharesLockAcrossServicesForSameAccount(t *testin
 	for _, request := range requests {
 		go func() {
 			<-start
-			errors <- ensureAgentIdentityTaskForAccount(context.Background(), repo, nil, &sync.Mutex{}, request, "")
+			errors <- ensureAgentIdentityTaskForAccount(context.Background(), repo, nil, &sync.Mutex{}, request, "", nil)
 		}()
 	}
 	close(start)

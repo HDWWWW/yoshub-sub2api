@@ -1070,6 +1070,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		}
 		return OpenAIUsage{}, 0, nil, err
 	}
+	upstreamResponseModelObserverFromContext(c).observe401Body(body)
 	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
@@ -1210,6 +1211,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		mergeOpenAIUsage(&usage, dataBytes)
 		imageCounter.AddSSEData(dataBytes)
 		eventType := gjson.GetBytes(dataBytes, "type").String()
+		upstreamResponseModelObserverFromContext(c).observe401Frame(dataBytes, eventType)
 		if string(dataBytes) == "[DONE]" || eventType == "response.completed" {
 			upstreamCompleted = true
 		}

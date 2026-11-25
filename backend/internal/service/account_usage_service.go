@@ -329,6 +329,7 @@ type ClaudeUsageFetcher interface {
 
 // AccountUsageService 账号使用量查询服务
 type AccountUsageService struct {
+	alerts401               *Account401Reporter
 	accountRepo             AccountRepository
 	usageLogRepo            UsageLogRepository
 	usageFetcher            ClaudeUsageFetcher
@@ -946,7 +947,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	req.Host = "chatgpt.com"
 	req.Header.Set("Content-Type", "application/json")
 	if account.IsOpenAIAgentIdentity() {
-		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account)
+		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, s.alerts401)
 		if authErr != nil {
 			return nil, fmt.Errorf("build Agent Identity authentication: %w", authErr)
 		}
@@ -993,6 +994,9 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		s.alerts401.observe(ctx, risk401RequestGroup(ctx), account, resp.StatusCode, "用量探测")
+	}
 	updates, err := extractOpenAICodexProbeUpdates(resp)
 	if err != nil {
 		return nil, err

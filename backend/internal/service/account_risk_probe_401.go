@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,7 +57,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 	if evidence.failure == "" || !r.Config.Probe401Enabled {
 		r.Observation.LastProbeResult = "自动风控探测收到上游 HTTP 401"
 		if r.Config.Notify401Enabled {
-			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, "notify_only", r.Observation.LastProbeResult)
+			appendProbe401Event(r, job, evidence, now, "notify_only", r.Observation.LastProbeResult)
 		}
 		return nil, time.Time{}, nil
 	}
@@ -64,7 +65,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 	alertStale := func() {
 		r.Observation.LastProbeResult = stale
 		if r.Config.Notify401Enabled {
-			appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, "notify_only", stale)
+			appendProbe401Event(r, job, evidence, now, "notify_only", stale)
 		}
 	}
 	source, err := s.probeAccount(ctx, job, now)
@@ -122,8 +123,18 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 			}
 		}
 	}
-	appendRisk401Event(r, owner.ID, owner.Name, evidence.observedAt(now), accountRiskProbe401, action, r.Observation.LastProbeResult)
+	appendProbe401Event(r, job, evidence, now, action, r.Observation.LastProbeResult)
 	return owner, blockedUntil, nil
+}
+
+// The reservation owns one terminal 401, including a late result saved after a rule edit.
+func appendProbe401Event(r *AccountRiskRule, job *accountRiskJob, evidence *riskProbe401Evidence, now time.Time, action, reason string) {
+	id := job.pending.ID + "/401"
+	if slices.ContainsFunc(r.Events, func(e AccountRiskEvent) bool { return e.ID == id }) {
+		return
+	}
+	appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, action, reason)
+	r.Events[0].ID = id
 }
 
 func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time, kind, action, reason string) {

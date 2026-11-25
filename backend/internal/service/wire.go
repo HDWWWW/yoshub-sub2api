@@ -117,10 +117,12 @@ func ProvideOpenAIOAuthService(
 	oauthClient OpenAIOAuthClient,
 	privacyClientFactory PrivacyClientFactory,
 	accountRepo AccountRepository,
+	alerts401 *Account401Reporter,
 ) *OpenAIOAuthService {
 	svc := NewOpenAIOAuthService(proxyRepo, oauthClient)
 	svc.SetPrivacyClientFactory(privacyClientFactory)
 	svc.privacyAccountRepo = accountRepo
+	svc.alerts401 = alerts401
 	return svc
 }
 
@@ -141,6 +143,7 @@ func ProvideTokenRefreshService(
 	refreshAPI *OAuthRefreshAPI,
 	runtimeBlocker AccountRuntimeBlocker,
 	quotaService *OpenAIQuotaService,
+	alerts401 *Account401Reporter,
 ) *TokenRefreshService {
 	svc := NewTokenRefreshService(accountRepo, oauthService, openaiOAuthService, geminiOAuthService, antigravityOAuthService, cacheInvalidator, schedulerCache, cfg, tempUnschedCache, grokOAuthService)
 	// 注入 OpenAI privacy opt-out 依赖
@@ -151,6 +154,7 @@ func ProvideTokenRefreshService(
 	svc.SetRefreshPolicy(DefaultBackgroundRefreshPolicy())
 	svc.SetAccountRuntimeBlocker(runtimeBlocker)
 	svc.ungroupedQuota = quotaService
+	svc.alerts401 = alerts401
 	svc.Start()
 	return svc
 }
@@ -200,9 +204,11 @@ func ProvideOpenAIQuotaService(
 	privacyClientFactory PrivacyClientFactory,
 	referralClient OpenAIReferralClient,
 	openAIGatewayService *OpenAIGatewayService,
+	alerts401 *Account401Reporter,
 ) *OpenAIQuotaService {
 	service := NewOpenAIQuotaService(accountRepo, proxyRepo, tokenProvider, privacyClientFactory, referralClient)
 	service.agentIdentityWS = openAIGatewayService
+	service.alerts401 = alerts401
 	return service
 }
 
@@ -242,6 +248,7 @@ func ProvideAccountUsageService(
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
+	alerts401 *Account401Reporter,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -257,6 +264,7 @@ func ProvideAccountUsageService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
+	service.alerts401 = alerts401
 	return service
 }
 
@@ -875,6 +883,7 @@ func ProvideAccountRefillService(store AccountRefillStore, encryptor SecretEncry
 }
 
 var ProviderSet = wire.NewSet(
+	NewAccount401Reporter,
 	ProvideAccountRiskService,
 	ProvideAccountAutoFastService,
 	ProvideAccountRefillService,

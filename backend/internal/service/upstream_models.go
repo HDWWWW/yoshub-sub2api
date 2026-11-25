@@ -879,6 +879,7 @@ func (s *AccountTestService) readUpstreamModelsResponse(req *http.Request, accou
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	s.observeTest401(req.Context(), account, resp.StatusCode, "同步模型目录")
 	bodyLimit := resolveModelsListReadLimit(s.cfg)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
 	if err != nil {
@@ -896,6 +897,7 @@ func (s *AccountTestService) readUpstreamModelsResponse(req *http.Request, accou
 			Err:        fmt.Errorf("upstream model list returned HTTP %d", resp.StatusCode),
 		}
 	}
+	s.observeTest401Body(req.Context(), account, resp.StatusCode, body, "同步模型目录")
 	return body, nil
 }
 
@@ -1282,6 +1284,7 @@ func (s *AccountTestService) buildOpenAIOAuthUpstreamModelsRequest(ctx context.C
 			s.agentIdentityWS,
 			&s.agentIdentityTaskMu,
 			credentialAccount,
+			s.openaiGatewayService.reporter401(),
 		)
 		if authErr != nil {
 			return nil, newUpstreamModelSyncUpstreamError("Failed to build OpenAI Agent Identity authentication", authErr)

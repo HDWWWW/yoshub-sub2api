@@ -47,6 +47,7 @@ func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, accoun
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_MODELS_REQUEST_INVALID", "cannot build upstream model list request: %v", err)
 	}
 	request := openAIModelsRequest{
+		sourceAccount: account, riskGroupID: risk401RequestGroup(ctx),
 		url: req.URL.String(), headers: req.Header,
 		proxyURL: upstreamModelsProxyURL(account), accountID: account.ID,
 		credentialAccountID: credentialAccount.ID, credentialAccount: credentialAccount,

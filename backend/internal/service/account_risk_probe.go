@@ -54,7 +54,7 @@ func finishRiskProbeResponse(call *riskProbeCall, resp *http.Response, chat bool
 		if call.config.Probe401Enabled {
 			call.result.auth401 = readRiskProbe401(call.credentialOwner, call.config.Model, resp.Body)
 		}
-		if call.config.Notify401Enabled && call.result.auth401 == nil {
+		if call.result.auth401 == nil {
 			call.result.auth401 = &riskProbe401Evidence{ownerID: call.credentialOwner.ID, ownerName: riskNotificationName(call.credentialOwner.Name)}
 		}
 		if evidence := call.result.auth401; evidence != nil {
@@ -67,7 +67,11 @@ func finishRiskProbeResponse(call *riskProbeCall, resp *http.Response, chat bool
 	}
 	result, err := parseRiskProbeResponse(resp.Body, chat, strings.Contains(resp.Header.Get("Content-Type"), "application/json"))
 	call.result = result
-	call.result.UpstreamStatus = resp.StatusCode
+	if result.UpstreamStatus == http.StatusUnauthorized && call.credentialOwner != nil {
+		call.result.auth401 = &riskProbe401Evidence{ownerID: call.credentialOwner.ID, ownerName: riskNotificationName(call.credentialOwner.Name), receivedAt: time.Now().UTC()}
+	} else {
+		call.result.UpstreamStatus = resp.StatusCode
+	}
 	return err
 }
 
@@ -112,6 +116,9 @@ func parseRiskProbeResponse(body io.Reader, chat, jsonBody bool) (AccountRiskPro
 			return false, errors.New("invalid risk probe frame")
 		}
 		if (len(event.Error) > 0 && string(event.Error) != "null") || event.Type == "error" || event.Type == "response.failed" || event.Type == "response.incomplete" {
+			if explicitStream401(raw) {
+				result.UpstreamStatus = http.StatusUnauthorized
+			}
 			return false, errors.New("risk probe terminal error")
 		}
 		if chat {

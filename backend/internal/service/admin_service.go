@@ -736,6 +736,7 @@ type adminServiceImpl struct {
 	defaultSubAssigner   DefaultSubscriptionAssigner
 	userSubRepo          UserSubscriptionRepository
 	privacyClientFactory PrivacyClientFactory
+	alerts401            *Account401Reporter
 	runtimeBlocker       AccountRuntimeBlocker
 	affiliateService     adminRechargeAffiliateAccruer
 	compositeRouteRepo   CompositeModelRouteRepository
@@ -786,6 +787,7 @@ func NewAdminService(
 	compositeResolver *CompositeRouteResolver,
 	channelCacheInvalidator ChannelCacheInvalidator,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	alerts401 *Account401Reporter,
 ) AdminService {
 	return &adminServiceImpl{
 		cfg:                  cfg,
@@ -810,6 +812,7 @@ func NewAdminService(
 		defaultSubAssigner:   defaultSubAssigner,
 		userSubRepo:          userSubRepo,
 		privacyClientFactory: privacyClientFactory,
+		alerts401:            alerts401,
 		runtimeBlocker:       runtimeBlocker,
 		affiliateService:     affiliateService,
 		compositeRouteRepo:   compositeRouteRepo,

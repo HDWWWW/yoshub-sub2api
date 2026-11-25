@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 )
 
@@ -93,8 +94,8 @@ func (s *AccountRiskService) runProbeWithinLease(ctx context.Context, account *A
 		e.reclaimAt = deadline
 	}
 	if errors.Is(context.Cause(ctx), errRiskSupplierReclaimed) {
-		// A 401 received just before reclaim can be queued after the timer fires.
-		if e := result.auth401; e == nil || e.receivedAt.IsZero() || supplierReclaimed(deadline, e.receivedAt) {
+		// Preserve a real response racing the deadline. Scheduling remains lease-bound.
+		if result.UpstreamStatus != http.StatusUnauthorized || result.auth401 == nil {
 			return AccountRiskProbeResult{}, errRiskSupplierReclaimed
 		}
 	}
@@ -131,24 +132,4 @@ func (s *AccountRiskService) known401Reclaimed(ctx context.Context, source *Acco
 		}
 	}
 	return supplierReclaimed(riskProbeDeadline(source, owner), at), nil
-}
-
-// Check old pending events and leases synchronized since enqueue. A delayed
-// delivery uses the rejection time, keeping genuine pre-reclaim alerts.
-func (s *AccountRiskService) queued401Reclaimed(ctx context.Context, e *AccountRiskEvent) (bool, error) {
-	if e.Kind != accountRiskBusiness401 && e.Kind != accountRiskProbe401 {
-		return false, nil
-	}
-	a, err := s.accounts.GetByID(ctx, e.AccountID)
-	if errors.Is(err, ErrAccountNotFound) {
-		return false, nil
-	}
-	if err != nil || a == nil {
-		return false, err
-	}
-	var parentID int64
-	if a.IsShadow() {
-		parentID = *a.ParentAccountID
-	}
-	return s.known401Reclaimed(ctx, a, parentID, e.At)
 }
