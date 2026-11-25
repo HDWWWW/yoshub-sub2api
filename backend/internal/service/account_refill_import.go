@@ -49,6 +49,10 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 	if j.Provider == refillProviderMuze {
 		extra["import_source"] = "muze_api"
 	}
+	if j.Provider == refillProvider558669 {
+		extra["import_source"] = "558669_api"
+		extra["refill_delivery_version"] = j.DeliveryVersion
+	}
 	if j.DeliveryConfig.OpenAIResponsesFlattenNamespaces != nil && *j.DeliveryConfig.OpenAIResponsesFlattenNamespaces {
 		extra["openai_responses_flatten_namespaces"] = true
 	}
@@ -64,7 +68,7 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 	if j.ExpiresAt != nil {
 		extra[AccountSourceExpiryExtraKey] = *j.ExpiresAt
 	}
-	if j.Provider == "" {
+	if j.Provider == "" || j.Provider == refillProvider558669 {
 		// 1208 may send the supplier lease only with the delivered account.
 		if source, ok := extra[AccountSourceExpiryExtraKey].(int64); ok && source > 0 && source <= 253402214399 {
 			j.SupplierExpiresAt = &source

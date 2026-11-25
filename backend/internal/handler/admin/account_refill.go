@@ -336,6 +336,46 @@ func (h *AccountHandler) ConfigureMuzeRefill(c *gin.Context) {
 	h.GetAccountRefill(c)
 }
 
+func (h *AccountHandler) Get558669RefillCatalog(c *gin.Context) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 35*time.Second)
+	defer cancel()
+	view, err := svc.Catalog558669(ctx)
+	if err != nil {
+		refillResponseError(c, err)
+		return
+	}
+	response.Success(c, view)
+}
+
+func (h *AccountHandler) Configure558669Refill(c *gin.Context) {
+	svc, ok := h.refillForRequest(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		APIToken string `json:"api_token"`
+		Revision int64  `json:"revision"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8192)
+	if c.ShouldBindJSON(&req) != nil {
+		response.BadRequest(c, "558669 连接设置无效")
+		return
+	}
+	middleware.SetAuditAction(c, "admin.accounts.refill.558669.configure")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+	if err := svc.Configure558669(ctx, req.APIToken, req.Revision); err != nil {
+		refillResponseError(c, err)
+		return
+	}
+	h.GetAccountRefill(c)
+}
+
 func (h *AccountHandler) ReconcileMuzeRefill(c *gin.Context) {
 	svc, ok := h.refillForRequest(c)
 	if !ok {

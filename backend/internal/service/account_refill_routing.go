@@ -14,6 +14,9 @@ const retiredRefillProvider = "fendudu"
 
 // The empty job provider is the on-disk identifier for 1208, including old orders.
 func (c AccountRefillConfig) automaticProvider() string {
+	if c.PrimaryProvider == refillProvider558669 {
+		return refillProvider558669
+	}
 	if c.PrimaryProvider == refillProviderMuze {
 		return refillProviderMuze
 	}
@@ -26,18 +29,27 @@ func otherRefillProvider(primary string) string {
 	return refillProviderMuze
 }
 func refillPublicProvider(provider string) string {
+	if provider == refillProvider558669 {
+		return provider
+	}
 	if provider == refillProviderMuze {
 		return refillProviderMuze
 	}
 	return "1208"
 }
 func refillProviderName(provider string) string {
+	if provider == refillProvider558669 {
+		return provider
+	}
 	if provider == refillProviderMuze {
 		return "Muze"
 	}
 	return "1208"
 }
 func (state *accountRefillState) providerBackoff(provider string) time.Time {
+	if provider == refillProvider558669 {
+		return state.Supplier558669.RetryAt
+	}
 	if provider == refillProviderMuze {
 		return state.Muze.RetryAt
 	}
@@ -89,11 +101,18 @@ func (s *AccountRefillService) routedQuote(ctx context.Context, state *accountRe
 	if provider == refillProviderMuze {
 		return s.singleMuzeQuote(ctx, state, plan, false, persist)
 	}
+	if provider == refillProvider558669 {
+		q, err := s.quote558669(ctx, state, plan, persist)
+		return q, "", err
+	}
 	q, err := s.manualRefillQuote(ctx, state, plan, persist)
 	return q, "", err
 }
 
 func (s *AccountRefillService) submitRefillReservation(ctx context.Context, state *accountRefillState, j *AccountRefillJob, token string, persist func() error) error {
+	if j.Provider == refillProvider558669 {
+		return s.advance558669(ctx, state, j, persist)
+	}
 	if j.Provider == refillProviderMuze {
 		return s.advanceMuzeJob(ctx, state, j, time.Now(), persist)
 	}
@@ -123,6 +142,9 @@ type refillSupplyShortage struct {
 func (s *AccountRefillService) automaticPrimaryQuote(ctx context.Context, state *accountRefillState, primary, plan string, persist func() error) (*RefillQuote, string, error) {
 	if primary == refillProviderMuze {
 		return s.routedQuote(ctx, state, refillProviderMuze, plan, persist)
+	}
+	if primary == refillProvider558669 {
+		return s.routedQuote(ctx, state, primary, plan, persist)
 	}
 	if state.Catalog == nil {
 		return nil, "", errors.New("缺少 1208 报价")
@@ -164,6 +186,9 @@ func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accoun
 	primary, plan := route.provider, route.plan
 	q, connection, err := s.automaticPrimaryQuote(ctx, state, primary, plan, persist)
 	rule := state.Config.MuzeFallback
+	if state.Config.backupProvider(primary) == primary {
+		return q, connection, false, err
+	}
 	var unavailable *refillSupplyUnavailable
 	shortage := state.MuzeFallback.Shortage
 	if shortage != nil && shortage.Provider == "" { // Receipts written before per-step suppliers.
@@ -203,7 +228,41 @@ func (s *AccountRefillService) automaticQuote(ctx context.Context, state *accoun
 			return nil, "", false, errors.New("等待在途备用订单完成")
 		}
 	}
-	q, connection, err = s.routedQuote(ctx, state, otherRefillProvider(primary), "pro20x", persist)
+	q, connection, err = s.routedQuote(ctx, state, state.Config.backupProvider(primary), "pro20x", persist)
 	return q, connection, true, err
 }
 func (j AccountRefillJob) isBackup() bool { return j.FallbackForJobID != "" || j.SupplyFallback }
+
+func (c AccountRefillConfig) backupProvider(primary string) string {
+	if c.MuzeFallback != nil && c.MuzeFallback.Provider != "" {
+		if c.MuzeFallback.Provider == "1208" {
+			return ""
+		}
+		return c.MuzeFallback.Provider
+	}
+	return otherRefillProvider(primary)
+}
+
+func validateRefillFallbackConnections(c AccountRefillConfig, state *accountRefillState) error {
+	if !c.MuzeFallback.enabled() {
+		return nil
+	}
+	providers := []string{c.automaticProvider()}
+	if c.RotationEnabled {
+		for cursor := 0; cursor < refillRotationLength(c); cursor++ {
+			providers = append(providers, refillNextRoute(c, cursor).provider)
+		}
+	}
+	for _, p := range providers {
+		for _, selected := range []string{p, c.backupProvider(p)} {
+			configured := selected == refillProviderMuze && state.Muze.EncryptedToken != "" || selected == refillProvider558669 && state.Supplier558669.EncryptedToken != "" || selected == "" && state.EncryptedToken != ""
+			if !configured {
+				if selected == refillProviderMuze {
+					return errors.New("启用备用补号前请先保存muze连接设置")
+				}
+				return errors.New("启用备用补号前请先配置 " + refillProviderName(selected) + " API Key")
+			}
+		}
+	}
+	return nil
+}

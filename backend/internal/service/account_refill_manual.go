@@ -37,7 +37,7 @@ func validateManualRefillRequest(r ManualAccountRefillRequest, now time.Time) er
 	if r.Provider == refillProviderMuze {
 		validPlan = validMuzeIdentifier(r.Plan, false) && muzeTier(r.Plan) != ""
 	}
-	if (r.Provider != "" && r.Provider != refillProviderMuze) || len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !validPlan {
+	if (r.Provider != "" && r.Provider != refillProviderMuze && r.Provider != refillProvider558669) || len(parts) != 2 || len(parts[0]) != 13 || len(parts[1]) != 36 || r.Revision < 1 || !validPlan {
 		return invalidManualRefill("手动补号参数无效")
 	}
 	stamp, err := strconv.ParseInt(parts[0], 10, 64)
@@ -55,7 +55,7 @@ func validateManualRefillRequest(r ManualAccountRefillRequest, now time.Time) er
 func trimAccountRefillJobs(jobs []AccountRefillJob, now time.Time) []AccountRefillJob {
 	kept := jobs[:0]
 	for i, j := range jobs {
-		if i < 200 || j.pending() || j.ReplacementPending || (j.ManualRequestID != "" && j.CreatedAt.After(now.Add(-manualRefillRequestLifetime-time.Hour))) {
+		if i < 200 || j.pending() || j.needs558669Sync(now) || j.ReplacementPending || (j.ManualRequestID != "" && j.CreatedAt.After(now.Add(-manualRefillRequestLifetime-time.Hour))) {
 			kept = append(kept, j)
 		}
 	}
@@ -132,7 +132,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		if c.Delivery.ExpiryMode == "fixed" && *c.Delivery.FixedExpiresAt <= now.Unix() {
 			return invalidManualRefill("指定截止时间已过，请修改推送设置并保存")
 		}
-		if (request.Provider == "" && now.Before(state.ProviderRetryAt)) || (request.Provider == refillProviderMuze && now.Before(state.Muze.RetryAt)) {
+		if now.Before(state.providerBackoff(request.Provider)) {
 			return invalidManualRefill("号商暂不可用或正在限流，请稍后再试")
 		}
 		pending := 0
@@ -167,9 +167,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 		if err != nil {
 			return err
 		}
-		day := now.In(refillTimezone).Format("2006-01-02")
-		usage := state.Usage[day]
-		if usage.Count >= c.DailyMaxCount || usage.Points+quote.Price > c.DailyMaxPoints+1e-8 {
+		if !state.canReserveRefill(request.Provider, quote.Price, now) {
 			return invalidManualRefill("已达到本日数量或积分预算")
 		}
 		grace := c.ImportExpiryGraceMinutes
@@ -189,9 +187,7 @@ func (s *AccountRefillService) Manual(ctx context.Context, request ManualAccount
 			job.ReasonDetail += " muze扣减 1 次预购次数，不折算原号商积分；推号后按本单保存的设置应用。"
 		}
 		state.Jobs = trimAccountRefillJobs(append([]AccountRefillJob{job}, state.Jobs...), now)
-		usage.Count++
-		usage.Points += quote.Price
-		state.Usage[day] = usage
+		state.addRefillBudget(job)
 		state.LastSubmitAt = now
 		state.Message = "手动补号已受理，按已保存的推送设置处理"
 		return persist()

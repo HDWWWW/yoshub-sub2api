@@ -37,6 +37,7 @@ type AccountRefillRotationStep struct {
 }
 
 type AccountRefillConfig struct {
+	Supplier558669            *Refill558669Limits                    `json:"supplier_558669,omitempty"`
 	PrimaryProvider           string                                 `json:"primary_provider,omitempty"`
 	MuzeFallback              *AccountRefillMuzeFallbackConfig       `json:"muze_fallback,omitempty"`
 	DailySchedules            []AccountRefillDailySchedule           `json:"daily_schedules"`
@@ -113,10 +114,13 @@ func DefaultAccountRefillConfig() AccountRefillConfig {
 }
 
 func (c AccountRefillConfig) Validate() error {
-	if c.PrimaryProvider != "" && c.PrimaryProvider != "1208" && c.PrimaryProvider != refillProviderMuze {
+	if c.PrimaryProvider != "" && c.PrimaryProvider != "1208" && c.PrimaryProvider != refillProviderMuze && c.PrimaryProvider != refillProvider558669 {
 		return errors.New("无效的主号商")
 	}
 	if err := c.MuzeFallback.validate(); err != nil {
+		return err
+	}
+	if err := c.validate558669(); err != nil {
 		return err
 	}
 	if err := validateRefillDailySchedules(c); err != nil {
@@ -211,6 +215,12 @@ func (c AccountRefillConfig) importConcurrencyForPlan(plan string) int {
 }
 
 type AccountRefillJob struct {
+	EntitlementStatus      string                      `json:"entitlement_status,omitempty"`
+	DeliveryVersion        int64                       `json:"delivery_version,omitempty"`
+	AppliedDeliveryVersion int64                       `json:"applied_delivery_version,omitempty"`
+	BillingStatus          string                      `json:"billing_status,omitempty"`
+	SupplierEmail          string                      `json:"supplier_email,omitempty"`
+	CredentialsSyncStopped bool                        `json:"credentials_sync_stopped,omitempty"`
 	MuzeFallbackJobID      string                      `json:"muze_fallback_job_id,omitempty"`
 	SupplyFallback         bool                        `json:"supply_fallback,omitempty"`
 	FallbackForJobID       string                      `json:"fallback_for_job_id,omitempty"`
@@ -312,6 +322,7 @@ type AccountRefillEvaluation struct {
 }
 
 type accountRefillState struct {
+	Supplier558669        refill558669State                           `json:"supplier_558669,omitempty"`
 	MuzeFallback          accountRefillMuzeFallbackState              `json:"muze_fallback"`
 	WorkdayCalendar       *refillWorkdayCalendar                      `json:"workday_calendar,omitempty"`
 	Muze                  muzeRefillState                             `json:"muze"`

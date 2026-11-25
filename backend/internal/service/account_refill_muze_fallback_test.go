@@ -32,7 +32,7 @@ func fallbackHarness(t *testing.T) (*AccountRefillService, *refillTestStore, *mu
 	store.mutate(t, func(state *accountRefillState) {
 		state.Config.Enabled, state.Config.MonitorEnabled = true, true
 		state.Config.Mode = "fixed"
-		state.Config.MuzeFallback = &AccountRefillMuzeFallbackConfig{true, 3, 5}
+		state.Config.MuzeFallback = &AccountRefillMuzeFallbackConfig{Enabled: true, FailureThreshold: 3, TimeoutMinutes: 5}
 		state.ProviderRetryAt, state.NextCheckAt = time.Now().Add(time.Hour), time.Now().Add(time.Hour)
 		state.Config.PlanImportConcurrency = map[string]int{"pro20x": 77}
 		state.Config.ImportExpiryGraceMinutes = 10
@@ -339,14 +339,14 @@ func TestMuzeFallbackConfigurePreservesOldClientsAndStartsFresh(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, state.Config.MuzeFallback.Enabled)
 	require.Equal(t, 3, state.Config.MuzeFallback.FailureThreshold)
-	for _, invalid := range []AccountRefillMuzeFallbackConfig{{true, 0, 5}, {true, 101, 5}, {true, 3, 0}, {true, 3, 1441}} {
+	for _, invalid := range []AccountRefillMuzeFallbackConfig{{Enabled: true, FailureThreshold: 0, TimeoutMinutes: 5}, {Enabled: true, FailureThreshold: 101, TimeoutMinutes: 5}, {Enabled: true, FailureThreshold: 3, TimeoutMinutes: 0}, {Enabled: true, FailureThreshold: 3, TimeoutMinutes: 1441}} {
 		c.MuzeFallback = &invalid
 		require.Error(t, c.Validate())
 	}
 	store.mutate(t, func(state *accountRefillState) { state.Config.MuzeFallback = nil })
 	state, _ = decodeAccountRefillState(store.raw)
 	c = state.Config
-	c.MuzeFallback = &AccountRefillMuzeFallbackConfig{true, 3, 5}
+	c.MuzeFallback = &AccountRefillMuzeFallbackConfig{Enabled: true, FailureThreshold: 3, TimeoutMinutes: 5}
 	require.NoError(t, s.Configure(context.Background(), c, "", state.Revision))
 	state, _ = decodeAccountRefillState(store.raw)
 	require.False(t, state.MuzeFallback.Since.IsZero())

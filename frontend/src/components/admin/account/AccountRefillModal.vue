@@ -3,19 +3,19 @@
     <div v-if="loading" class="py-12 text-center" role="status">{{ t('common.loading') }}</div>
     <div v-else-if="view && form" class="space-y-5">
       <label class="block"><span class="input-label">{{ t('accountRefill.ruleGroup') }}</span>
-        <select :value="selectedGroup" class="input" data-testid="refill-rule-group" :disabled="busy || dirty || muzeDirty || !!manualPending" @change="switchGroup(Number(($event.target as HTMLSelectElement).value))">
+        <select :value="selectedGroup" class="input" data-testid="refill-rule-group" :disabled="busy || dirty || muzeDirty || !!supplier558669Token || !!manualPending" @change="switchGroup(Number(($event.target as HTMLSelectElement).value))">
           <option :value="0" disabled>{{ t('accountRefill.chooseGroup') }}</option>
           <option v-for="group in ruleGroups" :key="group.id" :value="group.id">{{ group.name }} (#{{ group.id }}) · {{ t(view.rules?.find(r => r.group_id === group.id)?.enabled ? 'accountRefill.ruleOn' : 'accountRefill.ruleOff') }}</option>
         </select>
         <span class="input-hint">{{ t(dirty ? 'accountRefill.groupSaveFirst' : 'accountRefill.groupRulesHint') }}</span>
       </label>
-      <div v-if="!isMuze" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div v-if="!isMuze && !is558669" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div v-for="item in walletItems" :key="item.key" class="rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700">
           <div class="text-xs text-gray-500 dark:text-dark-300">1208 · {{ t(`accountRefill.${item.key}`) }}</div>
           <div class="mt-1 text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">{{ number(item.value) }} <span class="text-xs font-normal text-gray-500">{{ t('accountRefill.points') }}</span></div>
         </div>
       </div>
-      <p v-if="!isMuze" class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
+      <p v-if="!isMuze && !is558669" class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
       <div class="rounded-lg bg-gray-50 px-4 py-3 text-sm dark:bg-dark-800" aria-live="polite">{{ view.message || t('accountRefill.unconfigured') }}</div>
       <nav ref="tabsNav" class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
         <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="busy" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
@@ -52,7 +52,12 @@
             <div v-if="form.muze_fallback" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="refill-muze-fallback">
               <label class="block sm:max-w-sm"><span class="input-label">{{ t('accountRefill.primarySupplier') }}</span>
                 <select v-model="form.primary_provider" class="input" data-testid="refill-primary-provider">
-                  <option value="1208">1208</option><option value="muze">Muze</option>
+                  <option value="1208">1208</option><option value="muze">Muze</option><option value="558669">558669</option>
+                </select>
+              </label>
+              <label class="block sm:max-w-sm"><span class="input-label">{{ t('accountRefill.backupSupplier') }}</span>
+                <select v-model="form.muze_fallback.provider" class="input" data-testid="refill-backup-provider">
+                  <option value="">{{ t('accountRefill.legacyBackup') }}</option><option value="1208">1208</option><option value="muze">Muze</option><option value="558669">558669</option>
                 </select>
               </label>
               <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.muze_fallback.enabled" type="checkbox" data-testid="refill-muze-fallback-enabled" />{{ form.rotation_enabled ? t('accountRefill.rotationFallback') : t('accountRefill.fallbackEnabled', { provider: backupName }) }}</label>
@@ -61,7 +66,8 @@
                 <label class="block"><span class="input-label">{{ t('accountRefill.fallbackMinutes') }}</span><input v-model.number="form.muze_fallback.timeout_minutes" type="number" min="1" max="1440" step="1" required class="input" data-testid="refill-muze-fallback-minutes" /></label>
               </div>
               <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('accountRefill.fallbackHint') }}</p>
-              <p v-if="!view.muze?.token_configured || !view.token_configured" class="text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.fallbackConnectionRequired') }}</p>
+              <p v-if="fallbackConnectionMissing" class="text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.fallbackConnectionRequired') }}</p>
+              <p class="text-xs text-gray-500">{{ t('accountRefill.supplier558669Pending') }}</p>
               <p v-if="form.muze_fallback.enabled && backupName === 'Muze' && backupMuzeProduct" class="text-xs text-gray-500" data-testid="refill-backup-product">Muze · {{ backupMuzeProduct.label || backupMuzeProduct.product }} · {{ t('accountRefill.muzeStock', { remaining: backupMuzeProduct.remaining, stock: backupMuzeProduct.stock }) }}</p>
               <p v-if="view.muze_fallback_status" class="text-xs text-gray-500" data-testid="refill-muze-fallback-status">{{ t('accountRefill.fallbackStatus', { count: view.muze_fallback_status.consecutive_failures }) }}<span v-if="view.muze_fallback_status.message"> · {{ view.muze_fallback_status.message }}</span></p>
             </div>
@@ -96,7 +102,7 @@
               <p class="text-sm text-gray-500">{{ t('accountRefill.rotationHint') }}</p>
               <div v-for="(step, index) in form.rotation" :key="index" class="flex flex-wrap items-end gap-3" data-testid="refill-rotation-step">
                 <span class="pb-2 text-sm tabular-nums">{{ index + 1 }}.</span>
-                <label class="min-w-32 flex-1"><span class="input-label">{{ t('accountRefill.rotationProvider') }}</span><select v-model="step.provider" class="input" :data-testid="`refill-rotation-provider-${index}`"><option :value="undefined">{{ t('accountRefill.followPrimary') }}</option><option value="1208">1208</option><option value="muze">Muze</option></select></label>
+                <label class="min-w-32 flex-1"><span class="input-label">{{ t('accountRefill.rotationProvider') }}</span><select v-model="step.provider" class="input" :data-testid="`refill-rotation-provider-${index}`"><option :value="undefined">{{ t('accountRefill.followPrimary') }}</option><option value="1208">1208</option><option value="muze">Muze</option><option value="558669">558669</option></select></label>
                 <label class="min-w-32 flex-1"><span class="input-label">{{ t('accountRefill.plan') }}</span><select v-model="step.plan" class="input" :data-testid="`refill-rotation-plan-${index}`"><option value="pro20x">Pro20x</option><option value="pro5x">Pro5x</option></select></label>
                 <label class="w-28"><span class="input-label">{{ t('accountRefill.rotationCount') }}</span><input v-model.number="step.count" class="input" type="number" min="1" max="100" step="1" :data-testid="`refill-rotation-count-${index}`" /></label>
                 <button type="button" class="btn btn-secondary" :disabled="index === 0" :aria-label="t('accountRefill.rotationUp')" @click="moveRotation(index)">↑</button>
@@ -113,12 +119,16 @@
                 <p v-if="automaticMuzeProduct?.blocked_reason" class="mt-2 text-amber-700">{{ automaticMuzeProduct.blocked_reason }}</p>
               </template>
               <template v-else>
-                <p>1208 · {{ t('accountRefill.quote') }}: <strong>{{ number(quote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
+                <p>{{ providerLabel(automaticProvider) }} · {{ t('accountRefill.quote') }}: <strong>{{ number(quote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
                 <p v-if="quote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ quote.terms }}</p>
               </template>
             </div>
             <p class="text-sm leading-6 text-gray-500">{{ t(form.mode === 'interval' ? 'accountRefill.intervalHint' : form.mode === 'fixed' ? 'accountRefill.fixedHint' : 'accountRefill.ruleHint') }}</p>
-            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label v-for="field in ruleFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step || 1" class="input" :data-testid="`refill-${field.key}`" /></label></div>
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label v-for="field in ruleFields" :key="field.key"><span class="input-label">{{ ['daily_max_points', 'max_unit_price'].includes(field.key) ? '1208 · ' : '' }}{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step || 1" class="input" :data-testid="`refill-${field.key}`" /></label></div>
+            <div v-if="form.supplier_558669" class="grid gap-4 sm:grid-cols-2">
+              <label><span class="input-label">558669 · {{ t('accountRefill.max_unit_price') }}</span><input v-model.number="form.supplier_558669.max_unit_price" type="number" min="0" max="10000000" step="0.01" class="input" data-testid="558669-max-price" /></label>
+              <label><span class="input-label">558669 · {{ t('accountRefill.daily_max_points') }}</span><input v-model.number="form.supplier_558669.daily_max_points" type="number" min="0.01" max="10000000" step="0.01" class="input" data-testid="558669-daily-budget" /></label>
+            </div>
             <p v-if="form.mode === 'capacity'" class="input-hint">{{ t('accountRefill.capacityObservationHint') }}</p>
             <div v-if="form.mode === 'capacity'" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
               <label class="flex items-center gap-2 text-sm font-medium"><input v-model="form.forecast_enabled" type="checkbox" data-testid="refill-forecast-enabled" />{{ t('accountRefill.forecastEnabled') }}</label>
@@ -204,17 +214,33 @@
           </div>
         </fieldset>
       </form>
-      <div v-if="activeTab === 'manual' || isMuze" class="space-y-4">
+      <div v-if="activeTab === 'manual' || isMuze || is558669" class="space-y-4">
+        <label class="block"><span class="input-label">{{ t('accountRefill.manualChannel') }}</span><select :value="activeTab" class="input" :disabled="busy" data-testid="manual-refill-channel" @change="selectManualChannel(($event.target as HTMLSelectElement).value)"><option value="manual">1208</option><option value="muze">Muze</option><option value="supplier558669">558669</option></select></label>
         <p class="font-medium" data-testid="manual-refill-provider">{{ t('accountRefill.manualProvider', { provider: manualProviderName }) }}</p>
         <p v-if="manualStorageFailed" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.manualStorageError') }}</p>
-        <p v-if="otherProviderPending" class="text-sm text-amber-700" data-testid="manual-other-provider-pending">{{ t('accountRefill.otherProviderPending', { provider: t(isMuze ? 'accountRefill.primaryName' : 'accountRefill.muzeName') }) }}</p>
+        <p v-if="otherProviderPending" class="text-sm text-amber-700" data-testid="manual-other-provider-pending">{{ t('accountRefill.otherProviderPending', { provider: otherPendingNames }) }}</p>
+        <div v-if="is558669" class="space-y-4" data-testid="558669-connection">
+          <label class="block"><span class="input-label">558669 API Key · {{ t(view.supplier_558669?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span><input v-model="supplier558669Token" type="password" autocomplete="new-password" maxlength="4096" class="input" :disabled="busy" data-testid="558669-token" /></label>
+          <div class="flex flex-wrap gap-3">
+            <button v-admin-write type="button" class="btn btn-secondary" :disabled="busy || dirty || conflict || !!manualPending" data-testid="558669-save" @click="save558669">{{ t('accountRefill.save558669') }}</button>
+            <button type="button" class="btn btn-secondary" :disabled="busy || catalog558669Busy || !!supplier558669Token || !view.supplier_558669?.token_configured" data-testid="558669-catalog-refresh" @click="refresh558669Catalog">{{ t('accountRefill.refresh558669') }}</button>
+          </div>
+          <dl class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <div><dt class="text-gray-500">{{ t('accountRefill.available') }}</dt><dd class="mt-1 font-semibold">{{ number(view.supplier_558669?.catalog?.available) }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.held') }}</dt><dd class="mt-1 font-semibold">{{ number(view.supplier_558669?.catalog?.reserved) }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.spent') }}</dt><dd class="mt-1 font-semibold">{{ number(view.supplier_558669?.daily.spent_points) }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.reserved') }}</dt><dd class="mt-1 font-semibold">{{ number(view.supplier_558669?.daily.reserved_points) }}</dd></div>
+          </dl>
+          <p class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.supplier_558669?.checked_at) }}</p>
+          <p v-if="catalog558669Error" role="alert" class="text-sm text-amber-700">{{ catalog558669Error }}</p>
+        </div>
         <details v-if="isMuze" :open="!view.muze?.token_configured || muzeDirty" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700" data-testid="muze-connection">
           <summary class="cursor-pointer text-sm font-medium">{{ t('accountRefill.muzeConnectionSettings') }} · {{ t(view.muze?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</summary>
           <label class="block"><span class="input-label">{{ t('accountRefill.muzeToken') }} · {{ t(view.muze?.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span><input v-model="muzeToken" type="password" autocomplete="new-password" class="input" placeholder="tk_…" :disabled="busy" data-testid="muze-token" /><span class="input-hint">{{ t('accountRefill.tokenHint') }}</span></label>
           <label class="block"><span class="input-label">{{ t('accountRefill.muzeConnection') }}</span><input v-model="muzeConnectionID" class="input" :disabled="busy" data-testid="muze-connection-id" /><span class="input-hint">{{ t('accountRefill.muzeConnectionHint') }}</span></label>
           <button v-admin-write type="button" class="btn btn-secondary" :disabled="busy || dirty || conflict || !!manualPending" data-testid="muze-save" @click="saveMuze">{{ t('accountRefill.muzeSave') }}</button>
         </details>
-        <p class="text-sm leading-6 text-gray-500">{{ t(isMuze ? 'accountRefill.muzeHint' : 'accountRefill.manualHint') }}</p>
+        <p class="text-sm leading-6 text-gray-500">{{ t(is558669 ? 'accountRefill.supplier558669Pending' : isMuze ? 'accountRefill.muzeHint' : 'accountRefill.manualHint') }}</p>
         <label class="block"><span class="input-label">{{ t('accountRefill.plan') }}</span>
           <select v-model="manualPlan" class="input" :disabled="busy || !!manualPending" data-testid="manual-refill-plan">
             <template v-if="isMuze">
@@ -222,7 +248,7 @@
               <option v-else-if="!muzeProducts.length" value="">{{ t('accountRefill.muzeCatalogEmpty') }}</option>
               <option v-for="item in muzeProducts" :key="item.product" :value="item.product">{{ item.label || item.product }}</option>
             </template>
-            <template v-else><option value="pro5x">Pro5x</option><option value="pro20x">Pro20x</option></template>
+            <template v-else><option value="pro5x">{{ is558669 ? 'Pro100' : 'Pro5x' }}</option><option value="pro20x">{{ is558669 ? 'Pro200' : 'Pro20x' }}</option></template>
           </select>
         </label>
         <div v-if="isMuze" class="flex flex-wrap items-center gap-3 text-xs">
@@ -234,6 +260,8 @@
           <template v-if="isMuze"><p>{{ t('accountRefill.muzeAvailable') }}: <strong>{{ number(muzeProduct?.available_now) }}</strong> {{ t('accountRefill.muzeUnit') }}</p><p v-if="muzeProduct?.remaining != null && muzeProduct.stock != null" class="mt-1 text-xs">{{ t('accountRefill.muzeStock', { remaining: muzeProduct.remaining, stock: muzeProduct.stock }) }}</p><p v-if="muzeProduct?.blocked_reason || muzeProduct?.expired" class="mt-2 text-amber-700">{{ muzeProduct.blocked_reason || t('accountRefill.expired') }}</p></template>
           <p v-else>{{ t('accountRefill.quote') }}: <strong>{{ number(manualQuote?.price) }}</strong> {{ t('accountRefill.points') }}</p>
           <p v-if="!isMuze && manualQuote" class="mt-2 text-gray-500">{{ t('accountRefill.terms') }}: {{ manualQuote.terms }}</p>
+          <p v-if="is558669 && manualQuote" class="mt-2 text-xs text-gray-500">{{ t('accountRefill.quoteVersion') }}: {{ manualQuote.price_version }}</p>
+          <p v-if="is558669 && manualQuote && !manualQuote.enabled" class="mt-2 text-amber-700">{{ manualQuote.reason || t('accountRefill.planUnavailable') }}</p>
         </div>
         <div class="rounded-lg border border-gray-200 p-4 text-sm dark:border-dark-700" data-testid="manual-refill-settings">
           <p class="font-medium">{{ t('accountRefill.manualSavedSettings') }}</p>
@@ -249,7 +277,7 @@
           </dl>
           <button type="button" class="mt-3 text-primary-600 underline" @click="activeTab = 'delivery'">{{ t('accountRefill.manualReviewSettings') }}</button>
         </div>
-        <p v-if="dirty || conflict || (isMuze && muzeDirty)" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
+        <p v-if="dirty || conflict || (isMuze && muzeDirty) || (is558669 && supplier558669Token)" class="text-sm text-amber-700">{{ t('accountRefill.manualSaveFirst') }}</p>
         <p v-if="!manualTokenConfigured || !view.config.push_enabled" class="text-sm text-amber-700">{{ t('accountRefill.manualConfigureFirst') }}</p>
         <p v-if="manualPending" class="text-sm text-amber-700" role="status">{{ t('accountRefill.manualUncertain', { provider: manualProviderName }) }}</p>
         <div class="flex flex-wrap gap-3">
@@ -278,7 +306,7 @@
           <p class="mt-1 text-xs text-gray-500">{{ t('accountRefill.forecastHint') }}</p>
           <p v-if="view.config.forecast_enabled !== false && view.forecast_observation" class="mt-1 text-xs text-gray-500">{{ t('accountRefill.lastSample') }}: {{ date(view.forecast_observation.last_sample_at) }}</p>
         </div>
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4"><div v-for="item in usageItems" :key="item.key" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800"><div class="text-xs text-gray-500">{{ t(`accountRefill.${item.key}`) }}</div><div class="mt-1 font-semibold tabular-nums">{{ number(item.value) }}</div></div></div>
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4"><div v-for="item in usageItems" :key="item.key" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800"><div class="text-xs text-gray-500">{{ ['spent', 'reserved', 'budget'].includes(item.key) ? '1208 · ' : '' }}{{ t(`accountRefill.${item.key}`) }}</div><div class="mt-1 font-semibold tabular-nums">{{ number(item.value) }}</div></div></div>
         <p class="text-xs leading-5 text-gray-500">{{ t('accountRefill.progressHint') }}</p>
         <p v-if="view.evaluation.timed_out_pending" class="text-sm text-amber-700 dark:text-amber-300" data-testid="refill-timeout-ignored">{{ t('accountRefill.timeoutIgnored', { count: view.evaluation.timed_out_pending }) }}</p>
         <div class="flex flex-wrap gap-5 text-sm"><span>{{ t('accountRefill.nextCheck') }}: {{ date(view.next_check_at) }}</span><span v-if="view.config.mode === 'interval'">{{ t('accountRefill.nextInterval') }}: {{ date(view.next_interval_at) }}</span></div>
@@ -299,7 +327,7 @@
               <tbody>
                 <tr v-for="job in pagedJobs" :key="job.id" class="border-b border-gray-100 align-top dark:border-dark-800">
                   <td class="p-2">
-                    <span class="font-medium">{{ job.provider === 'muze' ? (job.muze_product_id || job.plan) : job.plan }}</span><span class="ml-2 text-xs text-gray-500">{{ job.provider === 'fendudu' ? t('accountRefill.retiredSupplier') : job.provider === 'muze' ? 'Muze' : '1208' }}</span>
+                    <span class="font-medium">{{ job.provider === 'muze' ? (job.muze_product_id || job.plan) : job.provider === '558669' ? (job.plan === 'pro20x' ? 'Pro200' : 'Pro100') : job.plan }}</span><span class="ml-2 text-xs text-gray-500">{{ job.provider === 'fendudu' ? t('accountRefill.retiredSupplier') : providerLabel(job.provider) }}</span>
                     <div class="max-w-48 break-all text-xs text-gray-500">{{ job.supplier_id || t('accountRefill.supplierIDPending') }}</div>
                     <div v-if="job.account_id" class="text-xs">{{ t('accountRefill.account') }} #{{ job.account_id }}</div>
                     <div v-if="job.provider || job.supplier_expires_at" class="mt-1 text-xs" :data-testid="job.provider === 'muze' ? 'muze-supplier-expiry' : 'refill-supplier-expiry'">
@@ -314,6 +342,11 @@
                     <span class="font-medium">{{ stateLabel(job.status) }}</span>
                     <div v-if="job.supplier_refund_phase" class="mt-1 text-xs text-gray-500">{{ t('accountRefill.refundPhase') }} · {{ refundPhaseLabel(job.supplier_refund_phase) }}</div>
                     <div v-if="job.supplier_status" class="mt-1 text-xs text-gray-500" data-testid="refill-supplier-status">{{ t('accountRefill.supplierStatus') }}: {{ supplierStateLabel(job.supplier_status, job.provider) }} · {{ job.supplier_status }}</div>
+                    <div v-if="job.provider === '558669'" class="mt-1 space-y-1 text-xs text-gray-500" data-testid="558669-delivery-status">
+                      <p>{{ t('accountRefill.entitlement') }}: {{ entitlementLabel(job.entitlement_status) }}</p>
+                      <p>{{ t('accountRefill.deliveryVersion') }}: {{ job.applied_delivery_version ?? 0 }} / {{ job.delivery_version ?? 0 }}</p>
+                      <p v-if="job.billing_status">{{ t('accountRefill.billingStatus') }}: {{ job.billing_status }}</p>
+                    </div>
                     <div v-if="job.supplier_error" class="mt-1 break-words text-xs text-amber-700 dark:text-amber-300">{{ t('accountRefill.supplierError') }}: {{ job.supplier_error }}</div>
                     <div v-if="job.error" class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ job.error }}</div>
                     <button v-admin-write v-if="job.provider !== 'fendudu' && ['blocked', 'import_failed'].includes(job.status) && !(job.provider === 'muze' && !job.supplier_id && job.submission_started_at)" type="button" class="mt-2 text-xs text-primary-600 underline" :disabled="busy" :title="t('accountRefill.retryHint')" @click="retry(job.id)">{{ t('accountRefill.retry') }}</button>
@@ -324,7 +357,7 @@
                       <button type="button" class="btn btn-secondary mt-2 text-xs" :disabled="busy || !confirmedJobs.includes(job.id)" @click="dismiss(job.id)">{{ t(job.provider === 'fendudu' ? 'accountRefill.archiveLegacy' : 'accountRefill.dismiss') }}</button>
                     </details>
                   </td>
-                  <td v-if="job.provider" class="p-2 tabular-nums">1 {{ t('accountRefill.muzeUnit') }}<div class="mt-1 text-xs text-gray-500">{{ t('accountRefill.muzePrepaid') }}</div></td>
+                  <td v-if="job.provider === 'muze' || job.provider === 'fendudu'" class="p-2 tabular-nums">1 {{ t('accountRefill.muzeUnit') }}<div class="mt-1 text-xs text-gray-500">{{ t('accountRefill.muzePrepaid') }}</div></td>
                   <td v-else class="p-2 tabular-nums">{{ number(job.price) }}<div class="mt-1 whitespace-nowrap text-xs text-gray-500">{{ t(`accountRefill.${job.budget_released ? 'amountReleased' : job.supplier_status === 'succeeded' ? 'amountCharged' : 'amountHeld'}`) }}</div></td>
                   <td class="whitespace-nowrap p-2 tabular-nums">{{ elapsed(job) }}</td>
                   <td class="whitespace-nowrap p-2 text-xs">{{ date(job.created_at) }}</td>
@@ -347,10 +380,12 @@
     </div>
     <p v-if="error" class="mt-3 text-sm text-red-600 dark:text-red-400" role="alert">{{ error }}</p>
     <template #footer>
+      <div class="flex w-full flex-wrap items-center justify-end gap-2">
       <span class="mr-auto text-xs text-gray-500">{{ dirty ? t('accountRefill.dirty') : '' }}</span>
-      <button type="button" class="btn btn-secondary" :disabled="loading" @click="refresh(false)">{{ t('accountRefill.refresh') }}</button>
-      <button type="button" class="btn btn-secondary" :disabled="busy || !view || dirty" :title="t('accountRefill.checkHint')" @click="check">{{ t('accountRefill.check') }}</button>
-      <button v-admin-write type="submit" form="refill-settings" class="btn btn-primary" :disabled="busy || !dirty || conflict || !form" data-testid="refill-save">{{ t(busy ? 'accountRefill.saving' : 'accountRefill.save') }}</button>
+      <button type="button" class="btn btn-secondary whitespace-nowrap" :disabled="loading" @click="refresh(false)">{{ t('accountRefill.refresh') }}</button>
+      <button type="button" class="btn btn-secondary whitespace-nowrap" :disabled="busy || !view || dirty" :title="t('accountRefill.checkHint')" @click="check">{{ t('accountRefill.check') }}</button>
+      <button v-admin-write type="submit" form="refill-settings" class="btn btn-primary whitespace-nowrap" :disabled="busy || !dirty || conflict || !form" data-testid="refill-save">{{ t(busy ? 'accountRefill.saving' : 'accountRefill.save') }}</button>
+      </div>
     </template>
   </BaseDialog>
   <TotpStepUpDialog :controller="downloadStepUp" />
@@ -377,12 +412,12 @@ import { saveAs } from 'file-saver'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
-const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' | 'muze'; proxies?: Proxy[] }>()
+const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' | 'muze' | 'supplier558669'; proxies?: Proxy[] }>()
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
 const codexFingerprintModeOptions = computed(() => getCodexFingerprintModeOptions(t))
 const app = useAppStore()
-const tabs = ['connection', 'rules', 'delivery', 'manual', 'muze', 'notifications', 'progress'] as const
+const tabs = ['connection', 'rules', 'delivery', 'manual', 'muze', 'supplier558669', 'notifications', 'progress'] as const
 const activeTab = ref<typeof tabs[number]>('connection')
 const tabsNav = ref<HTMLElement | null>(null)
 const view = ref<RefillView | null>(null)
@@ -401,11 +436,30 @@ const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
 const webhook = ref('')
 const qqSecret = ref('')
 const muzeToken = ref(''), muzeConnectionID = ref('')
+const supplier558669Token = ref('')
+const catalog558669Busy = ref(false), catalog558669Error = ref('')
+let catalog558669Request = 0
 const reconcileIDs = ref<Record<string, string>>({})
-const backupName = computed(() => automaticProvider.value === 'muze' ? '1208' : 'Muze')
+const backupProvider = (primary?: string) => form.value?.muze_fallback?.provider || (primary === 'muze' ? '1208' : 'muze')
+const backupName = computed(() => providerLabel(backupProvider(automaticProvider.value)))
+function providerConfigured(provider?: string) {
+  if (provider === '558669') return !!view.value?.supplier_558669?.token_configured
+  if (provider === 'muze') return !!view.value?.muze?.token_configured
+  return !!view.value?.token_configured || !!token.value.trim()
+}
+const fallbackConnectionMissing = computed(() => {
+  const primary = form.value?.primary_provider || '1208'
+  const providers = [primary, ...(form.value?.rotation_enabled ? form.value.rotation.map(step => step.provider || primary) : [])]
+  return providers.some(provider => !providerConfigured(provider) || !providerConfigured(backupProvider(provider)))
+})
 const isMuze = computed(() => activeTab.value === 'muze')
+const is558669 = computed(() => activeTab.value === 'supplier558669')
+const manualProvider = computed(() => is558669.value ? '558669' as const : isMuze.value ? 'muze' as const : undefined)
+function selectManualChannel(value: string) {
+  if (!busy.value && (value === 'manual' || value === 'muze' || value === 'supplier558669')) activeTab.value = value
+}
 const muzeDirty = computed(() => muzeToken.value !== '' || muzeConnectionID.value !== (view.value?.muze?.connection_id || ''))
-const manualTokenConfigured = computed(() => isMuze.value ? view.value?.muze?.token_configured : view.value?.token_configured)
+const manualTokenConfigured = computed(() => providerConfigured(manualProvider.value))
 const muzeProducts = computed(() => view.value?.muze?.products || [])
 const catalogBusy = ref(false), catalogError = ref('')
 let catalogRequest = 0
@@ -419,21 +473,23 @@ function preferredMuzeProduct(tier?: string) {
 }
 const muzeProduct = computed(() => muzeProducts.value.find(p => p.product === manualPlan.value))
 const manualTier = computed(() => isMuze.value ? (muzeProduct.value?.plan || manualPlan.value) : manualPlan.value)
-const manualProviderName = computed(() => t(isMuze.value ? 'accountRefill.muzeName' : 'accountRefill.primaryName'))
+const manualProviderName = computed(() => providerLabel(manualProvider.value))
 const manualRequests = ref<ManualRefillRequest[]>([])
-const manualPending = computed(() => manualRequests.value.find(request => request.group_id === selectedGroup.value && (request.provider === 'muze') === isMuze.value))
-const otherProviderPending = computed(() => manualRequests.value.some(request => request.group_id === selectedGroup.value && (request.provider === 'muze') !== isMuze.value))
-const manualPlans = ref({ primary: 'pro20x', muze: '' })
+const manualPending = computed(() => manualRequests.value.find(request => request.group_id === selectedGroup.value && request.provider === manualProvider.value))
+const otherProviderPending = computed(() => manualRequests.value.some(request => request.group_id === selectedGroup.value && request.provider !== manualProvider.value))
+const otherPendingNames = computed(() => [...new Set(manualRequests.value.filter(request => request.group_id === selectedGroup.value && request.provider !== manualProvider.value).map(request => providerLabel(request.provider)))].join(', '))
+const manualPlans = ref({ primary: 'pro20x', muze: '', '558669': 'pro20x' })
 const manualPlan = computed({
   get(): string {
     if (manualPending.value) return manualPending.value.plan
+    if (is558669.value) return manualPlans.value['558669']
     if (!isMuze.value) return manualPlans.value.primary
     if (manualPlans.value.muze) return manualPlans.value.muze
     const preferred = preferredMuzeProduct('pro20x')
     const item = canBuyMuze(preferred) ? preferred : muzeProducts.value.find(canBuyMuze) || preferred || muzeProducts.value[0]
     return item?.product || ''
   },
-  set: value => { manualPlans.value[isMuze.value ? 'muze' : 'primary'] = value }
+  set: value => { manualPlans.value[manualProvider.value || 'primary'] = value }
 })
 const legacyManualStorageKey = 'yoshub:manual-refill:pending'
 const manualStorageKey = 'yoshub:manual-refill:pending:v2'
@@ -444,7 +500,7 @@ let revision = 0, generation = 0, fetching = false
 let timer: ReturnType<typeof setInterval> | undefined
 const openAIGroups = computed(() => groups.value.filter(g => g.platform === 'openai' && g.status === 'active'))
 const ruleGroups = computed(() => groups.value.filter(g => g.platform === 'openai'))
-const providerLabel = (value?: string) => value === 'muze' ? 'Muze' : '1208'
+const providerLabel = (value?: string) => value === '558669' ? '558669' : value === 'muze' ? 'Muze' : '1208'
 const rotationPreview = computed(() => form.value?.rotation?.map(step => `${providerLabel(step.provider || form.value?.primary_provider)} · ${step.plan === 'pro20x' ? 'Pro20x' : 'Pro5x'} × ${step.count}`).join(' → '))
 const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || webhook.value !== '' || qqSecret.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
 const walletItems = computed(() => [{ key: 'balance', value: view.value?.wallet?.balance }, { key: 'held', value: view.value?.wallet?.held }, { key: 'available', value: view.value?.wallet?.available ?? view.value?.catalog?.available }])
@@ -458,9 +514,9 @@ const automaticProvider = computed(() => form.value?.rotation_enabled
   : form.value?.primary_provider)
 const automaticMuzeProduct = computed(() => preferredMuzeProduct(automaticPlan.value))
 const backupMuzeProduct = computed(() => preferredMuzeProduct('pro20x'))
-const muzePurchaseBlocked = computed(() => isMuze.value && (muzeDirty.value || catalogBusy.value || !canBuyMuze(muzeProduct.value)))
-const quote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === automaticPlan.value && q.enabled))
-const manualQuote = computed(() => view.value?.catalog?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && q.enabled))
+const muzePurchaseBlocked = computed(() => (isMuze.value && (muzeDirty.value || catalogBusy.value || !canBuyMuze(muzeProduct.value))) || (is558669.value && (!!supplier558669Token.value || catalog558669Busy.value || !manualQuote.value?.enabled)))
+const quote = computed(() => (automaticProvider.value === '558669' ? view.value?.supplier_558669?.catalog : view.value?.catalog)?.items.find(q => q.service === 'refill' && q.plan === automaticPlan.value && q.enabled))
+const manualQuote = computed(() => (is558669.value ? view.value?.supplier_558669?.catalog : view.value?.catalog)?.items.find(q => q.service === 'refill' && q.plan === manualPlan.value && (is558669.value || q.enabled)))
 const manualGroups = computed(() => view.value?.config.delivery_group_ids.map(id => groups.value.find(g => g.id === id)?.name || `#${id}`).join('、'))
 const manualDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || (!manualPending.value && (dirty.value || conflict.value || muzePurchaseBlocked.value || !manualTokenConfigured.value || !view.value.config.push_enabled)))
 const manualForceDisabled = computed(() => busy.value || !view.value || manualStorageFailed.value || dirty.value || conflict.value || muzePurchaseBlocked.value || !manualTokenConfigured.value || !view.value.config.push_enabled)
@@ -482,6 +538,7 @@ const forecastAccounts = computed(() => view.value?.evaluation.accounts.filter(a
 const refundPhaseLabel = (v: string) => ['none','waiting','pending','free','returned','unknown'].includes(v) ? t(`accountRefill.refundPhase_${v}`) : v
 const date = (v: string | null | undefined) => !v || v.startsWith('0001') ? '—' : new Date(v).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 const stateLabel = (state: string) => te(`accountRefill.states.${state}`) ? t(`accountRefill.states.${state}`) : state
+const entitlementLabel = (state?: string) => state && te(`accountRefill.entitlements.${state}`) ? t(`accountRefill.entitlements.${state}`) : state || t('accountRefill.unknown')
 function supplierStateLabel(state: string, provider: RefillJob['provider']) {
   if (provider === 'muze' && te(`accountRefill.muzeStages.${state}`)) return t(`accountRefill.muzeStages.${state}`)
   return ['queued', 'processing', 'succeeded', 'failed', 'review'].includes(state) ? stateLabel(state) : t('accountRefill.states.supplier_unknown')
@@ -490,7 +547,8 @@ function downloadReason(job: RefillJob) {
   if (job.provider === 'fendudu') return 'accountRefill.retiredSupplier'
   if (job.provider === 'muze') return 'accountRefill.muzeDownload'
   if (job.status === 'delivery_expired' || (job.expires_at != null && job.expires_at * 1000 <= now.value)) return 'accountRefill.downloadExpired'
-  if (!job.supplier_id || job.supplier_status !== 'succeeded' || !job.result_ready) return 'accountRefill.downloadNotReady'
+  const ready = job.supplier_status === 'succeeded' || job.provider === '558669' && ['queued', 'processing', 'review'].includes(job.supplier_status || '')
+  if (!job.supplier_id || !ready || !job.result_ready) return 'accountRefill.downloadNotReady'
   return ''
 }
 async function download(job: RefillJob) {
@@ -518,7 +576,7 @@ function togglePlanQuota(plan: string) {
 }
 function moveRotation(index: number) { if (form.value && index > 0) { const rows = form.value.rotation; [rows[index - 1], rows[index]] = [rows[index]!, rows[index - 1]!] } }
 async function switchGroup(id: number) {
-  if (!id || busy.value || dirty.value || manualPending.value) return
+  if (!id || busy.value || dirty.value || muzeDirty.value || supplier558669Token.value || manualPending.value) return
   const current = ++generation
   busy.value = true; switchingGroup.value = true; error.value = ''
   try { const data = await accountRefillAPI.get(id); if (current === generation) accept(data, true) }
@@ -537,6 +595,8 @@ function accept(data: RefillView, reset: boolean) {
   data.config.timeout_retry_minutes ??= 10
   data.config.primary_provider ||= '1208'
   data.config.muze_fallback ??= { enabled: false, failure_threshold: 3, timeout_minutes: 5 }
+  data.config.muze_fallback.provider ??= ''
+  data.config.supplier_558669 ??= { max_unit_price: 60, daily_max_points: 3000 }
   data.config.daily_schedules ??= data.config.daily_schedule ? [{ id: 'legacy', plan: '', ...data.config.daily_schedule }] : []
   for (const daily of data.config.daily_schedules) daily.day_mode ??= ''
   delete data.config.daily_schedule
@@ -581,11 +641,12 @@ function accept(data: RefillView, reset: boolean) {
   }
   if (reset || !muzeDirty.value) muzeConnectionID.value = data.muze?.connection_id || ''
   if (view.value?.config.group_id === data.config.group_id && view.value.revision === data.revision && view.value.muze?.checked_at && data.muze?.checked_at && Date.parse(view.value.muze.checked_at) > Date.parse(data.muze.checked_at)) data.muze = view.value.muze
+  if (view.value?.config.group_id === data.config.group_id && view.value.revision === data.revision && view.value.supplier_558669?.checked_at && data.supplier_558669?.checked_at && Date.parse(view.value.supplier_558669.checked_at) > Date.parse(data.supplier_558669.checked_at)) data.supplier_558669 = view.value.supplier_558669
   view.value = data
   const currentPending = manualPending.value
   const confirmed = manualRequests.value.filter(request => request.group_id === data.config.group_id && data.jobs.some(job => job.manual_request_id === request.request_id && job.provider === request.provider))
   for (const request of confirmed) clearManualRequest(request)
-  if (!reset && currentPending && confirmed.includes(currentPending) && ['manual', 'muze'].includes(activeTab.value)) {
+  if (!reset && currentPending && confirmed.includes(currentPending) && ['manual', 'muze', 'supplier558669'].includes(activeTab.value)) {
     activeTab.value = 'progress'; jobsPage.value = 1
   }
   now.value = Date.now()
@@ -613,7 +674,7 @@ async function save() {
   if (fallback && (!Number.isInteger(fallback.failure_threshold) || fallback.failure_threshold < 1 || fallback.failure_threshold > 100 || !Number.isInteger(fallback.timeout_minutes) || fallback.timeout_minutes < 1 || fallback.timeout_minutes > 1440)) {
     error.value = t('accountRefill.fallbackInvalid'); activeTab.value = 'rules'; return
   }
-  if (fallback?.enabled && (!view.value?.muze?.token_configured || (!view.value?.token_configured && !token.value.trim()))) {
+  if (fallback?.enabled && fallbackConnectionMissing.value) {
     error.value = t('accountRefill.fallbackConnectionRequired'); activeTab.value = 'rules'; return
   }
   if (!Number.isInteger(form.value.timeout_retry_minutes) || form.value.timeout_retry_minutes! < 1 || form.value.timeout_retry_minutes! > 1440) {
@@ -652,6 +713,28 @@ async function refreshMuzeCatalog() {
   } catch (e) { if (id === catalogRequest) catalogError.value = message(e) }
   finally { if (id === catalogRequest) catalogBusy.value = false }
 }
+async function refresh558669Catalog() {
+  const group = selectedGroup.value, rev = revision, id = ++catalog558669Request
+  catalog558669Busy.value = true; catalog558669Error.value = ''
+  try {
+    const latest = await accountRefillAPI.catalog558669(group)
+    if (id === catalog558669Request && view.value?.config.group_id === group && revision === rev) view.value.supplier_558669 = latest
+  } catch (e) { if (id === catalog558669Request) catalog558669Error.value = message(e) }
+  finally { if (id === catalog558669Request) catalog558669Busy.value = false }
+}
+async function save558669() {
+  if (busy.value || dirty.value || conflict.value || manualPending.value) return
+  busy.value = true; error.value = ''; generation++
+  try {
+    const data = await accountRefillAPI.configure558669(selectedGroup.value, supplier558669Token.value, revision)
+    supplier558669Token.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
+  } catch (e) { error.value = message(e) }
+  finally { busy.value = false }
+}
+watch([is558669, selectedGroup, () => view.value?.supplier_558669?.token_configured, () => props.show], () => {
+  catalog558669Request++; catalog558669Busy.value = false; catalog558669Error.value = ''
+  if (props.show && is558669.value && selectedGroup.value > 0 && view.value?.supplier_558669?.token_configured) void refresh558669Catalog()
+})
 watch([isMuze, selectedGroup, () => view.value?.muze?.token_configured, () => props.show], () => {
   catalogRequest++; catalogBusy.value = false; catalogError.value = ''
   if (props.show && isMuze.value && selectedGroup.value > 0 && view.value?.muze?.token_configured) void refreshMuzeCatalog()
@@ -705,14 +788,14 @@ function restoreManualRequests() {
         if (!archived.some((r: { request_id: string }) => r.request_id === request.request_id)) sessionStorage.setItem(archiveKey, JSON.stringify([...archived, request]))
         continue
       }
-      if (!request || typeof request !== 'object' || typeof request.request_id !== 'string' || typeof request.plan !== 'string' || !(request.provider === 'muze' ? /^[a-zA-Z0-9_-]{1,128}$/.test(request.plan) : ['pro5x', 'pro20x'].includes(request.plan)) || !Number.isInteger(request.revision) || (request.group_id != null && (!Number.isInteger(request.group_id) || request.group_id <= 0)) || (request.provider != null && request.provider !== 'muze') || (request.force != null && typeof request.force !== 'boolean')) throw new Error('Invalid manual request storage')
+      if (!request || typeof request !== 'object' || typeof request.request_id !== 'string' || typeof request.plan !== 'string' || !(request.provider === 'muze' ? /^[a-zA-Z0-9_-]{1,128}$/.test(request.plan) : ['pro5x', 'pro20x'].includes(request.plan)) || !Number.isInteger(request.revision) || (request.group_id != null && (!Number.isInteger(request.group_id) || request.group_id <= 0)) || (request.provider != null && request.provider !== 'muze' && request.provider !== '558669') || (request.force != null && typeof request.force !== 'boolean')) throw new Error('Invalid manual request storage')
       if (!manualRequests.value.some(item => item.request_id === request.request_id)) manualRequests.value.push(request as ManualRefillRequest)
     }
   } catch { manualStorageFailed.value = true; error.value = t('accountRefill.manualStorageError') }
 }
 async function submitManual(force = false) {
-  if (!['manual', 'muze'].includes(activeTab.value) || (force ? manualForceDisabled.value : manualDisabled.value)) return
-  const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(isMuze.value ? { provider: 'muze' as const } : {}), ...(force ? { force: true } : {}) }
+  if (!['manual', 'muze', 'supplier558669'].includes(activeTab.value) || (force ? manualForceDisabled.value : manualDisabled.value)) return
+  const request = (!force && manualPending.value) || { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: manualPlan.value, revision, group_id: selectedGroup.value, ...(manualProvider.value ? { provider: manualProvider.value } : {}), ...(force ? { force: true } : {}) }
   const remaining = manualRequests.value.filter(item => item.group_id !== request.group_id || item.provider !== request.provider)
   try { persistManualRequests([...remaining, request]) }
   catch { error.value = t('accountRefill.manualStorageError'); return }
@@ -728,6 +811,7 @@ async function submitManual(force = false) {
     const status = failure.status ?? failure.response?.status
     if (status === 400 || status === 401 || status === 403) clearManualRequest(request)
     if (status === 400 && isMuze.value) void refreshMuzeCatalog()
+    if (status === 400 && is558669.value) void refresh558669Catalog()
     error.value = message(e)
   } finally { busy.value = false }
 }
@@ -739,7 +823,7 @@ function close() { if (!busy.value) emit('close') }
 watch(() => props.show, async show => {
   const current = ++generation
   if (timer) clearInterval(timer)
-  token.value = ''; muzeToken.value = ''; muzeConnectionID.value = ''; reconcileIDs.value = {}
+  token.value = ''; muzeToken.value = ''; supplier558669Token.value = ''; muzeConnectionID.value = ''; reconcileIDs.value = {}
   webhook.value = ''; qqSecret.value = ''
   downloadStepUp.onCancel()
   if (!show) return
@@ -752,13 +836,13 @@ watch(() => props.show, async show => {
     // Pre-group legacy requests belong to the default rule, not whichever
     // supplier/group the administrator happens to view next.
     for (const request of manualRequests.value) request.group_id ??= data.config.group_id
-    const pending = manualRequests.value.find(request => (request.provider === 'muze') === isMuze.value)
-    if (['manual', 'muze'].includes(activeTab.value) && pending?.group_id && pending.group_id !== data.config.group_id) data = await accountRefillAPI.get(pending.group_id)
+    const pending = manualRequests.value.find(request => request.provider === manualProvider.value)
+    if (['manual', 'muze', 'supplier558669'].includes(activeTab.value) && pending?.group_id && pending.group_id !== data.config.group_id) data = await accountRefillAPI.get(pending.group_id)
     if (current === generation) { groups.value = allGroups; accept(data, true) }
   }
   catch { if (current === generation) error.value = t('accountRefill.loadError') }
   finally { if (current === generation) loading.value = false }
   if (current === generation) timer = setInterval(() => { now.value = Date.now(); void refresh(false) }, 15000)
 }, { immediate: true })
-onBeforeUnmount(() => { generation++; downloadStepUp.onCancel(); token.value = ''; muzeToken.value = ''; webhook.value = ''; qqSecret.value = ''; if (timer) clearInterval(timer) })
+onBeforeUnmount(() => { generation++; catalog558669Request++; downloadStepUp.onCancel(); token.value = ''; muzeToken.value = ''; supplier558669Token.value = ''; webhook.value = ''; qqSecret.value = ''; if (timer) clearInterval(timer) })
 </script>

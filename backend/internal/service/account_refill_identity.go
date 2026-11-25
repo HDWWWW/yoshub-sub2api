@@ -13,7 +13,7 @@ func PreserveAccountRefillIdentity(current, incoming map[string]any) map[string]
 	if incoming == nil {
 		incoming = make(map[string]any)
 	}
-	for _, key := range []string{"refill_job_id", "refill_supplier_id", "refill_plan", "import_source"} {
+	for _, key := range []string{"refill_job_id", "refill_supplier_id", "refill_plan", "import_source", "refill_delivery_version"} {
 		delete(incoming, key)
 		if value, ok := current[key]; ok {
 			incoming[key] = value

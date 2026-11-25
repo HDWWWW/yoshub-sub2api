@@ -117,7 +117,7 @@ describe('AccountRefillModal', () => {
   expect(w.get<HTMLInputElement>('[data-testid="refill-muze-fallback-minutes"]').element.value).toBe('7')
   await w.get('form').trigger('submit'); await flushPromises()
   expect(save.mock.calls[0]![0].primary_provider).toBe('muze')
-  expect(save.mock.calls[0]![0].muze_fallback).toEqual({ enabled: true, failure_threshold: 4, timeout_minutes: 7 })
+  expect(save.mock.calls[0]![0].muze_fallback).toEqual({ provider: '', enabled: true, failure_threshold: 4, timeout_minutes: 7 })
   get.mockResolvedValue({ ...response(2), config: structuredClone(save.mock.calls[0]![0]), muze: { token_configured: true }, muze_fallback_status: { consecutive_failures: 2, message: 'waiting', last_at: null } })
   w.unmount(); w = await open()
   expect(w.get<HTMLSelectElement>('[data-testid="refill-primary-provider"]').element.value).toBe('muze')

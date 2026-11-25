@@ -1,5 +1,19 @@
 import { apiClient } from '../client'
 
+export type RefillProvider = '1208' | 'muze' | '558669'
+export interface RefillCatalog {
+  available: number
+  reserved?: number
+  items: { service: string; plan: string; price: number; price_version: number; enabled: boolean; reason?: string; terms: string }[]
+}
+export interface Supplier558669View {
+  token_configured: boolean
+  catalog: RefillCatalog | null
+  checked_at: string | null
+  retry_at: string
+  daily: { count: number; points: number; reserved_points: number; spent_points: number }
+}
+
 export interface RefillDeliveryConfig {
   ws_mode: string
   proxy_mode: string
@@ -21,12 +35,13 @@ export interface RefillDeliveryConfig {
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
-  primary_provider?: '1208' | 'muze'
-  muze_fallback?: { enabled: boolean; failure_threshold: number; timeout_minutes: number } | null
+  primary_provider?: RefillProvider
+  supplier_558669?: { max_unit_price: number; daily_max_points: number } | null
+  muze_fallback?: { provider?: '' | RefillProvider; enabled: boolean; failure_threshold: number; timeout_minutes: number } | null
   daily_schedule?: { enabled: boolean; time: string; quantity: number; plan?: string; day_mode?: '' | 'china_workday' }
   daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string; day_mode?: '' | 'china_workday' }[] | null
 	rotation_enabled: boolean
-	rotation: { provider?: '' | '1208' | 'muze'; plan: string; count: number }[]
+	rotation: { provider?: '' | RefillProvider; plan: string; count: number }[]
   notifications: { channel?: '' | 'wecom' | 'qq'; qq_app_id?: string; qq_target_type?: 'group' | 'c2c'; qq_target_openid?: string; refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
   enabled: boolean
   monitor_enabled: boolean
@@ -65,7 +80,12 @@ export interface RefillConfig {
   delivery: RefillDeliveryConfig
 }
 export interface RefillJob {
-  provider?: 'muze' | 'fendudu'
+  provider?: 'muze' | 'fendudu' | '558669'
+  entitlement_status?: string
+  delivery_version?: number
+  applied_delivery_version?: number
+  billing_status?: string
+  supplier_email?: string
   muze_product_id?: string
   supplier_refund_phase?: string
   submission_started_at?: string
@@ -97,7 +117,7 @@ export interface RefillJob {
   next_attempt_at: string
 }
 export interface ManualRefillRequest {
-  provider?: 'muze'
+  provider?: 'muze' | '558669'
 	force?: boolean
 	group_id?: number
   request_id: string
@@ -128,6 +148,7 @@ export interface MuzeCatalog {
   checked_at: string | null
 }
 export interface RefillView {
+  supplier_558669?: Supplier558669View
   muze_fallback_status?: { consecutive_failures: number; last_at: string | null; message: string }
   workday_calendar?: { years: number[]; synced_at: string; checked_at: string; message: string }
   muze?: MuzeCatalog
@@ -149,7 +170,7 @@ export interface RefillView {
   token_configured: boolean
   key: { label: string; prefix: string; scope: string; expires_at: string; revoked: boolean } | null
   wallet: { balance: number; held: number; available: number } | null
-  catalog: { available: number; items: { service: string; plan: string; price: number; price_version: number; enabled: boolean; terms: string }[] } | null
+  catalog: RefillCatalog | null
   catalog_at: string | null
   identity_at: string | null
   jobs: RefillJob[]
@@ -169,6 +190,12 @@ export interface RefillView {
   import_expiry_offset_minutes: number
 }
 export const accountRefillAPI = {
+  async catalog558669(groupID: number) {
+    return (await apiClient.get<Supplier558669View>('/admin/accounts/refill/558669/catalog', { params: { group_id: groupID }, timeout: 40000 })).data
+  },
+  async configure558669(groupID: number, api_token: string, revision: number) {
+    return (await apiClient.put<RefillView>('/admin/accounts/refill/558669', { api_token, revision }, { params: { group_id: groupID }, timeout: 70000 })).data
+  },
   async getImportThreshold() {
     return (await apiClient.get<{ percent: number }>('/admin/accounts/refill/import-threshold')).data.percent
   },

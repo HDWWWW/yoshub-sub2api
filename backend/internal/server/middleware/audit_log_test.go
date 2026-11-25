@@ -210,6 +210,31 @@ func TestRefillDownloadAuditsAccessWithoutCredentialBody(t *testing.T) {
 	require.Empty(t, repository.logs[0].RequestBody)
 }
 
+func TestRefill558669AuditOmitsCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	router.PUT("/api/v1/admin/accounts/refill/558669", func(c *gin.Context) {
+		var request map[string]any
+		require.NoError(t, c.ShouldBindJSON(&request))
+		require.Equal(t, "audit-fixture-secret", request["api_token"])
+		c.Status(http.StatusOK)
+	})
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/accounts/refill/558669", bytes.NewBufferString(`{"api_token":"audit-fixture-secret","revision":1}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	auditService.Stop()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	require.Len(t, repository.logs, 1)
+	require.Equal(t, "<credential-bearing body omitted>", repository.logs[0].RequestBody)
+}
+
 // MCP OAuth 是机器凭证：只读工具同样可以批量读取邮箱等数据，必须全部入审计并带上 grant。
 func TestAuditRecordsEveryMCPOAuthReadWithGrant(t *testing.T) {
 	gin.SetMode(gin.TestMode)

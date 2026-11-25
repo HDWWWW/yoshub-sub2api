@@ -36,29 +36,30 @@ type accountRefillLoads interface {
 }
 
 type AccountRefillService struct {
-	calendarWake  chan struct{}
-	calendarFetch func(context.Context, int) (refillWorkdayYear, error)
-	rulesMu       sync.Mutex
-	ruleRoot      *AccountRefillService
-	ruleGroupID   int64
-	ruleServices  map[int64]*AccountRefillService
-	notifier      refillNotifier
-	qqNotifier    *qqRefillNotifier
-	capacityMu    sync.Mutex
-	capacity      refillCapacityTracker
-	store         AccountRefillStore
-	encryptor     SecretEncryptor
-	accounts      accountRefillAccounts
-	admin         accountRefillAdmin
-	groups        accountRefillGroups
-	loads         accountRefillLoads
-	proxies       accountRefillProxies
-	provider      RefillProvider
-	muze          muzeProvider
-	stop          chan struct{}
-	cancel        context.CancelFunc
-	once          sync.Once
-	wg            sync.WaitGroup
+	calendarWake   chan struct{}
+	calendarFetch  func(context.Context, int) (refillWorkdayYear, error)
+	rulesMu        sync.Mutex
+	ruleRoot       *AccountRefillService
+	ruleGroupID    int64
+	ruleServices   map[int64]*AccountRefillService
+	notifier       refillNotifier
+	qqNotifier     *qqRefillNotifier
+	capacityMu     sync.Mutex
+	capacity       refillCapacityTracker
+	store          AccountRefillStore
+	encryptor      SecretEncryptor
+	accounts       accountRefillAccounts
+	admin          accountRefillAdmin
+	groups         accountRefillGroups
+	loads          accountRefillLoads
+	proxies        accountRefillProxies
+	provider       RefillProvider
+	provider558669 RefillProvider
+	muze           muzeProvider
+	stop           chan struct{}
+	cancel         context.CancelFunc
+	once           sync.Once
+	wg             sync.WaitGroup
 }
 
 func NewAccountRefillService(store AccountRefillStore, encryptor SecretEncryptor, accounts AccountRepository, admin AdminService, groups GroupRepository, loads *ConcurrencyService, proxies ProxyRepository) *AccountRefillService {
@@ -123,6 +124,7 @@ func (s *AccountRefillService) Stop() {
 }
 
 type AccountRefillView struct {
+	Supplier558669            Refill558669View                            `json:"supplier_558669"`
 	MuzeFallbackStatus        AccountRefillMuzeFallbackStatus             `json:"muze_fallback_status"`
 	WorkdayCalendar           *AccountRefillCalendarView                  `json:"workday_calendar,omitempty"`
 	DailyScheduleStatuses     map[string]AccountRefillDailyScheduleStatus `json:"daily_schedule_statuses,omitempty"`
@@ -180,7 +182,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 	day := time.Now().In(refillTimezone).Format("2006-01-02")
 	daily := state.Usage[day]
 	for _, j := range state.Jobs {
-		if j.CreatedAt.In(refillTimezone).Format("2006-01-02") == day && j.pending() && j.SupplierStatus != "succeeded" {
+		if j.Provider != refillProvider558669 && j.CreatedAt.In(refillTimezone).Format("2006-01-02") == day && j.pending() && j.SupplierStatus != "succeeded" {
 			daily.ReservedPoints += j.Price
 		}
 	}
@@ -193,7 +195,7 @@ func (s *AccountRefillService) View(ctx context.Context) (*AccountRefillView, er
 		Catalog: state.Catalog, CatalogAt: state.CatalogAt, IdentityAt: state.IdentityAt, Jobs: refillJobsForDisplay(state.Jobs), Evaluation: state.Evaluation,
 		Daily: daily, NextCheckAt: state.NextCheckAt, NextIntervalAt: state.NextIntervalAt, Message: state.Message, ImportExpiryOffsetMinutes: state.Config.ImportExpiryGraceMinutes,
 		Rules: rules, RotationCursor: state.RotationCursor, NextPlan: nextRefillPurchasePlan(&state), NextProvider: refillPublicProvider(nextRefillPurchaseRoute(&state).provider), WorkdayCalendar: state.WorkdayCalendar.view(),
-		MuzeFallbackStatus:  refillMuzeFallbackStatus(&state),
+		MuzeFallbackStatus: refillMuzeFallbackStatus(&state), Supplier558669: state.view558669(),
 		CapacityObservation: s.capacityObservation(state.Config, state.Revision, time.Now()),
 		ForecastObservation: s.forecastObservation(state.Config, state.Revision, state.Evaluation, time.Now())}, nil
 }
@@ -383,6 +385,9 @@ func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Cont
 		if c.needsAutomaticProvider(refillProviderMuze) && state.Muze.EncryptedToken == "" {
 			return errors.New("请先配置 Muze API Key")
 		}
+		if c.needsAutomaticProvider(refillProvider558669) && state.Supplier558669.EncryptedToken == "" {
+			return errors.New("请先配置 558669 API Key")
+		}
 		if c.needsAutomaticProvider("") && state.EncryptedToken == "" {
 			return errors.New("启用前请配置号商 API Key")
 		}
@@ -416,20 +421,21 @@ func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Cont
 		if c.MuzeFallback == nil {
 			c.MuzeFallback = state.Config.MuzeFallback
 		}
-		if c.MuzeFallback.enabled() && state.Muze.EncryptedToken == "" {
-			return errors.New("启用备用补号前请先保存muze连接设置")
+		if c.Supplier558669 == nil {
+			c.Supplier558669 = state.Config.Supplier558669
+		}
+		if err := validateRefillFallbackConnections(c, &state); err != nil {
+			return err
 		}
 		roleChanged := c.automaticProvider() != state.Config.automaticProvider()
-		if roleChanged || !c.MuzeFallback.enabled() || !slices.Equal(c.Rotation, state.Config.Rotation) || c.RotationEnabled != state.Config.RotationEnabled {
+		backupChanged := c.backupProvider(c.automaticProvider()) != state.Config.backupProvider(state.Config.automaticProvider())
+		if roleChanged || backupChanged || !c.MuzeFallback.enabled() || !slices.Equal(c.Rotation, state.Config.Rotation) || c.RotationEnabled != state.Config.RotationEnabled {
 			state.MuzeFallback.Shortage = nil
 		}
 		if roleChanged {
 			state.RotationGeneration++
 		}
-		if c.MuzeFallback.enabled() && state.EncryptedToken == "" {
-			return errors.New("启用备用补号前请先配置 1208 API Key")
-		}
-		if c.MuzeFallback.enabled() && (roleChanged || !state.Config.MuzeFallback.enabled() || c.Enabled && !state.Config.Enabled) {
+		if c.MuzeFallback.enabled() && (roleChanged || backupChanged || !state.Config.MuzeFallback.enabled() || c.Enabled && !state.Config.Enabled) {
 			state.MuzeFallback.Since = time.Now()
 		}
 		state.MuzeFallback.NextAttemptAt = time.Time{}
@@ -560,6 +566,16 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		if err := s.refreshMuzeProducts(ctx, &state, now, preview, persist); err != nil {
 			return err
+		}
+		if preview && state.Supplier558669.EncryptedToken != "" {
+			if err := s.refresh558669(ctx, &state, persist); err != nil && !IsManualRefillValidationError(err) {
+				return err
+			}
+		}
+		if !preview {
+			if err := s.advance558669Jobs(ctx, &state, now, persist); err != nil {
+				return err
+			}
 		}
 		if !preview && state.Muze.EncryptedToken != "" && !now.Before(state.Muze.RetryAt) {
 			if err := s.advanceMuzeJobs(ctx, &state, now, persist); err != nil {
@@ -735,12 +751,10 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		orderProvider := primary
 		if supplyFallback {
-			orderProvider = otherRefillProvider(primary)
+			orderProvider = state.Config.backupProvider(primary)
 			plan = quote.Plan
 		}
-		day := now.In(refillTimezone).Format("2006-01-02")
-		usage := state.Usage[day]
-		if usage.Count >= state.Config.DailyMaxCount || usage.Points+quote.Price > state.Config.DailyMaxPoints+1e-8 {
+		if !state.canReserveRefill(orderProvider, quote.Price, now) {
 			state.Message = "已达到本日数量或积分预算"
 			return persist()
 		}
@@ -808,9 +822,7 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		state.Jobs = append([]AccountRefillJob{job}, state.Jobs...)
 		state.Jobs = trimAccountRefillJobs(state.Jobs, now)
-		usage.Count++
-		usage.Points += quote.Price
-		state.Usage[day] = usage
+		state.addRefillBudget(job)
 		for d := range state.Usage {
 			if d < now.AddDate(0, 0, -32).In(refillTimezone).Format("2006-01-02") {
 				delete(state.Usage, d)
@@ -1034,12 +1046,18 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		if refillDeliveryExpired(j.ExpiresAt, time.Now()) {
 			return errRefillDeliveryExpired
 		}
-		delivery, err := s.provider.Delivery(ctx, token, j.SupplierID)
+		delivery, err := s.providerClient(j.Provider).Delivery(ctx, token, j.SupplierID)
 		if err != nil {
 			return err
 		}
 		if err := validateRefillDelivery(delivery); err != nil {
 			return err
+		}
+		if j.Provider == refillProvider558669 && j.SupplierEmail != "" {
+			email, _ := delivery.Accounts[0].Credentials["email"].(string)
+			if !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(j.SupplierEmail)) {
+				return errors.New("558669 交付邮箱与原任务不匹配")
+			}
 		}
 		input, err := s.refillDeliveryInput(ctx, j, delivery)
 		if err != nil {
@@ -1060,6 +1078,9 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		if err != nil {
 			return err
 		}
+	}
+	if j.Provider == refillProvider558669 {
+		j.AppliedDeliveryVersion = refill558669Version(account.Extra)
 	}
 	return s.finishRefillImport(ctx, account.ID, j)
 }
@@ -1160,6 +1181,9 @@ func (s *AccountRefillService) DismissRejected(ctx context.Context, id string) e
 			j.FinishedAt = &now
 			j.UpdatedAt = now
 			j.Error = "管理员确认号商未受理，已释放本地预算预占"
+			if j.Provider == refillProvider558669 {
+				state.release558669Budget(j)
+			}
 			if !j.BudgetReleased {
 				day := j.CreatedAt.In(refillTimezone).Format("2006-01-02")
 				usage := state.Usage[day]
