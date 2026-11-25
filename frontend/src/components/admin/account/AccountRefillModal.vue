@@ -203,6 +203,24 @@
             <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.low_balance" type="checkbox" data-testid="refill-notify-balance" />{{ t('accountRefill.notifyLowBalance') }}</label>
             <label class="block"><span class="input-label">{{ t('accountRefill.lowBalanceThreshold') }}</span><input v-model.number="form.notifications.low_balance_threshold" type="number" min="0" max="10000000" step="0.01" class="input" data-testid="refill-balance-threshold" /></label>
             <p class="input-hint">{{ t('accountRefill.lowBalanceHint') }}</p>
+            <section v-if="form.notifications.muze_remaining" class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-700">
+              <label class="flex items-center gap-2 text-sm"><input v-model="form.notifications.muze_remaining.enabled" type="checkbox" data-testid="refill-notify-muze" :disabled="!view.muze?.token_configured && !form.notifications.muze_remaining.enabled" />{{ t('accountRefill.notifyMuzeRemaining') }}</label>
+              <p v-if="!view.muze?.token_configured" class="input-hint">{{ t('accountRefill.muzeAlertNeedsKey') }}</p>
+              <template v-if="form.notifications.muze_remaining.enabled">
+                <label class="block"><span class="input-label">{{ t('accountRefill.muzeAlertThreshold') }}</span><input v-model.number="form.notifications.muze_remaining.threshold" type="number" min="0" max="10000000" step="1" required class="input" data-testid="refill-muze-threshold" /></label>
+                <fieldset class="space-y-2">
+                  <legend class="input-label">{{ t('accountRefill.muzeAlertProducts') }}</legend>
+                  <label v-for="item in muzeAlertOptions" :key="item.id" class="flex items-center gap-2 text-sm">
+                    <input v-model="form.notifications.muze_remaining.products" type="checkbox" :value="item.id" :data-testid="`muze-alert-${item.id}`" />
+                    <span>{{ item.label }} <span class="text-xs text-gray-500">{{ item.listed ? t('accountRefill.muzeAlertCount', { count: number(item.remaining) }) : t('accountRefill.muzeUnlisted') }}</span></span>
+                  </label>
+                  <p v-if="!muzeAlertOptions.length" class="input-hint">{{ t('accountRefill.muzeCatalogEmpty') }}</p>
+                </fieldset>
+                <button type="button" class="text-sm text-primary-600 underline" :disabled="busy || catalogBusy || !view.muze?.token_configured" @click="refreshMuzeCatalog">{{ t('accountRefill.muzeRefresh') }}</button>
+                <span v-if="catalogError" role="alert" class="ml-2 text-sm text-amber-700">{{ catalogError }}</span>
+                <p class="input-hint">{{ t('accountRefill.muzeAlertHint') }}</p>
+              </template>
+            </section>
             <button v-admin-write type="button" class="btn btn-secondary" data-testid="refill-notification-test" :disabled="busy || dirty || conflict || !(form.notifications.channel === 'qq' ? view.qq_secret_configured : view.webhook_configured)" @click="testNotification">{{ t('accountRefill.testNotification') }}</button>
             <div v-if="view.notification_status?.at" class="rounded-lg bg-gray-50 p-4 text-sm dark:bg-dark-800" role="status"><p>{{ view.notification_status.message }}</p><p class="mt-1 text-xs text-gray-500">{{ formatNotificationTime(view.notification_status.at) }}</p></div>
           </div>
@@ -456,6 +474,13 @@ function selectManualChannel(value: string) {
 const muzeDirty = computed(() => muzeToken.value !== '' || muzeConnectionID.value !== (view.value?.muze?.connection_id || ''))
 const manualTokenConfigured = computed(() => providerConfigured(manualProvider.value))
 const muzeProducts = computed(() => view.value?.muze?.products || [])
+const muzeAlertOptions = computed(() => {
+  const options = muzeProducts.value.map(p => ({ id: p.product, label: p.label && p.label !== p.product ? `${p.label} (${p.product})` : p.product, listed: true, remaining: p.remaining }))
+  for (const id of form.value?.notifications.muze_remaining?.products || []) {
+    if (!options.some(p => p.id === id)) options.push({ id, label: id, listed: false, remaining: 0 })
+  }
+  return options
+})
 const catalogBusy = ref(false), catalogError = ref('')
 let catalogRequest = 0
 function canBuyMuze(item?: MuzeProduct) {
@@ -598,6 +623,8 @@ function accept(data: RefillView, reset: boolean) {
   data.config.rotation_enabled ??= false
   data.config.plan_quota_thresholds ??= {}
   data.config.notifications.refill_needed ??= false
+  data.config.notifications.muze_remaining ??= { enabled: false, threshold: 5, products: [] }
+  data.config.notifications.muze_remaining.products ??= []
   data.config.notifications.channel ||= 'wecom'
   data.config.notifications.qq_target_type ||= 'group'
   data.config.plan_import_concurrency ??= {}
@@ -664,6 +691,10 @@ function dailyStatus(id: string) {
 }
 async function save() {
   if (!form.value || busy.value || conflict.value) return
+  const alert = form.value.notifications.muze_remaining
+  if (alert?.enabled && (!alert.products.length || alert.products.length > 64 || !Number.isInteger(alert.threshold) || alert.threshold < 0 || alert.threshold > 10000000)) {
+    error.value = t('accountRefill.muzeAlertInvalid'); activeTab.value = 'notifications'; return
+  }
   const fallback = form.value.muze_fallback
   if (fallback && (!Number.isInteger(fallback.failure_threshold) || fallback.failure_threshold < 1 || fallback.failure_threshold > 100 || !Number.isInteger(fallback.timeout_minutes) || fallback.timeout_minutes < 1 || fallback.timeout_minutes > 1440)) {
     error.value = t('accountRefill.fallbackInvalid'); activeTab.value = 'rules'; return
@@ -729,9 +760,10 @@ watch([is558669, selectedGroup, () => view.value?.supplier_558669?.token_configu
   catalog558669Request++; catalog558669Busy.value = false; catalog558669Error.value = ''
   if (props.show && is558669.value && selectedGroup.value > 0 && view.value?.supplier_558669?.token_configured) void refresh558669Catalog()
 })
-watch([isMuze, selectedGroup, () => view.value?.muze?.token_configured, () => props.show], () => {
+const showMuzeCatalog = computed(() => isMuze.value || (activeTab.value === 'notifications' && !!form.value?.notifications.muze_remaining?.enabled))
+watch([showMuzeCatalog, selectedGroup, () => view.value?.muze?.token_configured, () => props.show], () => {
   catalogRequest++; catalogBusy.value = false; catalogError.value = ''
-  if (props.show && isMuze.value && selectedGroup.value > 0 && view.value?.muze?.token_configured) void refreshMuzeCatalog()
+  if (props.show && showMuzeCatalog.value && selectedGroup.value > 0 && view.value?.muze?.token_configured) void refreshMuzeCatalog()
 })
 async function saveMuze() {
   if (busy.value || dirty.value || conflict.value || manualPending.value) return

@@ -42,7 +42,7 @@ export interface RefillConfig {
   daily_schedules?: { id: string; enabled: boolean; time: string; quantity: number; plan: string; day_mode?: '' | 'china_workday' }[] | null
 	rotation_enabled: boolean
 	rotation: { provider?: '' | RefillProvider; plan: string; count: number }[]
-  notifications: { channel?: '' | 'wecom' | 'qq'; qq_app_id?: string; qq_target_type?: 'group' | 'c2c'; qq_target_openid?: string; refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number }
+  notifications: { channel?: '' | 'wecom' | 'qq'; qq_app_id?: string; qq_target_type?: 'group' | 'c2c'; qq_target_openid?: string; refill_started: boolean; refill_needed?: boolean; low_balance: boolean; low_balance_threshold: number; muze_remaining?: { enabled: boolean; threshold: number; products: string[] } | null }
   enabled: boolean
   monitor_enabled: boolean
   immediate_failure_retry?: boolean | null

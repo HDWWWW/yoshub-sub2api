@@ -118,6 +118,9 @@ func (s *AccountRefillService) ConfigureMuze(ctx context.Context, token, connect
 			return errors.New("muze对接码加密失败")
 		}
 		now := time.Now()
+		if hash != state.Muze.TokenHash {
+			state.MuzeRemainingAlerted = nil
+		}
 		state.Muze = muzeRefillState{EncryptedToken: cipher, TokenHash: hash, ConnectionID: connectionID, Products: products, CheckedAt: &now}
 		state.Revision++
 		return saveRefillState(&state, save)
@@ -141,7 +144,7 @@ func validMuzeIdentifier(value string, empty bool) bool {
 
 func (s *AccountRefillService) refreshMuzeProducts(ctx context.Context, state *accountRefillState, now time.Time, force bool, persist func() error) error {
 	f := &state.Muze
-	if f.EncryptedToken == "" || now.Before(f.RetryAt) || (!force && f.CheckedAt != nil && now.Sub(*f.CheckedAt) < 5*time.Minute) {
+	if f.EncryptedToken == "" || now.Before(f.RetryAt) || (!force && f.CheckedAt != nil && now.Sub(*f.CheckedAt) < muzeCatalogFreshness) {
 		return nil
 	}
 	secret, err := s.encryptor.Decrypt(f.EncryptedToken)
@@ -212,7 +215,7 @@ func (s *AccountRefillService) muzePurchaseQuote(ctx context.Context, state *acc
 		return nil, "", invalidManualRefill("无法读取 Muze 产品次数")
 	}
 	now := time.Now()
-	state.Muze.Products, state.Muze.CheckedAt = products, &now
+	state.Muze.Products, state.Muze.CheckedAt, state.Muze.RetryAt = products, &now, time.Time{}
 	if err := persist(); err != nil {
 		return nil, "", err
 	}

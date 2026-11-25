@@ -143,6 +143,9 @@ func (c AccountRefillConfig) Validate() error {
 	if err := validateRefillQQConfig(c.Notifications); err != nil {
 		return err
 	}
+	if err := c.Notifications.MuzeRemaining.validate(); err != nil {
+		return err
+	}
 	if math.IsNaN(c.Notifications.LowBalanceThreshold) || math.IsInf(c.Notifications.LowBalanceThreshold, 0) || c.Notifications.LowBalanceThreshold < 0 || c.Notifications.LowBalanceThreshold > 1e7 {
 		return errors.New("余额预警阈值须为 0–10000000 积分")
 	}
@@ -336,6 +339,7 @@ type accountRefillState struct {
 	EncryptedQQSecret     string                                      `json:"encrypted_qq_secret,omitempty"`
 	LastNotificationTest  time.Time                                   `json:"last_notification_test,omitempty"`
 	NotificationStatus    AccountRefillNotificationStatus             `json:"notification_status"`
+	MuzeRemainingAlerted  map[string]bool                             `json:"muze_remaining_alerted,omitempty"`
 	LowBalanceAlerted     bool                                        `json:"low_balance_alerted"`
 	RefillNeededAlerted   bool                                        `json:"refill_needed_alerted"`
 	RefillNeededRetryAt   time.Time                                   `json:"refill_needed_retry_at"`

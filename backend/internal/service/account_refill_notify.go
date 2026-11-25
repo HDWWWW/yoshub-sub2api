@@ -15,14 +15,15 @@ import (
 )
 
 type AccountRefillNotificationConfig struct {
-	Channel             string  `json:"channel,omitempty"`
-	QQAppID             string  `json:"qq_app_id,omitempty"`
-	QQTargetType        string  `json:"qq_target_type,omitempty"`
-	QQTargetOpenID      string  `json:"qq_target_openid,omitempty"`
-	RefillStarted       bool    `json:"refill_started"`
-	RefillNeeded        bool    `json:"refill_needed"`
-	LowBalance          bool    `json:"low_balance"`
-	LowBalanceThreshold float64 `json:"low_balance_threshold"`
+	Channel             string                           `json:"channel,omitempty"`
+	QQAppID             string                           `json:"qq_app_id,omitempty"`
+	QQTargetType        string                           `json:"qq_target_type,omitempty"`
+	QQTargetOpenID      string                           `json:"qq_target_openid,omitempty"`
+	RefillStarted       bool                             `json:"refill_started"`
+	RefillNeeded        bool                             `json:"refill_needed"`
+	LowBalance          bool                             `json:"low_balance"`
+	LowBalanceThreshold float64                          `json:"low_balance_threshold"`
+	MuzeRemaining       *MuzeRemainingNotificationConfig `json:"muze_remaining,omitempty"`
 }
 type AccountRefillNotificationStatus struct {
 	At      *time.Time `json:"at"`

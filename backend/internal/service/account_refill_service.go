@@ -264,6 +264,10 @@ func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Cont
 		if revision != state.Revision {
 			return errors.New("配置已被其他页面修改，请刷新后再保存")
 		}
+		// Older clients omit this optional setting when saving unrelated changes.
+		if c.Notifications.MuzeRemaining == nil {
+			c.Notifications.MuzeRemaining = state.Config.Notifications.MuzeRemaining
+		}
 		if c.PrimaryProvider == "" {
 			c.PrimaryProvider = state.Config.PrimaryProvider
 		}
@@ -316,15 +320,25 @@ func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Cont
 		if c.Notifications.Channel == "qq" && state.EncryptedQQSecret == "" {
 			return errors.New("请先填写 QQ ClientSecret，更换 AppID 时须重新填写")
 		}
-		if c.Notifications.Channel != "qq" && (c.Notifications.RefillStarted || c.Notifications.RefillNeeded || c.Notifications.LowBalance) && state.EncryptedWebhook == "" {
+		if c.Notifications.Channel != "qq" && (c.Notifications.RefillStarted || c.Notifications.RefillNeeded || c.Notifications.LowBalance || c.Notifications.MuzeRemaining.enabled()) && state.EncryptedWebhook == "" {
 			return errors.New("启用通知前请配置企业微信群机器人 Webhook")
 		}
-		if webhook != "" || qqSecret != "" || c.Notifications != state.Config.Notifications {
+		if c.Notifications.MuzeRemaining.enabled() && state.Muze.EncryptedToken == "" {
+			return errors.New("启用剩余次数提醒前请先配置 Muze API Key")
+		}
+		previous, next := state.Config.Notifications, c.Notifications
+		if webhook != "" || qqSecret != "" || previous.Channel != next.Channel || previous.QQAppID != next.QQAppID || previous.QQTargetType != next.QQTargetType || previous.QQTargetOpenID != next.QQTargetOpenID {
+			state.MuzeRemainingAlerted = nil
+		}
+		next.MuzeRemaining.pruneAlerts(state.MuzeRemainingAlerted)
+		// Changes to Muze selections must not rearm an ongoing 1208 or demand alert.
+		previous.MuzeRemaining, next.MuzeRemaining = nil, nil
+		if webhook != "" || qqSecret != "" || previous != next {
 			state.LowBalanceAlerted = false
 			state.LowBalanceRequired = 0
 			state.NextBalanceCheckAt = time.Time{}
 		}
-		if c.Enabled != state.Config.Enabled || c.Notifications != state.Config.Notifications || qqSecret != "" || c.Mode != state.Config.Mode {
+		if c.Enabled != state.Config.Enabled || previous != next || qqSecret != "" || c.Mode != state.Config.Mode {
 			state.RefillNeededAlerted = false
 			state.RefillNeededRetryAt = time.Time{}
 			state.NextNeededIntervalAt = time.Time{}
@@ -566,6 +580,11 @@ func (s *AccountRefillService) run(ctx context.Context, preview bool) error {
 		}
 		if err := s.refreshMuzeProducts(ctx, &state, now, preview, persist); err != nil {
 			return err
+		}
+		if !preview {
+			if err := s.notifyMuzeRemaining(ctx, &state, now, persist); err != nil {
+				return err
+			}
 		}
 		if preview && state.Supplier558669.EncryptedToken != "" {
 			if err := s.refresh558669(ctx, &state, persist); err != nil && !IsManualRefillValidationError(err) {

@@ -81,6 +81,37 @@ describe('AccountRefillModal', () => {
   expect(restored.get('[data-testid="manual-refill-plan"]').attributes('disabled')).toBeDefined()
   restored.unmount()
  })
+ it('saves exact Muze alert products and a zero threshold, including after reopening', async () => {
+  const products = ['pro5x', 'pro20x', 'pro20xv2'].map(product => ({ product, label: product.toUpperCase(), remaining: 7, stock: 0, available_now: 0 }))
+  const data = { ...response(), muze: { token_configured: true, connection_id: 'fixture', products, checked_at: new Date().toISOString() } }
+  get.mockResolvedValue(data); muzeProducts.mockResolvedValue(data.muze)
+  save.mockImplementation(async cfg => ({ ...data, revision: 2, config: cfg }))
+  let w = await open()
+  const toNotifications = async () => {
+    await w.findAll('nav button').find(b => b.text() === 'accountRefill.notifications')!.trigger('click'); await flushPromises()
+  }
+  await toNotifications()
+  expect(w.get<HTMLInputElement>('[data-testid="refill-notify-muze"]').element.checked).toBe(false)
+  await w.get('[data-testid="refill-notify-muze"]').setValue(true)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(save).not.toHaveBeenCalled(); expect(w.text()).toContain('accountRefill.muzeAlertInvalid')
+  for (const id of ['pro5x', 'pro20xv2']) await w.get(`[data-testid="muze-alert-${id}"]`).setValue(true)
+  await w.get('[data-testid="refill-muze-threshold"]').setValue('0')
+  await w.get('form').trigger('submit'); await flushPromises()
+  const stored = save.mock.calls[0]![0]
+  expect(stored.notifications.muze_remaining).toEqual({ enabled: true, threshold: 0, products: ['pro5x', 'pro20xv2'] })
+  expect(stored.notifications.low_balance).toBe(false)
+  w.unmount()
+  // Keep a saved product editable if the supplier temporarily omits it.
+  const catalog = { ...data.muze, products: products.slice(0, 2) }
+  get.mockResolvedValue({ ...data, config: stored, muze: catalog, revision: 2 }); muzeProducts.mockResolvedValue(catalog)
+  w = await open(); await toNotifications()
+  expect(w.get<HTMLInputElement>('[data-testid="muze-alert-pro20xv2"]').element.checked).toBe(true)
+  expect(w.get<HTMLInputElement>('[data-testid="muze-alert-pro20x"]').element.checked).toBe(false)
+  expect(w.get<HTMLInputElement>('[data-testid="refill-muze-threshold"]').element.value).toBe('0')
+  expect(w.text()).toContain('accountRefill.muzeUnlisted')
+  expect(manual).not.toHaveBeenCalled(); w.unmount()
+ })
  it('saves QQ credentials separately, clears the secret and only tests saved settings', async () => {
   const w = await open()
   await w.findAll('nav button').find(b => b.text() === 'accountRefill.notifications')!.trigger('click')
@@ -819,7 +850,7 @@ describe('AccountRefillModal', () => {
   await w.get('[data-testid="refill-balance-threshold"]').setValue(123.5)
   await w.get('[data-testid="refill-webhook"]').setValue('https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fixture')
   await w.get('form').trigger('submit'); await flushPromises()
-  expect(save).toHaveBeenCalledWith(expect.objectContaining({ notifications: { channel: 'wecom', qq_target_type: 'group', refill_started: true, refill_needed: false, low_balance: true, low_balance_threshold: 123.5 } }), '', 1, expect.stringContaining('key=fixture'))
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ notifications: { channel: 'wecom', qq_target_type: 'group', refill_started: true, refill_needed: false, low_balance: true, low_balance_threshold: 123.5, muze_remaining: { enabled: false, threshold: 5, products: [] } } }), '', 1, expect.stringContaining('key=fixture'))
   expect((w.get('[data-testid="refill-webhook"]').element as HTMLInputElement).value).toBe('')
   w.unmount()
  })
