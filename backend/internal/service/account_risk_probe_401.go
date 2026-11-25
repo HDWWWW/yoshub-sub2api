@@ -16,12 +16,13 @@ const accountRiskProbe401 = "probe_401"
 // Only an upstream HTTP response produces evidence. Never retain the body,
 // tokens, or a provider-controlled string in the rule, logs, or notification.
 type riskProbe401Evidence struct {
-	receivedAt time.Time
-	reclaimAt  *time.Time
-	ownerID    int64
-	ownerName  string
-	identity   [32]byte
-	failure    credential401Failure
+	alertTarget *Account401AlertTarget
+	receivedAt  time.Time
+	reclaimAt   *time.Time
+	ownerID     int64
+	ownerName   string
+	identity    [32]byte
+	failure     credential401Failure
 }
 
 func (e *riskProbe401Evidence) observedAt(fallback time.Time) time.Time {
@@ -29,6 +30,16 @@ func (e *riskProbe401Evidence) observedAt(fallback time.Time) time.Time {
 		return e.receivedAt
 	}
 	return fallback
+}
+
+func (e *riskProbe401Evidence) captureAlertTarget(ctx context.Context, reporter *Account401Reporter, sourceID int64) {
+	if e.alertTarget == nil {
+		e.alertTarget = reporter.targetAt401(ctx, sourceID, e.ownerID)
+	}
+}
+
+func (e *riskProbe401Evidence) shouldNotify(r *AccountRiskRule) bool {
+	return r.Config.Notify401Enabled && e.alertTarget != nil && e.alertTarget.AccountID > 0
 }
 
 func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe401Evidence {
@@ -56,7 +67,7 @@ func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe
 func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRule, scheduling AccountRiskScheduling, job *accountRiskJob, evidence *riskProbe401Evidence, now time.Time) (*Account, time.Time, error) {
 	if evidence.failure == "" || !r.Config.Probe401Enabled {
 		r.Observation.LastProbeResult = "自动风控探测收到上游 HTTP 401"
-		if r.Config.Notify401Enabled {
+		if evidence.shouldNotify(r) {
 			appendProbe401Event(r, job, evidence, now, "notify_only", r.Observation.LastProbeResult)
 		}
 		return nil, time.Time{}, nil
@@ -64,7 +75,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 	stale := "自动风控探测收到上游 HTTP 401，账号、凭据或分组已变化，未执行停调"
 	alertStale := func() {
 		r.Observation.LastProbeResult = stale
-		if r.Config.Notify401Enabled {
+		if evidence.shouldNotify(r) {
 			appendProbe401Event(r, job, evidence, now, "notify_only", stale)
 		}
 	}
@@ -133,13 +144,13 @@ func appendProbe401Event(r *AccountRiskRule, job *accountRiskJob, evidence *risk
 	if slices.ContainsFunc(r.Events, func(e AccountRiskEvent) bool { return e.ID == id }) {
 		return
 	}
-	appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, action, reason)
+	appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, action, reason, evidence.shouldNotify(r))
 	r.Events[0].ID = id
 }
 
-func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time, kind, action, reason string) {
+func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time, kind, action, reason string, notify bool) {
 	notification := "disabled"
-	if r.Config.Notify401Enabled {
+	if notify {
 		notification = "pending"
 	}
 	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: id, AccountName: riskNotificationName(name), Reason: reason, Kind: kind, Action: action, Notification: notification}

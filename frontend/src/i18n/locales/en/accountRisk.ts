@@ -2,7 +2,7 @@ export default {
   probe401Title: 'Automatically stop scheduling on 401',
   probe401Hint: 'Automatic probes stop accounts with invalid credentials. Refreshable OAuth credentials enter cooldown. Live requests follow the gateway’s existing authentication policy.',
   notify401Title: 'Independent 401 alerts',
-  notify401Hint: 'Send a WeCom alert for each upstream account 401, including live requests, model discovery, manual tests, credential refreshes and usage checks. Group requests use the request group. Background operations notify subscribed account groups. Automatic probes end at supplier reclaim. Actual 401 responses still trigger alerts. Deliveries are spaced three seconds apart.',
+  notify401Hint: 'Accounts already stopped from scheduling are silent. The 401 that triggers a stop still sends an alert. This covers live requests, automatic probes, manual tests, model discovery, credential refreshes and usage checks. Group requests notify the request group. Background operations notify subscribed account groups. Deliveries are spaced three seconds apart.',
   customTitle: 'Stop scheduling after repeated upstream errors',
   customStatus: 'HTTP status',
   customKeyword: 'Error keyword',

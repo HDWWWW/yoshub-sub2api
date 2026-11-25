@@ -47,20 +47,21 @@ func (s *AccountTestService) RunRiskProbe(ctx context.Context, a *Account, c Acc
 	return call.result, nil
 }
 
-func finishRiskProbeResponse(call *riskProbeCall, resp *http.Response, chat bool) error {
+func (s *AccountTestService) finishRiskProbeResponse(ctx context.Context, sourceID int64, call *riskProbeCall, resp *http.Response, chat bool) error {
 	call.result.UpstreamStatus = resp.StatusCode
 	if resp.StatusCode == http.StatusUnauthorized && call.credentialOwner != nil {
 		receivedAt := time.Now().UTC()
+		target := s.openaiGatewayService.reporter401().targetAt401(ctx, sourceID, call.credentialOwner.ID)
 		if call.config.Probe401Enabled {
 			call.result.auth401 = readRiskProbe401(call.credentialOwner, call.config.Model, resp.Body)
 		}
 		if call.result.auth401 == nil {
 			call.result.auth401 = &riskProbe401Evidence{ownerID: call.credentialOwner.ID, ownerName: riskNotificationName(call.credentialOwner.Name)}
 		}
-		if evidence := call.result.auth401; evidence != nil {
-			evidence.receivedAt = receivedAt
-			evidence.reclaimAt, _ = call.credentialOwner.supplierReclaimAt()
-		}
+		evidence := call.result.auth401
+		evidence.receivedAt = receivedAt
+		evidence.reclaimAt, _ = call.credentialOwner.supplierReclaimAt()
+		evidence.alertTarget = target
 	}
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("risk probe upstream rejected request")
@@ -69,6 +70,7 @@ func finishRiskProbeResponse(call *riskProbeCall, resp *http.Response, chat bool
 	call.result = result
 	if result.UpstreamStatus == http.StatusUnauthorized && call.credentialOwner != nil {
 		call.result.auth401 = &riskProbe401Evidence{ownerID: call.credentialOwner.ID, ownerName: riskNotificationName(call.credentialOwner.Name), receivedAt: time.Now().UTC()}
+		call.result.auth401.captureAlertTarget(ctx, s.openaiGatewayService.reporter401(), sourceID)
 	} else {
 		call.result.UpstreamStatus = resp.StatusCode
 	}

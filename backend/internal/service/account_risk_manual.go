@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -108,7 +109,15 @@ func (s *AccountRiskService) TestNow(parent context.Context, groupID, accountID,
 	}
 	defer slot.ReleaseFunc()
 	result, err := s.probe.RunRiskProbe(context.WithValue(ctx, risk401GroupKey{}, groupID), a, config)
-	s.reporter401().observe(ctx, groupID, a, result.UpstreamStatus, "风控面板手动测试")
+	if result.UpstreamStatus == http.StatusUnauthorized {
+		reporter := s.reporter401()
+		if e := result.auth401; e != nil {
+			e.captureAlertTarget(ctx, reporter, a.ID)
+			reporter.enqueue(ctx, groupID, e.alertTarget, e.observedAt(time.Now().UTC()), accountRiskAccount401, "observed", "风控面板手动测试收到上游 401")
+		} else {
+			reporter.observe(ctx, groupID, a, result.UpstreamStatus, "风控面板手动测试")
+		}
+	}
 	out.InputTokens, out.OutputTokens = result.InputTokens, result.OutputTokens
 	if err != nil || !result.Completed {
 		return out, nil

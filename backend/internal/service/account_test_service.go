@@ -996,7 +996,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	s.observeTest401(ctx, account, resp.StatusCode, "手动测试")
 	defer func() { _ = resp.Body.Close() }()
 	if risk := riskProbeForContext(ctx); risk != nil {
-		return finishRiskProbeResponse(risk, resp, false)
+		return s.finishRiskProbeResponse(ctx, account.ID, risk, resp, false)
 	}
 
 	if isOAuth && s.accountRepo != nil {
@@ -2215,7 +2215,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	s.observeTest401(ctx, account, resp.StatusCode, "手动测试 Chat Completions")
 	defer func() { _ = resp.Body.Close() }()
 	if risk := riskProbeForContext(ctx); risk != nil {
-		return finishRiskProbeResponse(risk, resp, true)
+		return s.finishRiskProbeResponse(ctx, account.ID, risk, resp, true)
 	}
 
 	if resp.StatusCode != http.StatusOK {

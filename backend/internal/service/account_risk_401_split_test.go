@@ -63,13 +63,14 @@ func TestAccountRisk401IndependentSwitches(t *testing.T) {
 				if alert {
 					require.NotContains(t, n.messages[0], "do-not-alert")
 				}
-				// A separate business response is independently deliverable even when
-				// the pre-existing gateway auth policy has already blocked the account.
+				// The first alert survives the stop. Later responses from this account are silent.
 				gateway := &OpenAIGatewayService{accountRisk: s}
 				ctx := WithHeaderOverrideRequestScope(context.Background(), 1, 1, &r.GroupID)
 				gateway.observeBusiness401(ctx, &accounts.pool[0], 401, "HTTP")
 				require.NoError(t, s.deliverNotification(ctx, now.Add(time.Minute)))
-				if alert {
+				if alert && stop {
+					require.Len(t, n.messages, 1)
+				} else if alert {
 					require.Len(t, n.messages, 2)
 					require.Contains(t, n.messages[1], "业务请求")
 					require.Contains(t, n.messages[1], "网关")
@@ -125,7 +126,9 @@ func TestAccountRisk401SmartWSWireObservation(t *testing.T) {
 				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.failed","response":{"error":{"status_code":401,"message":"private fixture"}}}`))
 				_, _, _ = conn.ReadMessage()
 			})
-			risk, store, _, _, _ := riskHarness()
+			risk, store, accounts, _, _ := riskHarness()
+			account.Status, account.Schedulable = StatusActive, true
+			accounts.pool = append(accounts.pool, *account)
 			rule := store.state.Rules[7]
 			rule.Config.Notify401Enabled = true
 			gateway.accountRisk = risk

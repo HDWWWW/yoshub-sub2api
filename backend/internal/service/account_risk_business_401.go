@@ -24,20 +24,19 @@ const (
 // Standalone from the scheduler so account maintenance clients can report actual
 // responses even when neither scheduling nor the automatic probe is enabled.
 type Account401Reporter struct {
-	store    AccountRiskStore
-	accounts accountRiskAccounts
-	wake     chan struct{}
+	store AccountRiskStore
+	wake  chan struct{}
 }
 
-func NewAccount401Reporter(store AccountRiskStore, accounts AccountRepository) *Account401Reporter {
-	return &Account401Reporter{store: store, accounts: accounts, wake: make(chan struct{}, 1)}
+func NewAccount401Reporter(store AccountRiskStore) *Account401Reporter {
+	return &Account401Reporter{store: store, wake: make(chan struct{}, 1)}
 }
 
 func (s *AccountRiskService) reporter401() *Account401Reporter {
 	if s == nil {
 		return nil
 	}
-	return &Account401Reporter{store: s.store, accounts: s.accounts, wake: s.notificationWake}
+	return &Account401Reporter{store: s.store, wake: s.notificationWake}
 }
 
 func (s *OpenAIGatewayService) reporter401() *Account401Reporter {
@@ -85,17 +84,10 @@ func (r *Account401Reporter) observe(ctx context.Context, groupID int64, account
 }
 
 func (r *Account401Reporter) observeID(ctx context.Context, accountID int64, status int, source string) {
-	if r == nil || status != http.StatusUnauthorized || r.accounts == nil {
-		return
+	if status == http.StatusUnauthorized {
+		at := time.Now().UTC()
+		r.enqueue(ctx, risk401RequestGroup(ctx), r.targetAt401(ctx, accountID, accountID), at, accountRiskAccount401, "observed", source+"收到上游 401")
 	}
-	fetch, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer cancel()
-	account, err := r.accounts.GetByID(fetch, accountID)
-	if err != nil {
-		slog.Warn("account_risk_401_account_unavailable", "account_id", accountID, "error", err)
-		return
-	}
-	r.observe(ctx, risk401RequestGroup(ctx), account, status, source)
 }
 
 type account401ScopeKey struct{}
@@ -126,28 +118,42 @@ func ObserveAccountHTTPStatus(ctx context.Context, status int) {
 // A scoped request belongs only to its request group. Admin and background
 // requests belong to each explicitly subscribed group of the affected account.
 func (r *Account401Reporter) record(ctx context.Context, groupID int64, account *Account, kind, action, reason string) {
-	if r == nil || r.store == nil || account == nil || account.ID <= 0 || account.Platform != PlatformOpenAI {
+	if account == nil || account.Platform != PlatformOpenAI {
 		return
 	}
 	at := time.Now().UTC()
-	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	r.enqueue(ctx, groupID, r.targetAt401(ctx, account.ID, account.ID), at, kind, action, reason)
+}
+
+// Use the database state when the response arrives, before authentication handlers
+// can stop the account. Never re-evaluate this decision during a queue retry.
+func (r *Account401Reporter) targetAt401(ctx context.Context, sourceID, ownerID int64) *Account401AlertTarget {
+	if r == nil || r.store == nil {
+		return nil
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
-	ids := account.GroupIDs
+	target, err := r.store.Lookup401AlertTarget(readCtx, sourceID, ownerID)
+	if err != nil {
+		slog.Warn("account_risk_401_target_unavailable", "account_id", sourceID, "error", err)
+		return &Account401AlertTarget{}
+	}
+	return &target
+}
+
+func (r *Account401Reporter) enqueue(ctx context.Context, groupID int64, target *Account401AlertTarget, at time.Time, kind, action, reason string) {
+	if target == nil || target.AccountID <= 0 {
+		return
+	}
+	ids := target.GroupIDs
 	if groupID > 0 {
 		ids = []int64{groupID}
-	} else if len(ids) == 0 && r.accounts != nil {
-		current, err := r.accounts.GetByID(persist, account.ID)
-		if err != nil {
-			slog.Warn("account_risk_401_membership_unavailable", "account_id", account.ID, "error", err)
-			return
-		}
-		if current != nil {
-			ids = current.GroupIDs
-		}
 	}
 	if len(ids) == 0 {
 		return
 	}
+	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
 	for {
 		queued := false
 		err := r.store.Update(persist, func(state *AccountRiskState, _ AccountRiskScheduling) error {
@@ -155,7 +161,7 @@ func (r *Account401Reporter) record(ctx context.Context, groupID int64, account 
 				if rule == nil || !rule.Config.Notify401Enabled || !slices.Contains(ids, id) {
 					continue
 				}
-				appendRisk401Event(rule, account.ID, account.Name, at, kind, action, reason)
+				appendRisk401Event(rule, target.AccountID, target.Name, at, kind, action, reason, true)
 				queued = true
 			}
 			return nil
@@ -170,12 +176,12 @@ func (r *Account401Reporter) record(ctx context.Context, groupID int64, account 
 			return
 		}
 		if !errors.Is(err, ErrAccountRiskBusy) || persist.Err() != nil {
-			slog.Warn("account_risk_401_alert_failed", "group_id", groupID, "account_id", account.ID, "error", err)
+			slog.Warn("account_risk_401_alert_failed", "group_id", groupID, "account_id", target.AccountID, "error", err)
 			return
 		}
 		select {
 		case <-persist.Done():
-			slog.Warn("account_risk_401_alert_timeout", "group_id", groupID, "account_id", account.ID)
+			slog.Warn("account_risk_401_alert_timeout", "group_id", groupID, "account_id", target.AccountID)
 			return
 		case <-time.After(40 * time.Millisecond):
 		}

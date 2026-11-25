@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 // A separate transaction-scoped lock coordinates all application slots. No
@@ -52,6 +53,21 @@ func encodeLegacyAccountRiskState(state *service.AccountRiskState) ([]byte, erro
 func NewAccountRiskStore(db *sql.DB, accounts service.AccountRepository) service.AccountRiskStore {
 	repo, _ := accounts.(*accountRepository)
 	return &accountRiskStore{db: db, accounts: repo}
+}
+
+// Read only routing metadata at receipt time. A temporary rate limit or OAuth
+// cooldown does not turn off the account's explicit scheduling switch.
+func (s *accountRiskStore) Lookup401AlertTarget(ctx context.Context, sourceID, ownerID int64) (service.Account401AlertTarget, error) {
+	var target service.Account401AlertTarget
+	err := s.db.QueryRowContext(ctx, `SELECT a.id, a.name, ARRAY(SELECT ag.group_id FROM account_groups ag WHERE ag.account_id=a.id)
+		FROM accounts a WHERE a.id=$1 AND a.deleted_at IS NULL AND a.platform='openai' AND a.status='active' AND a.schedulable
+		AND (a.id=$2 OR EXISTS (SELECT 1 FROM accounts owner WHERE owner.id=$2 AND owner.deleted_at IS NULL
+			AND owner.platform='openai' AND owner.status='active' AND owner.schedulable))`, sourceID, ownerID).
+		Scan(&target.AccountID, &target.Name, pq.Array(&target.GroupIDs))
+	if errors.Is(err, sql.ErrNoRows) {
+		return service.Account401AlertTarget{}, nil
+	}
+	return target, err
 }
 
 func decodeAccountRiskState(raw string) (*service.AccountRiskState, error) {

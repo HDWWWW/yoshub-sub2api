@@ -158,7 +158,11 @@ func TestAccountRiskProbe401AllAndCapacity(t *testing.T) {
 			err := s.finishProbe(context.Background(), job, AccountRiskProbeResult{UpstreamStatus: 401, auth401: e}, errors.New("rejected"), now.Add(12*time.Second))
 			require.NoError(t, err)
 			require.Equal(t, "stop", r.Events[0].Action)
-			require.Equal(t, "pending", r.Events[0].Notification)
+			if kind == "paused retest" {
+				require.Equal(t, "disabled", r.Events[0].Notification)
+			} else {
+				require.Equal(t, "pending", r.Events[0].Notification)
+			}
 			require.Equal(t, job.account.ID, r.Events[0].AccountID)
 			require.Empty(t, store.state.CapacityPauses)
 			target, err := accounts.GetByID(context.Background(), job.account.ID)

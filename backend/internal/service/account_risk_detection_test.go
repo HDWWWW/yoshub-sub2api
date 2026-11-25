@@ -30,6 +30,20 @@ type riskTestStore struct {
 	cas      bool
 }
 
+func (s *riskTestStore) Lookup401AlertTarget(ctx context.Context, sourceID, ownerID int64) (Account401AlertTarget, error) {
+	var target Account401AlertTarget
+	for _, id := range []int64{sourceID, ownerID} {
+		a, err := s.accounts.GetByID(ctx, id)
+		if err != nil || a == nil || a.Platform != PlatformOpenAI || !a.IsActive() || !a.Schedulable {
+			return Account401AlertTarget{}, err
+		}
+		if id == sourceID {
+			target = Account401AlertTarget{AccountID: a.ID, Name: a.Name, GroupIDs: a.GroupIDs}
+		}
+	}
+	return target, nil
+}
+
 func (s *riskTestStore) Read(context.Context) (*AccountRiskState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
