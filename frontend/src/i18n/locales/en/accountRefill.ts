@@ -1,4 +1,7 @@
 export default {
+  "supplierBalances": "Configured supplier balances",
+  "muzeRemaining": "Remaining units",
+  "muzeInventory": "Current stock",
   "supplier558669": "558669 refill",
   "manualChannel": "Manual refill supplier",
   "backupSupplier": "Backup supplier",

@@ -1,4 +1,7 @@
 export default {
+  "supplierBalances": "已配置渠道余额",
+  "muzeRemaining": "剩余次数",
+  "muzeInventory": "当前库存",
   "supplier558669": "558669 补号",
   "manualChannel": "手动补号渠道",
   "backupSupplier": "备用渠道",

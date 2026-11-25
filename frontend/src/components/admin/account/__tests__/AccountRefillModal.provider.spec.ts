@@ -53,6 +53,19 @@ describe('Manual refill supplier isolation', () => {
   })
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
+  it('keeps every configured supplier balance visible across rule and manual tabs', async () => {
+    const w = await open('supplier558669')
+    for (const tab of ['manual', 'muze', 'supplier558669'] as const) {
+      await selectTab(w, tab)
+      for (const supplier of ['1208', '558669', 'muze']) expect(w.get(`[data-testid="refill-wallet-${supplier}"]`).isVisible()).toBe(true)
+    }
+    await w.findAll('nav button').find(b => b.text() === zh.rules)!.trigger('click')
+    for (const supplier of ['1208', '558669', 'muze']) expect(w.get(`[data-testid="refill-wallet-${supplier}"]`).isVisible()).toBe(true)
+    expect(manual).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
   it('selects 558669, shows Pro200 quote, and preserves all three uncertain requests', async () => {
     const primary = pending(), muze = pending('muze')
     sessionStorage.setItem(storageKey, JSON.stringify([primary, muze]))

@@ -9,13 +9,7 @@
         </select>
         <span class="input-hint">{{ t(dirty ? 'accountRefill.groupSaveFirst' : 'accountRefill.groupRulesHint') }}</span>
       </label>
-      <div v-if="!isMuze && !is558669" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div v-for="item in walletItems" :key="item.key" class="rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700">
-          <div class="text-xs text-gray-500 dark:text-dark-300">1208 · {{ t(`accountRefill.${item.key}`) }}</div>
-          <div class="mt-1 text-2xl font-semibold tabular-nums text-gray-900 dark:text-white">{{ number(item.value) }} <span class="text-xs font-normal text-gray-500">{{ t('accountRefill.points') }}</span></div>
-        </div>
-      </div>
-      <p v-if="!isMuze && !is558669" class="text-xs text-gray-500">{{ t('accountRefill.snapshot') }} {{ date(view.identity_at) }}</p>
+      <RefillSupplierBalances :view="view" />
       <div class="rounded-lg bg-gray-50 px-4 py-3 text-sm dark:bg-dark-800" aria-live="polite">{{ view.message || t('accountRefill.unconfigured') }}</div>
       <nav ref="tabsNav" class="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-dark-700" :aria-label="t('accountRefill.title')">
         <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="busy" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
@@ -401,6 +395,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImportSchedulingThreshold from './ImportSchedulingThreshold.vue'
+import RefillSupplierBalances from './RefillSupplierBalances.vue'
 import { DEFAULT_SAME_ACCOUNT_RETRY_COUNT, MAX_SAME_ACCOUNT_RETRY_COUNT } from '@/components/account/sameAccountRetry'
 import OpenAIPrivacyControl from '@/components/account/OpenAIPrivacyControl.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -503,7 +498,6 @@ const ruleGroups = computed(() => groups.value.filter(g => g.platform === 'opena
 const providerLabel = (value?: string) => value === '558669' ? '558669' : value === 'muze' ? 'Muze' : '1208'
 const rotationPreview = computed(() => form.value?.rotation?.map(step => `${providerLabel(step.provider || form.value?.primary_provider)} · ${step.plan === 'pro20x' ? 'Pro20x' : 'Pro5x'} × ${step.count}`).join(' → '))
 const dirty = computed(() => !!form.value && (JSON.stringify(form.value) !== saved.value || token.value !== '' || webhook.value !== '' || qqSecret.value !== '' || mapping.value !== JSON.stringify(form.value.delivery.model_mapping || {}, null, 2)))
-const walletItems = computed(() => [{ key: 'balance', value: view.value?.wallet?.balance }, { key: 'held', value: view.value?.wallet?.held }, { key: 'available', value: view.value?.wallet?.available ?? view.value?.catalog?.available }])
 const usageItems = computed(() => {
   const v = view.value
   return [{ key: 'spent', value: v?.daily.spent_points }, { key: 'reserved', value: v?.daily.reserved_points }, { key: 'count', value: v?.daily.count }, { key: 'budget', value: v?.config.daily_max_points }, { key: 'ready', value: v?.evaluation.ready }, { key: 'expiring', value: v?.evaluation.expiring }, { key: 'pending', value: v?.evaluation.pending }, { key: 'needed', value: v?.evaluation.needed }]
