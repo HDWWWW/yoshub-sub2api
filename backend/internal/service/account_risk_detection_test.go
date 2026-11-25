@@ -135,7 +135,19 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 		}
 		return false, nil
 	}
-	return fn(s.state, AccountRiskScheduling{ApplyProbe401: apply401, Stop: stop, Pause: pause, Resume: resume})
+	reduceConcurrency := func(_ int64, a *Account, limit int) (bool, error) {
+		s.accounts.mu.Lock()
+		defer s.accounts.mu.Unlock()
+		for i := range s.accounts.pool {
+			current := &s.accounts.pool[i]
+			if s.cas && current.ID == a.ID && current.UpdatedAt.Equal(a.UpdatedAt) && canReduceRiskConcurrency(current, limit) {
+				current.Concurrency = limit
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return fn(s.state, AccountRiskScheduling{ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume})
 }
 
 type riskTestAccounts struct {

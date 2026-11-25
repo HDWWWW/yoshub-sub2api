@@ -168,6 +168,8 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 	}
 	action := "已关闭此账号调度，现有请求继续完成。"
 	switch event.Action {
+	case riskActionReduceConcurrency:
+		action = "已降低此账号并发上限，继续调度。现有请求继续完成。"
 	case "observed":
 		action = "已记录本次上游 401。"
 	case "gateway":

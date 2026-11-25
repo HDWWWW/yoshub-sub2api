@@ -8,7 +8,7 @@ vi.mock('@/api/admin/accountRisk', () => ({ accountRiskAPI: { get, save, test } 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const baseline: AccountRiskRule = {
   group_id: 7, revision: 3, test_accounts: [{ id: 1, name: 'Stopped account', schedulable: false }],
-  config: { custom_error_enabled: false, custom_error_window_seconds: 60, custom_error_threshold: 20, custom_error_rules: [], rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_mismatch_max_retries: 0, probe_401_enabled: false, notify_401_enabled: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
+  config: { rate_limit_429_reduce_concurrency: false, rate_limit_429_concurrency_limit: 1, custom_error_enabled: false, custom_error_window_seconds: 60, custom_error_threshold: 20, custom_error_rules: [], rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_mismatch_max_retries: 0, probe_401_enabled: false, notify_401_enabled: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
@@ -275,6 +275,38 @@ describe('429 controls and manual testing', () => {
     await w.get('[data-testid="risk-429-threshold"]').setValue(35)
     await w.get('form').trigger('submit'); await flushPromises()
     expect(save.mock.calls[0]?.[2]).toMatchObject({ rate_limit_429_enabled: true, rate_limit_429_window_seconds: 120, rate_limit_429_threshold: 35 })
+    w.unmount()
+  })
+  it('switches a legacy stop rule to reduce-only using the same window and threshold', async () => {
+    const legacy = structuredClone(baseline)
+    legacy.config.rate_limit_429_enabled = true
+    legacy.config.rate_limit_429_threshold = 60
+    Reflect.deleteProperty(legacy.config, 'rate_limit_429_reduce_concurrency')
+    Reflect.deleteProperty(legacy.config, 'rate_limit_429_concurrency_limit')
+    get.mockResolvedValueOnce(legacy)
+    const w = await open()
+    const stop = w.get<HTMLInputElement>('[data-testid="risk-429-enabled"]')
+    const reduce = w.get<HTMLInputElement>('[data-testid="risk-429-reduce"]')
+    expect(stop.element.checked).toBe(true)
+    expect(reduce.element.checked).toBe(false)
+    await reduce.setValue(true)
+    expect(stop.element.checked).toBe(false)
+    const limit = w.get<HTMLInputElement>('[data-testid="risk-429-limit"]')
+    expect(limit.element.value).toBe('1')
+    for (const invalid of [0, -1, 2.5, 2147483648, '']) {
+      await limit.setValue(invalid)
+      await w.get('form').trigger('submit')
+      expect(save).not.toHaveBeenCalled()
+    }
+    await limit.setValue(4)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]?.[2]).toMatchObject({ rate_limit_429_enabled: false, rate_limit_429_reduce_concurrency: true, rate_limit_429_concurrency_limit: 4, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 60 })
+    await stop.setValue(true)
+    expect(reduce.element.checked).toBe(false)
+    expect(w.find('[data-testid="risk-429-limit"]').exists()).toBe(false)
+    await stop.setValue(false)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[1]?.[2]).toMatchObject({ rate_limit_429_enabled: false, rate_limit_429_reduce_concurrency: false })
     w.unmount()
   })
   it('tests stopped accounts using unsaved parameters and escapes text', async () => {

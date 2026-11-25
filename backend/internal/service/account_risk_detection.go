@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"reflect"
@@ -42,6 +43,9 @@ type AccountRiskConfig struct {
 	CustomErrorThreshold     int                     `json:"custom_error_threshold"`
 	CustomErrorRules         []AccountRiskErrorMatch `json:"custom_error_rules,omitempty"`
 
+	RateLimit429ReduceConcurrency bool `json:"rate_limit_429_reduce_concurrency"`
+	RateLimit429ConcurrencyLimit  int  `json:"rate_limit_429_concurrency_limit"`
+
 	RateLimit429Enabled       bool   `json:"rate_limit_429_enabled"`
 	RateLimit429WindowSeconds int    `json:"rate_limit_429_window_seconds"`
 	RateLimit429Threshold     int    `json:"rate_limit_429_threshold"`
@@ -68,7 +72,7 @@ type AccountRiskConfig struct {
 }
 
 func DefaultAccountRiskConfig() AccountRiskConfig {
-	return AccountRiskConfig{CustomErrorWindowSeconds: 60, CustomErrorThreshold: 20, RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, ProbeEnabled: true, ProbeScope: "single", Probe429MaxRetries: 3, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
+	return AccountRiskConfig{CustomErrorWindowSeconds: 60, CustomErrorThreshold: 20, RateLimit429Enabled: true, RateLimit429WindowSeconds: 60, RateLimit429Threshold: 20, RateLimit429ConcurrencyLimit: 1, ProbeEnabled: true, ProbeScope: "single", Probe429MaxRetries: 3, ModelMismatchAction: "off", FirstBelowPercent: 60, SecondAtLeastPercent: 90, SustainSeconds: 10, ProbeIntervalSeconds: 300,
 		ProbePrompt: "请只回复数字 21，不要输出其他内容。", ExpectedText: "21", Model: "gpt-6.1-sol", ReasoningEffort: "high"}
 }
 
@@ -76,7 +80,7 @@ func DefaultAccountRiskConfig() AccountRiskConfig {
 // single-account schedule. An explicit false must survive a save/reload.
 func (c *AccountRiskConfig) UnmarshalJSON(data []byte) error {
 	type configAlias AccountRiskConfig
-	decoded := configAlias{ProbeEnabled: true, ProbeScope: "single"}
+	decoded := configAlias{ProbeEnabled: true, ProbeScope: "single", RateLimit429ConcurrencyLimit: 1}
 	// The original probe switch also sent 401 alerts. Only an absent new
 	// field inherits it, so explicitly disabling alerts survives reload.
 	var fields struct {
@@ -135,7 +139,17 @@ func (c AccountRiskConfig) Validate() error {
 	if (c.Probe429StopEnabled && c.Probe429MaxRetries < 1) || c.Probe429MaxRetries < 0 || c.Probe429MaxRetries > 20 {
 		return errors.New("定时测试 429 最大重试次数须为 1–20")
 	}
-	if c.RateLimit429Enabled && (c.RateLimit429WindowSeconds < 1 || c.RateLimit429Threshold < 1) || c.RateLimit429WindowSeconds < 0 || c.RateLimit429WindowSeconds > 3600 || c.RateLimit429Threshold < 0 || c.RateLimit429Threshold > 10000 {
+	if c.RateLimit429Enabled && c.RateLimit429ReduceConcurrency {
+		return errors.New("429 停止调度和降低并发只能选择一项")
+	}
+	if c.RateLimit429ConcurrencyLimit < 0 || c.RateLimit429ConcurrencyLimit > math.MaxInt32 || (c.RateLimit429ReduceConcurrency && c.RateLimit429ConcurrencyLimit == 0) {
+		return errors.New("429 触发后的并发上限须为 1–2147483647")
+	}
+	minimum := 0
+	if c.RateLimit429Enabled || c.RateLimit429ReduceConcurrency {
+		minimum = 1
+	}
+	if c.RateLimit429WindowSeconds < minimum || c.RateLimit429WindowSeconds > 3600 || c.RateLimit429Threshold < minimum || c.RateLimit429Threshold > 10000 {
 		return errors.New("429 时间窗口须为 1–3600 秒，次数须为 1–10000")
 	}
 	if !slices.Contains([]string{"", "off", "stop", "notify_only"}, c.ModelMismatchAction) {
@@ -243,10 +257,11 @@ type AccountRiskState struct {
 }
 
 type AccountRiskScheduling struct {
-	ApplyProbe401 func(groupID int64, source, owner *Account, reason string, cooldownUntil *time.Time) (bool, error)
-	Stop          func(groupID int64, account *Account) (bool, error)
-	Pause         func(groupID int64, account *Account, token string) (bool, error)
-	Resume        func(groupID int64, account *Account, token string) (bool, error)
+	ReduceConcurrency func(groupID int64, account *Account, limit int) (bool, error)
+	ApplyProbe401     func(groupID int64, source, owner *Account, reason string, cooldownUntil *time.Time) (bool, error)
+	Stop              func(groupID int64, account *Account) (bool, error)
+	Pause             func(groupID int64, account *Account, token string) (bool, error)
+	Resume            func(groupID int64, account *Account, token string) (bool, error)
 }
 
 // A zero AccountID means that the account or its credential owner was already stopped.
@@ -676,7 +691,11 @@ func riskAfter(now time.Time, seconds int) *time.Time {
 }
 func riskRecordStop(r *AccountRiskRule, account *Account, now time.Time, reason string) {
 	riskReset(&r.Observation, "stopped", reason)
-	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: account.ID, AccountName: riskNotificationName(account.Name), Reason: reason}
+	appendAccountRiskAction(r, account, AccountRiskEvent{At: now, Reason: reason})
+}
+
+func appendAccountRiskAction(r *AccountRiskRule, account *Account, event AccountRiskEvent) {
+	event.ID, event.AccountID, event.AccountName = uuid.NewString(), account.ID, riskNotificationName(account.Name)
 	if r.Config.NotifyEnabled {
 		event.Notification = "pending"
 	}

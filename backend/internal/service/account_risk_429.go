@@ -55,7 +55,24 @@ func (s *OpenAIGatewayService) observeRiskBurst(ctx context.Context, a *Account,
 	return false
 }
 
-func risk429Enabled(c AccountRiskConfig) bool { return c.Enabled && c.RateLimit429Enabled }
+const riskActionReduceConcurrency = "reduce_concurrency"
+
+func risk429Enabled(c AccountRiskConfig) bool {
+	return c.Enabled && (c.RateLimit429Enabled || c.RateLimit429ReduceConcurrency)
+}
+
+func riskBurstEpoch(r *AccountRiskRule, accountID int64, reduce bool) string {
+	for _, e := range r.Events {
+		if e.AccountID == accountID && (e.Action == "stop" || (reduce && e.Action == riskActionReduceConcurrency)) {
+			return e.ID
+		}
+	}
+	return ""
+}
+
+func canReduceRiskConcurrency(a *Account, limit int) bool {
+	return a.Schedulable && limit > 0 && (a.Concurrency <= 0 || a.Concurrency > limit)
+}
 
 func (s *AccountRiskService) Handle429(ctx context.Context, account *Account, token string, now time.Time) (bool, error) {
 	return s.handleRiskBurst(ctx, account, token, now, http.StatusTooManyRequests, nil, false)
@@ -94,14 +111,12 @@ func (s *AccountRiskService) handleRiskBurst(ctx context.Context, account *Accou
 		} else if !risk429Enabled(r.Config) {
 			continue
 		}
-		// A stop starts a new counting epoch for a later manual re-enable.
-		epoch := ""
-		for _, event := range r.Events {
-			if event.AccountID == account.ID && event.Action == "stop" {
-				epoch = event.ID
-				break
-			}
+		reduce := !custom && r.Config.RateLimit429ReduceConcurrency
+		if reduce && !canReduceRiskConcurrency(account, r.Config.RateLimit429ConcurrencyLimit) {
+			continue
 		}
+		// A manual resume or increase should require fresh evidence after an action.
+		epoch := riskBurstEpoch(r, account.ID, reduce)
 		key := fmt.Sprintf("%d:%d:%d:%x:%s", id, r.Revision, account.ID, riskModelAccountIdentity(account), epoch)
 		if custom {
 			key = "custom:" + key
@@ -113,10 +128,13 @@ func (s *AccountRiskService) handleRiskBurst(ctx context.Context, account *Accou
 		if count <= int64(threshold) {
 			continue
 		}
-		stopped := false
-		err = s.store.Update(ctx, func(currentState *AccountRiskState, stop AccountRiskScheduling) error {
+		var applied bool
+		err = s.store.Update(ctx, func(currentState *AccountRiskState, scheduling AccountRiskScheduling) error {
 			currentRule := currentState.Rules[id]
-			if currentRule == nil || currentRule.Revision != r.Revision || !currentRule.Config.Enabled || (custom && !currentRule.Config.CustomErrorEnabled) || (!custom && !currentRule.Config.RateLimit429Enabled) {
+			if currentRule == nil || currentRule.Revision != r.Revision || riskBurstEpoch(currentRule, account.ID, reduce) != epoch {
+				return nil
+			}
+			if !currentRule.Config.Enabled || (custom && !currentRule.Config.CustomErrorEnabled) || (!custom && !risk429Enabled(currentRule.Config)) {
 				return nil
 			}
 			g, err := s.groups.GetByID(ctx, id)
@@ -133,25 +151,45 @@ func (s *AccountRiskService) handleRiskBurst(ctx context.Context, account *Accou
 			if current == nil || current.Status != StatusActive || (!current.Schedulable && !AccountHasRiskCapacityPause(current)) || !slices.Contains(current.GroupIDs, id) || riskModelAccountIdentity(current) != riskModelAccountIdentity(account) {
 				return nil
 			}
-			stopped, err = stop.Stop(id, current)
+			event := AccountRiskEvent{At: now, Kind: kind, Occurrences: int(count)}
+			trigger := fmt.Sprintf("%d 秒内%s超过 %d 次", window, label, threshold)
+			if reduce {
+				limit := currentRule.Config.RateLimit429ConcurrencyLimit
+				if !canReduceRiskConcurrency(current, limit) {
+					return nil
+				}
+				previous := fmt.Sprint(current.Concurrency)
+				if current.Concurrency <= 0 {
+					previous = "不限"
+				}
+				applied, err = scheduling.ReduceConcurrency(id, current, limit)
+				event.Action = riskActionReduceConcurrency
+				event.Reason = fmt.Sprintf("%s，账号并发上限从 %s 降至 %d，继续调度", trigger, previous, limit)
+			} else {
+				applied, err = scheduling.Stop(id, current)
+				event.Action = "stop"
+				event.Reason = trigger + "，已关闭账号调度，可使用测试消息手动复测"
+			}
 			if err != nil {
 				return err
 			}
-			if !stopped {
+			if !applied {
 				return errAccountRiskModelAccountChanged
 			}
-			reason := fmt.Sprintf("%d 秒内%s超过 %d 次，已关闭账号调度，可使用测试消息手动复测", window, label, threshold)
-			riskRecordStop(currentRule, current, now, reason)
-			currentRule.Events[0].Kind, currentRule.Events[0].Action = kind, "stop"
-			currentRule.Events[0].Occurrences = int(count)
+			if !reduce {
+				riskReset(&currentRule.Observation, "stopped", event.Reason)
+			}
+			appendAccountRiskAction(currentRule, current, event)
 			return nil
 		})
 		if err != nil {
 			return false, err
 		}
-		if stopped {
+		if applied {
 			s.wakeNotifications()
-			return true, nil
+			if !reduce {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

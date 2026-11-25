@@ -145,6 +145,28 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 	probesBefore, _ := json.Marshal(state.ActiveProbes)
 	pausesBefore, _ := json.Marshal(state.CapacityPauses)
 	changed := []int64{}
+	reduceConcurrency := func(groupID int64, a *service.Account, limit int) (bool, error) {
+		// Nonpositive account concurrency means unlimited. Only lower a still-active
+		// member's limit; keep its scheduling switch and any in-flight slots intact.
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET concurrency=$4, updated_at=NOW()
+		 WHERE id=$1 AND updated_at=$2 AND deleted_at IS NULL AND platform='openai' AND status='active' AND schedulable
+		 AND $4 > 0 AND (concurrency<=0 OR concurrency>$4)
+		 AND EXISTS (SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id
+		 WHERE ag.account_id=accounts.id AND ag.group_id=$3 AND g.deleted_at IS NULL AND g.status='active' AND g.platform='openai'
+		 FOR SHARE OF ag,g)`, a.ID, a.UpdatedAt, groupID, limit)
+		if err != nil {
+			return false, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil || n == 0 {
+			return false, err
+		}
+		if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &a.ID, nil, nil); err != nil {
+			return false, err
+		}
+		changed = append(changed, a.ID)
+		return true, nil
+	}
 	stop := func(groupID int64, a *service.Account) (bool, error) {
 		// The rule and account mutation commit together. A concurrent admin edit,
 		// credential refresh or membership change prevents a stale stop.
@@ -245,7 +267,7 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 		changed = append(changed, owner.ID)
 		return true, nil
 	}
-	if err = fn(state, service.AccountRiskScheduling{ApplyProbe401: apply401, Stop: stop, Pause: pause, Resume: resume}); err != nil {
+	if err = fn(state, service.AccountRiskScheduling{ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume}); err != nil {
 		return err
 	}
 	syncAccountRiskLegacyGuard(state)

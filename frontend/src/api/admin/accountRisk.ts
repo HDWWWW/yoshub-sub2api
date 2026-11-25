@@ -6,6 +6,8 @@ export interface AccountRiskConfig {
   custom_error_threshold: number
   custom_error_rules: { status?: number; keyword?: string }[]
   rate_limit_429_enabled: boolean
+  rate_limit_429_reduce_concurrency: boolean
+  rate_limit_429_concurrency_limit: number
   rate_limit_429_window_seconds: number
   rate_limit_429_threshold: number
   enabled: boolean
@@ -72,7 +74,7 @@ export interface AccountRiskRule {
     input_tokens: number
     output_tokens: number
   }
-  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'observed' | 'gateway' | 'stop' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
+  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'observed' | 'gateway' | 'stop' | 'reduce_concurrency' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
 }
 export interface AccountRiskManualResult {
   account_id: number

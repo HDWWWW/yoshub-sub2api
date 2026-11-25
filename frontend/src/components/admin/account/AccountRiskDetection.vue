@@ -49,12 +49,29 @@
             <p class="text-xs text-gray-500">{{ t('accountRisk.modelMismatchHint') }}</p>
           </section>
           <section class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-            <label class="flex items-center gap-3"><input v-model="draft.rate_limit_429_enabled" data-testid="risk-429-enabled" type="checkbox" class="rounded" /><span class="text-sm font-semibold">{{ t('accountRisk.rateLimit429Title') }}</span></label>
+            <label class="flex items-center gap-3">
+              <input v-model="burst429Action" true-value="stop" false-value="off" data-testid="risk-429-enabled" type="checkbox" class="rounded" />
+              <span class="text-sm font-semibold">{{ t('accountRisk.rateLimit429Title') }}</span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input v-model="burst429Action" true-value="reduce" false-value="off" data-testid="risk-429-reduce" type="checkbox" class="rounded" />
+              <span class="text-sm font-semibold">{{ t('accountRisk.rateLimit429Reduce') }}</span>
+            </label>
             <div class="grid gap-3 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRisk.rateLimit429Window') }}</span><input v-model.number="draft.rate_limit_429_window_seconds" class="input" data-testid="risk-429-window" type="number" min="1" max="3600" step="1" required /></label>
               <label><span class="input-label">{{ t('accountRisk.rateLimit429Threshold') }}</span><input v-model.number="draft.rate_limit_429_threshold" class="input" data-testid="risk-429-threshold" type="number" min="1" max="10000" step="1" required /></label>
             </div>
-            <p class="text-xs text-gray-500">{{ t('accountRisk.rateLimit429Hint') }}</p>
+            <template v-if="draft.rate_limit_429_reduce_concurrency">
+              <label class="block sm:w-1/2">
+                <span class="input-label">{{ t('accountRisk.rateLimit429Limit') }}</span>
+                <input v-model.number="draft.rate_limit_429_concurrency_limit" class="input" data-testid="risk-429-limit" aria-describedby="risk-429-limit-hint" type="number" min="1" max="2147483647" step="1" required />
+              </label>
+              <p id="risk-429-limit-hint" class="text-xs text-gray-500">{{ t('accountRisk.rateLimit429LimitHint') }}</p>
+            </template>
+            <p class="text-xs text-gray-500">
+              <template v-if="valid429Window">{{ t('accountRisk.rateLimit429Trigger', { window: draft.rate_limit_429_window_seconds, count: draft.rate_limit_429_threshold + 1 }) }} </template>
+              {{ t('accountRisk.rateLimit429Hint') }}
+            </p>
           </section>
           <section class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600" data-testid="risk-custom-errors">
             <label class="flex items-center gap-3"><input v-model="draft.custom_error_enabled" type="checkbox" class="rounded" data-testid="risk-custom-enabled" @change="initializeErrorMatch" /><span class="text-sm font-semibold">{{ t('accountRisk.customTitle') }}</span></label>
@@ -215,9 +232,30 @@ function initializeErrorMatch() {
   if (c?.custom_error_enabled && !c.custom_error_rules.length) c.custom_error_rules.push({})
   if (c && !c.custom_error_enabled) c.custom_error_rules = c.custom_error_rules.filter(r => r.status || r.keyword?.trim())
 }
-const valid = computed(() => {
+function valid429Limit(limit: number) {
+  return Number.isInteger(limit) && limit >= 1 && limit <= 2147483647
+}
+const burst429Action = computed<'off' | 'stop' | 'reduce'>({
+  get() {
+    if (draft.value?.rate_limit_429_reduce_concurrency) return 'reduce'
+    return draft.value?.rate_limit_429_enabled ? 'stop' : 'off'
+  },
+  set(action) {
+    const c = draft.value
+    if (!c) return
+    c.rate_limit_429_enabled = action === 'stop'
+    c.rate_limit_429_reduce_concurrency = action === 'reduce'
+    if (!valid429Limit(c.rate_limit_429_concurrency_limit)) c.rate_limit_429_concurrency_limit = 1
+  }
+})
+const valid429Window = computed(() => {
   const c = draft.value
   return !!c && Number.isInteger(c.rate_limit_429_window_seconds) && c.rate_limit_429_window_seconds >= 1 && c.rate_limit_429_window_seconds <= 3600 &&
+    Number.isInteger(c.rate_limit_429_threshold) && c.rate_limit_429_threshold >= 1 && c.rate_limit_429_threshold <= 10000
+})
+const valid = computed(() => {
+  const c = draft.value
+  return !!c && valid429Window.value && (!c.rate_limit_429_reduce_concurrency || valid429Limit(c.rate_limit_429_concurrency_limit)) &&
     (!c.custom_error_enabled || (c.custom_error_rules.length > 0 &&
       Number.isInteger(c.custom_error_window_seconds) && c.custom_error_window_seconds >= 1 && c.custom_error_window_seconds <= 3600 &&
       Number.isInteger(c.custom_error_threshold) && c.custom_error_threshold >= 1 && c.custom_error_threshold <= 10000 &&
@@ -225,7 +263,7 @@ const valid = computed(() => {
     ['single', 'all'].includes(c.probe_scope) &&
     Number.isInteger(c.probe_mismatch_max_retries) && c.probe_mismatch_max_retries >= 0 && c.probe_mismatch_max_retries <= 20 &&
     (!c.probe_429_stop_enabled || (Number.isInteger(c.probe_429_max_retries) && c.probe_429_max_retries >= 1 && c.probe_429_max_retries <= 20)) &&
-    Number.isInteger(c.rate_limit_429_threshold) && c.rate_limit_429_threshold >= 1 && c.rate_limit_429_threshold <= 10000 && Number.isInteger(c.first_below_percent) && c.first_below_percent >= 1 && c.first_below_percent <= c.second_at_least_percent &&
+    Number.isInteger(c.first_below_percent) && c.first_below_percent >= 1 && c.first_below_percent <= c.second_at_least_percent &&
     Number.isInteger(c.second_at_least_percent) && c.second_at_least_percent <= 100 &&
     Number.isInteger(c.sustain_seconds) && c.sustain_seconds >= 1 && c.sustain_seconds <= 3600 &&
     Number.isInteger(c.probe_interval_seconds) && c.probe_interval_seconds >= 10 && c.probe_interval_seconds <= 86400 &&
@@ -246,6 +284,8 @@ async function load() {
   if (!groupID.value) return
   loading.value = true
   try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config,
+    rate_limit_429_reduce_concurrency: data.config.rate_limit_429_reduce_concurrency ?? false,
+    rate_limit_429_concurrency_limit: data.config.rate_limit_429_concurrency_limit || 1,
     custom_error_enabled: data.config.custom_error_enabled ?? false, custom_error_window_seconds: data.config.custom_error_window_seconds || 60,
     custom_error_threshold: data.config.custom_error_threshold || 20, custom_error_rules: (data.config.custom_error_rules ?? []).map(r => ({ ...r })),
     rate_limit_429_enabled: data.config.rate_limit_429_enabled ?? false, rate_limit_429_window_seconds: data.config.rate_limit_429_window_seconds || 60, rate_limit_429_threshold: data.config.rate_limit_429_threshold || 20, notify_enabled: data.config.notify_enabled ?? false, capacity_notify_only: data.config.capacity_notify_only ?? false, probe_enabled: data.config.probe_enabled ?? true, probe_scope: data.config.probe_scope || 'single', probe_notify_only: data.config.probe_notify_only ?? false, probe_mismatch_max_retries: data.config.probe_mismatch_max_retries ?? 0, probe_401_enabled: data.config.probe_401_enabled ?? false, notify_401_enabled: data.config.notify_401_enabled ?? data.config.probe_401_enabled ?? false, probe_429_stop_enabled: data.config.probe_429_stop_enabled ?? false, probe_429_max_retries: data.config.probe_429_max_retries || 3, model_mismatch_action: data.config.model_mismatch_action || 'off' } } }
