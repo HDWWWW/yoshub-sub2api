@@ -325,6 +325,9 @@ func refillNotificationMode(j *AccountRefillJob) string {
 	if j.Provider == refillProviderMuze {
 		mode = "muze" + mode
 	}
+	if j.Provider == refillProvider558669 {
+		mode = "558669 " + mode
+	}
 	return mode
 }
 

@@ -4,8 +4,8 @@ import AccountRefillModal from '../AccountRefillModal.vue'
 import type { ManualRefillRequest } from '@/api/admin/accountRefill'
 import zh from '@/i18n/locales/zh/accountRefill'
 
-const { get, manual } = vi.hoisted(() => ({ get: vi.fn(), manual: vi.fn() }))
-vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, manual, getImportThreshold: async () => 99 } }))
+const { get, manual, configure558669, catalog558669, save } = vi.hoisted(() => ({ get: vi.fn(), manual: vi.fn(), configure558669: vi.fn(), catalog558669: vi.fn(), save: vi.fn() }))
+vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, manual, configure558669, catalog558669, save, getImportThreshold: async () => 99 } }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [{ id: 2, name: 'First', platform: 'openai', status: 'active' }, { id: 3, name: 'Second', platform: 'openai', status: 'active' }] }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn() }) }))
@@ -24,18 +24,19 @@ function response(group = 2) {
       delivery: { model_mapping: {}, fingerprint_mode: 'full', proxy_mode: 'direct', expiry_mode: 'rental' } },
     revision: 447, rules: [{ group_id: 2 }], token_configured: true,
     muze: { token_configured: true, connection_id: 's2e_fixture', products: [{ product: 'pro20x', available_now: 5, expired: false, blocked_reason: '' }] },
+    supplier_558669: { token_configured: true, checked_at: new Date().toISOString(), daily: { spent_points: 12, reserved_points: 3 }, catalog: { available: 100, reserved: 8, items: [{ service: 'refill', plan: 'pro20x', price: 12, price_version: 1280, enabled: true, terms: 'fixture-terms' }] } },
     key: null, wallet: null, catalog: { items: [] }, jobs: [], daily: {}, evaluation: { accounts: [], checked_at: new Date().toISOString() }
   }
 }
-function pending(provider?: 'muze', group = 2): ManualRefillRequest {
+function pending(provider?: 'muze' | '558669', group = 2): ManualRefillRequest {
   return { request_id: `${Date.now()}:${crypto.randomUUID()}`, plan: 'pro20x', revision: 445, group_id: group, ...(provider ? { provider } : {}) }
 }
-async function open(initialTab: 'manual' | 'muze') {
+async function open(initialTab: 'manual' | 'muze' | 'supplier558669') {
   const wrapper = mount(AccountRefillModal, { props: { show: true, initialTab }, global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' } } } })
   await flushPromises()
   return wrapper
 }
-async function selectTab(wrapper: Awaited<ReturnType<typeof open>>, tab: 'manual' | 'muze') {
+async function selectTab(wrapper: Awaited<ReturnType<typeof open>>, tab: 'manual' | 'muze' | 'supplier558669') {
   await wrapper.findAll('nav button').find(b => b.text() === zh[tab])!.trigger('click')
   await flushPromises()
 }
@@ -46,8 +47,84 @@ describe('Manual refill supplier isolation', () => {
     sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks()
     get.mockImplementation(async (group?: number) => response(group))
     manual.mockImplementation(async (request: ManualRefillRequest) => response(request.group_id))
+    catalog558669.mockResolvedValue(response().supplier_558669)
+    configure558669.mockImplementation(async (group: number) => response(group))
+    save.mockImplementation(async config => ({ ...response(config.group_id), config }))
   })
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
+
+  it('keeps every configured supplier balance visible across rule and manual tabs', async () => {
+    const w = await open('supplier558669')
+    for (const tab of ['manual', 'muze', 'supplier558669'] as const) {
+      await selectTab(w, tab)
+      for (const supplier of ['1208', '558669', 'muze']) expect(w.get(`[data-testid="refill-wallet-${supplier}"]`).isVisible()).toBe(true)
+    }
+    await w.findAll('nav button').find(b => b.text() === zh.rules)!.trigger('click')
+    for (const supplier of ['1208', '558669', 'muze']) expect(w.get(`[data-testid="refill-wallet-${supplier}"]`).isVisible()).toBe(true)
+    expect(manual).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('selects 558669, shows Pro200 quote, and preserves all three uncertain requests', async () => {
+    const primary = pending(), muze = pending('muze')
+    sessionStorage.setItem(storageKey, JSON.stringify([primary, muze]))
+    manual.mockRejectedValue({ status: 503 })
+    let w = await open('supplier558669')
+    expect(w.get('[data-testid="manual-refill-provider"]').text()).toContain('558669')
+    expect(w.get<HTMLSelectElement>('[data-testid="manual-refill-plan"]').element.value).toBe('pro20x')
+    expect(w.get('[data-testid="manual-refill-plan"]').text()).toContain('Pro200')
+    expect(w.get('[data-testid="manual-refill-submit"]').text()).toContain('558669')
+    expect(w.text()).toContain('1280')
+    await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+    const original = structuredClone(manual.mock.calls[0]![0])
+    expect(original).toMatchObject({ provider: '558669', plan: 'pro20x', group_id: 2 })
+    expect(saved()).toEqual([primary, muze, original])
+    w.unmount(); w = await open('supplier558669')
+    await w.get('[data-testid="manual-refill-submit"]').trigger('click'); await flushPromises()
+    expect(manual).toHaveBeenLastCalledWith(original)
+    expect(saved()).toEqual([primary, muze, original])
+    await w.get('[data-testid="manual-refill-channel"]').setValue('manual'); await flushPromises()
+    expect(w.get('[data-testid="manual-refill-provider"]').text()).toContain('1208')
+    w.unmount()
+  })
+
+  it('saves 558669 secret separately, clears the input and never submits a purchase', async () => {
+    const w = await open('supplier558669')
+    await w.get('[data-testid="558669-token"]').setValue('fixture-558669-secret')
+    expect(w.get('[data-testid="manual-refill-submit"]').attributes('disabled')).toBeDefined()
+    await w.get('[data-testid="558669-save"]').trigger('click'); await flushPromises()
+    expect(configure558669).toHaveBeenCalledWith(2, 'fixture-558669-secret', 447)
+    expect(w.get<HTMLInputElement>('[data-testid="558669-token"]').element.value).toBe('')
+    expect(manual).not.toHaveBeenCalled(); expect(sessionStorage.getItem(storageKey) || '').not.toContain('fixture-558669-secret')
+    w.unmount()
+  })
+
+  it('retains disabled quote reason and blocks new purchases', async () => {
+    const view = response()
+    const quote = { ...view.supplier_558669.catalog.items[0]!, enabled: false, reason: 'maintenance' }
+    view.supplier_558669.catalog.items = [quote]
+    get.mockResolvedValue(view); catalog558669.mockResolvedValue(view.supplier_558669)
+    const w = await open('supplier558669')
+    expect(w.text()).toContain('maintenance')
+    expect(w.get('[data-testid="manual-refill-submit"]').attributes('disabled')).toBeDefined()
+    expect(w.get('[data-testid="manual-refill-force"]').attributes('disabled')).toBeDefined()
+    expect(manual).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('saves 558669 primary and an explicit 1208 backup without a Muze connection', async () => {
+    const view = response(); view.muze.token_configured = false
+    get.mockResolvedValue(view)
+    const w = await open('supplier558669')
+    await w.get('[data-testid="refill-primary-provider"]').setValue('558669')
+    await w.get('[data-testid="refill-backup-provider"]').setValue('1208')
+    await w.get('[data-testid="refill-muze-fallback-enabled"]').setValue(true)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save.mock.calls[0]![0]).toMatchObject({ primary_provider: '558669', muze_fallback: { provider: '1208', enabled: true }, supplier_558669: { max_unit_price: 60, daily_max_points: 3000 } })
+    expect(manual).not.toHaveBeenCalled()
+    w.unmount()
+  })
 
   it('archives retired browser receipts without replaying them on either supplier', async () => {
     const old = { ...pending(), provider: 'fendudu' }

@@ -37,7 +37,11 @@ func refillDownloadProviderError(err error) error {
 	return refillDownloadError(http.StatusBadGateway, "号商交付读取失败，请稍后重试原任务")
 }
 
-func (s *AccountRefillService) handleDownloadProviderError(ctx context.Context, err error) error {
+func (s *AccountRefillService) handleDownloadProviderError(ctx context.Context, err error, providers ...string) error {
+	provider := ""
+	if len(providers) > 0 {
+		provider = providers[0]
+	}
 	var remote *refillProviderError
 	if errors.As(err, &remote) && remote.code == http.StatusTooManyRequests {
 		deadline := time.Now().Add(refillRetryDelay(err, 1))
@@ -48,8 +52,12 @@ func (s *AccountRefillService) handleDownloadProviderError(ctx context.Context, 
 			if decodeErr != nil {
 				return decodeErr
 			}
-			if deadline.After(state.ProviderRetryAt) {
-				state.ProviderRetryAt = deadline
+			if deadline.After(state.providerBackoff(provider)) {
+				if provider == refillProvider558669 {
+					state.Supplier558669.RetryAt = deadline
+				} else {
+					state.ProviderRetryAt = deadline
+				}
 				return saveRefillState(&state, save)
 			}
 			return nil
@@ -94,35 +102,47 @@ func (s *AccountRefillService) DownloadDelivery(ctx context.Context, id string) 
 	if job.Status == "delivery_expired" || refillDeliveryExpired(job.ExpiresAt, time.Now()) {
 		return nil, refillDownloadError(http.StatusGone, "号商交付已过租期，无法下载 JSON")
 	}
-	if job.SupplierID == "" || job.SupplierStatus != "succeeded" || !job.ResultReady {
+	readyStatus := job.SupplierStatus == "succeeded" || job.Provider == refillProvider558669 && refill558669ReadyStatus(job.SupplierStatus)
+	if job.SupplierID == "" || !readyStatus || !job.ResultReady {
 		return nil, refillDownloadError(http.StatusConflict, "补号尚未成功或交付 JSON 尚未就绪")
 	}
-	if delay := time.Until(state.ProviderRetryAt); delay > 0 {
+	if delay := time.Until(state.providerBackoff(job.Provider)); delay > 0 {
 		return nil, &AccountRefillDownloadError{StatusCode: http.StatusTooManyRequests, RetryAfter: delay, message: "号商正在退避，请稍后重试下载"}
 	}
-	if state.EncryptedToken == "" {
+	cipher := state.EncryptedToken
+	if job.Provider == refillProvider558669 {
+		cipher = state.Supplier558669.EncryptedToken
+	}
+	if cipher == "" {
 		return nil, refillDownloadError(http.StatusBadRequest, "请先配置号商 API Key")
 	}
-	token, err := s.encryptor.Decrypt(state.EncryptedToken)
+	token, err := s.encryptor.Decrypt(cipher)
 	if err != nil {
 		return nil, refillDownloadError(http.StatusBadRequest, "密钥解密失败，请重新保存 API Key")
 	}
-	remote, err := s.provider.Status(ctx, token, job.SupplierID)
+	client := s.providerClient(job.Provider)
+	remote, err := client.Status(ctx, token, job.SupplierID)
 	if err != nil {
-		return nil, s.handleDownloadProviderError(ctx, err)
+		return nil, s.handleDownloadProviderError(ctx, err, job.Provider)
 	}
 	if err := validateRefillProviderJob(remote, *job); err != nil {
 		return nil, refillDownloadError(http.StatusBadGateway, err.Error())
 	}
+	if job.Provider == refillProvider558669 {
+		if err := validate558669Job(remote, *job); err != nil {
+			return nil, refillDownloadError(http.StatusBadGateway, err.Error())
+		}
+	}
 	if refillDeliveryExpired(remote.ExpiresAt, time.Now()) {
 		return nil, refillDownloadError(http.StatusGone, "号商交付已过租期，无法下载 JSON")
 	}
-	if remote.Status != "succeeded" || !remote.ResultReady {
+	readyStatus = remote.Status == "succeeded" || job.Provider == refillProvider558669 && refill558669ReadyStatus(remote.Status)
+	if !readyStatus || !remote.ResultReady {
 		return nil, refillDownloadError(http.StatusConflict, "号商尚未确认交付就绪，请刷新原任务后重试")
 	}
-	delivery, err := s.provider.Delivery(ctx, token, job.SupplierID)
+	delivery, err := client.Delivery(ctx, token, job.SupplierID)
 	if err != nil {
-		return nil, s.handleDownloadProviderError(ctx, err)
+		return nil, s.handleDownloadProviderError(ctx, err, job.Provider)
 	}
 	if err := validateRefillDelivery(delivery); err != nil {
 		return nil, refillDownloadError(http.StatusBadGateway, err.Error())

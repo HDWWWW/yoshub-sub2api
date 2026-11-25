@@ -39,7 +39,8 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 		return "", err
 	}
 	muze := old.Muze
-	if old.EncryptedToken == "" || muze.EncryptedToken == "" {
+	supplier558669 := old.Supplier558669
+	if old.EncryptedToken == "" || muze.EncryptedToken == "" || supplier558669.EncryptedToken == "" {
 		if stores, ok := s.root.(AccountRefillGroupStore); ok {
 			rows, err := stores.ListRules(ctx)
 			if err != nil {
@@ -63,7 +64,10 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 				if muze.EncryptedToken == "" && candidate.Muze.EncryptedToken != "" {
 					muze = candidate.Muze
 				}
-				if old.EncryptedToken != "" && muze.EncryptedToken != "" {
+				if supplier558669.EncryptedToken == "" && candidate.Supplier558669.EncryptedToken != "" {
+					supplier558669 = candidate.Supplier558669
+				}
+				if old.EncryptedToken != "" && muze.EncryptedToken != "" && supplier558669.EncryptedToken != "" {
 					break
 				}
 			}
@@ -85,6 +89,7 @@ func (s *seededRefillGroupStore) seed(ctx context.Context, raw string) (string, 
 		}
 	}
 	state.Muze = muze
+	state.Supplier558669 = refill558669State{EncryptedToken: supplier558669.EncryptedToken, TokenHash: supplier558669.TokenHash}
 	state.Key, state.Wallet, state.Catalog = old.Key, old.Wallet, old.Catalog
 	state.IdentityAt, state.CatalogAt = old.IdentityAt, old.CatalogAt
 	b, err := json.Marshal(state)
@@ -124,7 +129,7 @@ func (s *AccountRefillService) groupService(id int64, store AccountRefillGroupSt
 	child := &AccountRefillService{
 		store:     &seededRefillGroupStore{AccountRefillStore: store.ForGroup(id), root: s.store, groupID: id},
 		encryptor: s.encryptor, accounts: s.accounts, admin: s.admin, groups: s.groups,
-		loads: s.loads, proxies: s.proxies, provider: s.provider, muze: s.muze, notifier: s.notifier,
+		loads: s.loads, proxies: s.proxies, provider: s.provider, provider558669: s.provider558669, muze: s.muze, notifier: s.notifier,
 		ruleRoot: s, ruleGroupID: id,
 	}
 	s.ruleServices[id] = child

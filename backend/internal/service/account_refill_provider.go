@@ -26,9 +26,11 @@ type RefillQuote struct {
 	PriceVersion  int64   `json:"price_version"`
 	Enabled       bool    `json:"enabled"`
 	Terms         string  `json:"terms"`
+	Reason        string  `json:"reason,omitempty"`
 }
 type RefillCatalog struct {
 	Available float64       `json:"available"`
+	Reserved  float64       `json:"reserved"`
 	Items     []RefillQuote `json:"items"`
 }
 type RefillWallet struct {
@@ -45,16 +47,23 @@ type RefillKeyInfo struct {
 	Revoked   bool      `json:"revoked"`
 }
 type RefillProviderJob struct {
-	ID          string  `json:"id"`
-	Status      string  `json:"status"`
-	Service     string  `json:"service"`
-	Plan        string  `json:"plan"`
-	Format      string  `json:"format"`
-	Quantity    *int    `json:"quantity"`
-	Error       string  `json:"error"`
-	Price       float64 `json:"price"`
-	ExpiresAt   *int64  `json:"expires_at"`
-	ResultReady bool    `json:"result_ready"`
+	EntitlementStatus  string  `json:"entitlement_status,omitempty"`
+	DeliveryVersion    int64   `json:"delivery_version,omitempty"`
+	CredentialsUpdated bool    `json:"credentials_updated,omitempty"`
+	BillingStatus      string  `json:"billing_status,omitempty"`
+	Email              string  `json:"email,omitempty"`
+	PriceVersion       int64   `json:"price_version,omitempty"`
+	Duplicate          bool    `json:"duplicate,omitempty"`
+	ID                 string  `json:"id"`
+	Status             string  `json:"status"`
+	Service            string  `json:"service"`
+	Plan               string  `json:"plan"`
+	Format             string  `json:"format"`
+	Quantity           *int    `json:"quantity"`
+	Error              string  `json:"error"`
+	Price              float64 `json:"price"`
+	ExpiresAt          *int64  `json:"expires_at"`
+	ResultReady        bool    `json:"result_ready"`
 }
 type RefillDelivery struct {
 	// Keep the complete supplier document for downloads, including version,

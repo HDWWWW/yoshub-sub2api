@@ -252,7 +252,7 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		return blocked(err.Error())
 	}
 	routes := make([]refillRoute, schedule.Quantity)
-	var walletSlots, muzeSlots []int
+	var walletSlots, muzeSlots, supplier558669Slots []int
 	var muzePlans []string
 	for i := range routes {
 		route := refillRoute{c.automaticProvider(), schedule.Plan}
@@ -266,6 +266,8 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		if route.provider == refillProviderMuze {
 			muzeSlots = append(muzeSlots, i)
 			muzePlans = append(muzePlans, route.plan)
+		} else if route.provider == refillProvider558669 {
+			supplier558669Slots = append(supplier558669Slots, i)
 		} else {
 			walletSlots = append(walletSlots, i)
 		}
@@ -273,6 +275,27 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	quotes := make([]RefillQuote, len(routes))
 	var connectionID string
 	var total float64
+	var total558669 float64
+	if len(supplier558669Slots) > 0 {
+		if err := s.refresh558669(ctx, state, persist); err != nil {
+			return blocked(err.Error())
+		}
+		for _, i := range supplier558669Slots {
+			quote, err := quote558669FromCatalog(state, routes[i].plan)
+			if err != nil {
+				return blocked(err.Error())
+			}
+			quotes[i] = *quote
+			total558669 += quote.Price
+		}
+		held, err := s.reserved558669(ctx, state)
+		if err != nil {
+			return blocked(err.Error())
+		}
+		if state.Supplier558669.Catalog.Available+1e-8 < total558669+held {
+			return blocked("558669 可用积分不足以创建整批任务")
+		}
+	}
 	if len(muzeSlots) > 0 {
 		batch, id, err := s.muzePurchaseQuote(ctx, state, muzePlans, false, persist)
 		if err != nil {
@@ -330,7 +353,9 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 	}
 	day := now.In(refillTimezone).Format("2006-01-02")
 	usage := state.Usage[day]
-	if usage.Count+len(quotes) > c.DailyMaxCount || usage.Points+total > c.DailyMaxPoints+1e-8 {
+	if usage.Count+len(quotes) > c.DailyMaxCount ||
+		len(walletSlots) > 0 && usage.Points+total > c.DailyMaxPoints+1e-8 ||
+		len(supplier558669Slots) > 0 && state.Supplier558669.Usage[day].Points+total558669 > c.limits558669().DailyMaxPoints+1e-8 {
 		return blocked("本日数量或积分预算不足以创建整批任务")
 	}
 	batchID := uuid.NewString()
@@ -354,9 +379,9 @@ func (s *AccountRefillService) runRefillDailyScheduleEntry(ctx context.Context, 
 		}
 	}
 	state.Jobs = trimAccountRefillJobs(append(jobs, state.Jobs...), now)
-	usage.Count += len(jobs)
-	usage.Points += total
-	state.Usage[day] = usage
+	for _, job := range jobs {
+		state.addRefillBudget(job)
+	}
 	state.LastSubmitAt = now
 	status.LastAt, status.LastQuantity, status.LastBatchID = due, len(jobs), batchID
 	status.NextAt, status.RetryAt = nextRefillDailyTime(schedule, now, due, state.WorkdayCalendar), time.Time{}

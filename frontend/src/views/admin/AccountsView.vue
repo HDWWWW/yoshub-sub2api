@@ -17,6 +17,7 @@
               <button v-admin-write class="btn btn-secondary" data-testid="open-account-refill" @click="refillInitialTab = 'connection'; showAccountRefill = true">{{ t('accountRefill.title') }}</button>
               <button v-admin-write class="btn btn-secondary" data-testid="open-manual-refill" @click="refillInitialTab = 'manual'; showAccountRefill = true">{{ t('accountRefill.manual') }}</button>
               <button v-admin-write class="btn btn-secondary" data-testid="open-muze-refill" @click="refillInitialTab = 'muze'; showAccountRefill = true">{{ t('accountRefill.muze') }}</button>
+              <button v-admin-write class="btn btn-secondary" data-testid="open-558669-refill" @click="refillInitialTab = 'supplier558669'; showAccountRefill = true">{{ t('accountRefill.supplier558669') }}</button>
               <button
                 class="btn btn-secondary"
                 :disabled="!params.group || loading"
@@ -659,7 +660,7 @@ const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
 const showAccountRefill = ref(false)
-const refillInitialTab = ref<'connection' | 'manual' | 'muze'>('connection')
+const refillInitialTab = ref<'connection' | 'manual' | 'muze' | 'supplier558669'>('connection')
 const showScheduling = ref(false)
 const schedulingMetadata = ref<Record<number, AccountSchedulingMetadata>>({})
 const schedulingMetadataFailed = ref(false)

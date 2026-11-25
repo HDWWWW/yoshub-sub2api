@@ -11,14 +11,18 @@ import (
 )
 
 type AccountRefillMuzeFallbackConfig struct {
-	Enabled          bool `json:"enabled"`
-	FailureThreshold int  `json:"failure_threshold"`
-	TimeoutMinutes   int  `json:"timeout_minutes"`
+	Provider         string `json:"provider,omitempty"`
+	Enabled          bool   `json:"enabled"`
+	FailureThreshold int    `json:"failure_threshold"`
+	TimeoutMinutes   int    `json:"timeout_minutes"`
 }
 
 func (c *AccountRefillMuzeFallbackConfig) enabled() bool { return c != nil && c.Enabled }
 
 func (c *AccountRefillMuzeFallbackConfig) validate() error {
+	if c != nil && !slices.Contains([]string{"", "1208", refillProviderMuze, refillProvider558669}, c.Provider) {
+		return errors.New("备用号商无效")
+	}
 	if c != nil && (c.FailureThreshold < 1 || c.FailureThreshold > 100 || c.TimeoutMinutes < 1 || c.TimeoutMinutes > 1440) {
 		return errors.New("备用补号：连续失败次数须为 1–100，等待时间须为 1–1440 分钟")
 	}
@@ -41,7 +45,7 @@ type AccountRefillMuzeFallbackStatus struct {
 
 func refillMuzeFallbackStatus(state *accountRefillState) AccountRefillMuzeFallbackStatus {
 	failures := refillMuzeFailures(state)
-	count := max(len(refillFailuresFor(failures, "")), len(refillFailuresFor(failures, refillProviderMuze)))
+	count := max(max(len(refillFailuresFor(failures, "")), len(refillFailuresFor(failures, refillProviderMuze))), len(refillFailuresFor(failures, refillProvider558669)))
 	if shortage := state.MuzeFallback.Shortage; shortage != nil && shortage.BackupJobID == "" {
 		count = max(count, shortage.Checks)
 	}
@@ -52,7 +56,7 @@ func refillMuzeFallbackStatus(state *accountRefillState) AccountRefillMuzeFallba
 // rule. Unknown HTTP outcomes are not confirmed failures; their durable order
 // creation time is handled by the independent timeout condition instead.
 func refillPrimaryAutomaticJob(state *accountRefillState, j AccountRefillJob) bool {
-	return (j.Provider == "" || j.Provider == refillProviderMuze) && !j.isBackup() && j.ManualRequestID == "" && j.DailyBatchID == "" && j.Reason != "手动补号" &&
+	return (j.Provider == "" || j.Provider == refillProviderMuze || j.Provider == refillProvider558669) && !j.isBackup() && j.ManualRequestID == "" && j.DailyBatchID == "" && j.Reason != "手动补号" &&
 		j.GroupID == state.Config.GroupID && j.Mode == state.Config.Mode && j.RotationGeneration == state.RotationGeneration
 }
 
@@ -63,7 +67,7 @@ func confirmedRefillFailure(j AccountRefillJob) bool {
 	if j.Provider == refillProviderMuze {
 		return j.SupplierStatus == "rejected" || j.SupplierID != "" && (j.SupplierStatus == "failed" || j.SupplierStatus == "returned" || j.SupplierRefundPhase == "returned")
 	}
-	return j.Provider == "" && j.SupplierStatus == "failed" && j.BudgetReleased && j.SupplierID != ""
+	return (j.Provider == "" || j.Provider == refillProvider558669) && j.SupplierStatus == "failed" && j.BudgetReleased && j.SupplierID != ""
 }
 
 func refillMuzeFailures(state *accountRefillState) []AccountRefillJob {
@@ -101,7 +105,7 @@ func refillFailuresFor(failures []AccountRefillJob, provider string) []AccountRe
 }
 
 func refillMuzeStalled(state *accountRefillState, j AccountRefillJob, now time.Time) bool {
-	return state.Config.MuzeFallback != nil && refillPrimaryAutomaticJob(state, j) && j.MuzeFallbackJobID == "" &&
+	return j.Provider != refillProvider558669 && state.Config.MuzeFallback != nil && refillPrimaryAutomaticJob(state, j) && j.MuzeFallbackJobID == "" &&
 		j.pending() && !j.awaitingStudioReceipt() && j.AccountID == 0 && !j.CreatedAt.IsZero() &&
 		!now.Before(j.CreatedAt.Add(time.Duration(state.Config.MuzeFallback.TimeoutMinutes)*time.Minute))
 }
@@ -146,7 +150,7 @@ func (s *AccountRefillService) runMuzeFallback(ctx context.Context, state *accou
 	failures := refillMuzeFailures(state)
 	var source *AccountRefillJob
 	reason := ""
-	for _, primary := range []string{"", refillProviderMuze} {
+	for _, primary := range []string{"", refillProviderMuze, refillProvider558669} {
 		streak := refillFailuresFor(failures, primary)
 		if len(streak) < c.MuzeFallback.FailureThreshold {
 			continue
@@ -173,7 +177,10 @@ func (s *AccountRefillService) runMuzeFallback(ctx context.Context, state *accou
 		state.MuzeFallback.NextAttemptAt = time.Now().Add(time.Minute)
 		return false, persist()
 	}
-	provider := otherRefillProvider(sourceJob.Provider)
+	provider := c.backupProvider(sourceJob.Provider)
+	if provider == sourceJob.Provider {
+		return false, nil
+	}
 	if now.Before(state.providerBackoff(provider)) {
 		return blocked(refillProviderName(provider) + " 正在退避，稍后重新检查备用补号")
 	}
@@ -207,9 +214,7 @@ func (s *AccountRefillService) runMuzeFallback(ctx context.Context, state *accou
 	if probe.Evaluation.Needed <= 0 {
 		return false, nil
 	}
-	day := now.In(refillTimezone).Format("2006-01-02")
-	usage := state.Usage[day]
-	if usage.Count >= c.DailyMaxCount || usage.Points+quote.Price > c.DailyMaxPoints+1e-8 {
+	if !state.canReserveRefill(provider, quote.Price, now) {
 		return blocked("备用补号已达到本日数量或积分上限")
 	}
 	grace := c.ImportExpiryGraceMinutes
@@ -236,9 +241,7 @@ func (s *AccountRefillService) runMuzeFallback(ctx context.Context, state *accou
 	if c.Mode == "interval" && sourceJob.Status == "failed" {
 		state.IntervalRemaining = max(0, state.IntervalRemaining-1)
 	}
-	usage.Count++
-	usage.Points += quote.Price
-	state.Usage[day] = usage
+	state.addRefillBudget(job)
 	state.Jobs = trimAccountRefillJobs(append([]AccountRefillJob{job}, state.Jobs...), now)
 	state.LastSubmitAt = now
 	state.MuzeFallback.Shortage = nil
