@@ -69,6 +69,7 @@ func riskCapacityEvent(r *AccountRiskRule, a *Account, now time.Time, reason, ac
 	if action == "pause" && r.Config.NotifyEnabled {
 		event.Notification = "pending"
 	}
+	filterRiskNotification(r.Config, &event)
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	trimAccountRiskEvents(r)
 }

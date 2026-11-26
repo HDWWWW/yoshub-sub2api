@@ -154,6 +154,7 @@ func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time
 		notification = "pending"
 	}
 	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: id, AccountName: riskNotificationName(name), Reason: reason, Kind: kind, Action: action, Notification: notification}
+	filterRiskNotification(r.Config, &event)
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	trimAccountRiskEvents(r)
 }

@@ -12,13 +12,14 @@ import (
 
 type AccountRiskView struct {
 	*AccountRiskRule
-	TestAccounts  []AccountRiskTestAccount `json:"test_accounts"`
-	WebhookStatus string                   `json:"webhook_status"`
+	TestAccounts         []AccountRiskTestAccount `json:"test_accounts"`
+	WebhookStatus        string                   `json:"webhook_status"`
+	NotificationChannels map[string]string        `json:"notification_channels"`
 }
 
 type accountRiskNotifier interface {
-	RiskWebhookConfigured(context.Context, int64) (bool, error)
-	SendRiskNotification(context.Context, int64, string) error
+	RiskNotificationChannels(context.Context, int64) (map[string]bool, error)
+	SendRiskNotification(context.Context, int64, string, string) error
 }
 
 // Reuse the selected refill rule's connection, including its existing inheritance
@@ -36,17 +37,37 @@ func (s *AccountRefillService) riskNotificationConnection(ctx context.Context, g
 	return rule, &state, err
 }
 
-func (s *AccountRefillService) RiskWebhookConfigured(ctx context.Context, groupID int64) (bool, error) {
+func (s *AccountRefillService) RiskNotificationChannels(ctx context.Context, groupID int64) (map[string]bool, error) {
 	_, state, err := s.riskNotificationConnection(ctx, groupID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return state.EncryptedWebhook != "", nil
+	qq := state.Config.Notifications
+	qq.Channel = "qq"
+	return map[string]bool{"wecom": state.EncryptedWebhook != "", "qq": state.EncryptedQQSecret != "" && validateRefillQQConfig(qq) == nil}, nil
 }
 
-func (s *AccountRefillService) SendRiskNotification(ctx context.Context, groupID int64, content string) error {
+func (s *AccountRefillService) SendRiskNotification(ctx context.Context, groupID int64, channel, content string) error {
+	if channel != "wecom" && channel != "qq" {
+		return errors.New("风控通知渠道无效")
+	}
 	rule, state, err := s.riskNotificationConnection(ctx, groupID)
-	if err != nil || state.EncryptedWebhook == "" {
+	if err != nil {
+		return errors.New("风控通知配置无法读取")
+	}
+	if channel == "qq" {
+		config := state.Config.Notifications
+		config.Channel = "qq"
+		if state.EncryptedQQSecret == "" || validateRefillQQConfig(config) != nil {
+			return errors.New("QQ 机器人未配置，请先保存此分组的 QQ 通知接口")
+		}
+		secret, err := rule.encryptor.Decrypt(state.EncryptedQQSecret)
+		if err != nil {
+			return errors.New("QQ 机器人密钥无法解密")
+		}
+		return rule.qqNotificationSender().Send(ctx, config, secret, content)
+	}
+	if state.EncryptedWebhook == "" {
 		return errors.New("企业微信机器人未配置或无法读取")
 	}
 	webhook, err := rule.encryptor.Decrypt(state.EncryptedWebhook)
@@ -111,8 +132,8 @@ func (s *AccountRiskService) notificationLoop(ctx context.Context) {
 }
 
 // A stop and its pending notification commit in the same transaction. A separate
-// worker durably claims each event before any network I/O. WeCom has no idempotency
-// key: uncertain sends are never replayed, including after a restart or slot switch.
+// worker durably claims each event and its channel before any network I/O.
+// Uncertain sends are never replayed, including after a restart or slot switch.
 func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.Time) error {
 	var event AccountRiskEvent
 	var groupID int64
@@ -152,6 +173,7 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 		}
 		if selected != nil {
 			selected.Notification, selected.NotificationAt = "sending", &now
+			selected.NotificationChannel = riskNotificationChannel(state.Rules[groupID].Config)
 			state.NextNotificationAt = now.Add(3 * time.Second)
 			event = *selected
 		}
@@ -186,7 +208,7 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 		content += fmt.Sprintf("\n合并异常次数：%d", event.Occurrences)
 	}
 	status := "failed"
-	if s.notifier != nil && s.notifier.SendRiskNotification(sendCtx, groupID, content) == nil {
+	if s.notifier != nil && s.notifier.SendRiskNotification(sendCtx, groupID, event.NotificationChannel, content) == nil {
 		status = "sent"
 	}
 	sendCancel()

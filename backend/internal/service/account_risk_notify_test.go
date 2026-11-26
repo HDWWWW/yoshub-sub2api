@@ -20,18 +20,20 @@ import (
 type riskNoticeStub struct {
 	mu       sync.Mutex
 	groups   []int64
+	channels []string
 	messages []string
 	err      error
 	after    func()
 }
 
-func (n *riskNoticeStub) RiskWebhookConfigured(context.Context, int64) (bool, error) {
-	return true, nil
+func (n *riskNoticeStub) RiskNotificationChannels(context.Context, int64) (map[string]bool, error) {
+	return map[string]bool{"wecom": true, "qq": true}, nil
 }
-func (n *riskNoticeStub) SendRiskNotification(_ context.Context, id int64, content string) error {
+func (n *riskNoticeStub) SendRiskNotification(_ context.Context, id int64, channel, content string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.groups = append(n.groups, id)
+	n.channels = append(n.channels, channel)
 	n.messages = append(n.messages, content)
 	if n.after != nil {
 		n.after()
@@ -238,18 +240,19 @@ func TestAccountRiskNotificationReusesRefillWebhookWithPurchasesOff(t *testing.T
 	client.Transport = tr
 	defer tr.CloseIdleConnections()
 	refill.notifier = weComRefillNotifier{client: client}
-	ready, err := refill.RiskWebhookConfigured(ctx, c.GroupID)
+	channels, err := refill.RiskNotificationChannels(ctx, c.GroupID)
 	require.NoError(t, err)
-	require.True(t, ready)
-	require.NoError(t, refill.SendRiskNotification(ctx, c.GroupID, "confirmed risk stop"))
+	require.True(t, channels["wecom"])
+	require.False(t, channels["qq"])
+	require.NoError(t, refill.SendRiskNotification(ctx, c.GroupID, "wecom", "confirmed risk stop"))
 	require.Equal(t, []string{"confirmed risk stop"}, bodies)
 	require.Equal(t, before, store.raw)
 	require.Empty(t, provider.submitted)
 	store.mutate(t, func(v *accountRefillState) { v.EncryptedWebhook = "" })
-	ready, err = refill.RiskWebhookConfigured(ctx, c.GroupID)
+	channels, err = refill.RiskNotificationChannels(ctx, c.GroupID)
 	require.NoError(t, err)
-	require.False(t, ready)
-	require.Error(t, refill.SendRiskNotification(ctx, c.GroupID, "not sent"))
+	require.False(t, channels["wecom"])
+	require.Error(t, refill.SendRiskNotification(ctx, c.GroupID, "wecom", "not sent"))
 	require.Len(t, bodies, 1)
 }
 
@@ -265,6 +268,7 @@ func TestAccountRiskNotificationViewAndLegacyDefault(t *testing.T) {
 	v, err := s.View(context.Background(), 7)
 	require.NoError(t, err)
 	require.Equal(t, "ready", v.WebhookStatus)
+	require.Equal(t, map[string]string{"wecom": "ready", "qq": "ready"}, v.NotificationChannels)
 	raw, _ := json.Marshal(v)
 	require.Contains(t, string(raw), `"notify_enabled":true`)
 	require.NotContains(t, string(raw), "encrypted_webhook")

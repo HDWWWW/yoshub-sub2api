@@ -38,6 +38,9 @@ type AccountRiskErrorMatch struct {
 }
 
 type AccountRiskConfig struct {
+	NotificationChannel string                        `json:"notification_channel,omitempty"`
+	NotificationTypes   *AccountRiskNotificationTypes `json:"notification_types,omitempty"`
+
 	CustomErrorEnabled       bool                    `json:"custom_error_enabled"`
 	CustomErrorWindowSeconds int                     `json:"custom_error_window_seconds"`
 	CustomErrorThreshold     int                     `json:"custom_error_threshold"`
@@ -127,6 +130,9 @@ func (c *AccountRiskConfig) Normalize429() {
 }
 
 func (c AccountRiskConfig) Validate() error {
+	if !slices.Contains([]string{"", "wecom", "qq"}, c.NotificationChannel) {
+		return errors.New("请选择企业微信或 QQ 通知渠道")
+	}
 	if err := c.validateCustomErrors(); err != nil {
 		return err
 	}
@@ -218,16 +224,17 @@ type AccountRiskCapacityCheck struct {
 }
 
 type AccountRiskEvent struct {
-	ID             string     `json:"id,omitempty"`
-	At             time.Time  `json:"at"`
-	AccountID      int64      `json:"account_id"`
-	AccountName    string     `json:"account_name,omitempty"`
-	Reason         string     `json:"reason"`
-	Kind           string     `json:"kind,omitempty"`
-	Action         string     `json:"action,omitempty"`
-	Occurrences    int        `json:"occurrences,omitempty"`
-	Notification   string     `json:"notification,omitempty"`
-	NotificationAt *time.Time `json:"notification_at,omitempty"`
+	NotificationChannel string     `json:"notification_channel,omitempty"`
+	ID                  string     `json:"id,omitempty"`
+	At                  time.Time  `json:"at"`
+	AccountID           int64      `json:"account_id"`
+	AccountName         string     `json:"account_name,omitempty"`
+	Reason              string     `json:"reason"`
+	Kind                string     `json:"kind,omitempty"`
+	Action              string     `json:"action,omitempty"`
+	Occurrences         int        `json:"occurrences,omitempty"`
+	Notification        string     `json:"notification,omitempty"`
+	NotificationAt      *time.Time `json:"notification_at,omitempty"`
 }
 
 type AccountRiskRule struct {
@@ -381,7 +388,7 @@ func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountR
 	for i, event := range visible.Events {
 		visible.Events[i].Reason = riskNotificationReason(event)
 	}
-	v := &AccountRiskView{AccountRiskRule: &visible, WebhookStatus: "unavailable", TestAccounts: []AccountRiskTestAccount{}}
+	v := &AccountRiskView{AccountRiskRule: &visible, WebhookStatus: "unavailable", NotificationChannels: map[string]string{"wecom": "unavailable", "qq": "unavailable"}, TestAccounts: []AccountRiskTestAccount{}}
 	accounts, err := s.accounts.ListByGroup(ctx, groupID)
 	if err != nil {
 		return nil, err
@@ -393,12 +400,15 @@ func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountR
 	}
 	sort.Slice(v.TestAccounts, func(i, j int) bool { return v.TestAccounts[i].ID < v.TestAccounts[j].ID })
 	if s.notifier != nil {
-		ready, err := s.notifier.RiskWebhookConfigured(ctx, groupID)
+		channels, err := s.notifier.RiskNotificationChannels(ctx, groupID)
 		if err == nil {
-			v.WebhookStatus = "missing"
-			if ready {
-				v.WebhookStatus = "ready"
+			for _, channel := range []string{"wecom", "qq"} {
+				v.NotificationChannels[channel] = "missing"
+				if channels[channel] {
+					v.NotificationChannels[channel] = "ready"
+				}
 			}
+			v.WebhookStatus = v.NotificationChannels["wecom"]
 		}
 	}
 	return v, nil
@@ -425,11 +435,14 @@ func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision in
 		if r.Revision != revision {
 			return ErrAccountRiskConflict
 		}
-		// An auth-policy-only edit invalidates in-flight probes as usual, but it
+		// An auth/notification-only edit invalidates in-flight probes as usual, but it
 		// must not strand accounts already waiting for a capacity recheck.
 		previous := r.Config
 		previous.Probe401Enabled = c.Probe401Enabled
 		previous.Notify401Enabled = c.Notify401Enabled
+		previous.NotifyEnabled = c.NotifyEnabled
+		previous.NotificationChannel = c.NotificationChannel
+		previous.NotificationTypes = c.NotificationTypes
 		if r.Revision > 0 && reflect.DeepEqual(previous, c) && !reflect.DeepEqual(r.Config, c) {
 			for _, p := range state.CapacityPauses {
 				if p.GroupID == groupID && p.Revision == revision {
@@ -689,9 +702,13 @@ func riskAfter(now time.Time, seconds int) *time.Time {
 	v := now.Add(time.Duration(seconds) * time.Second)
 	return &v
 }
-func riskRecordStop(r *AccountRiskRule, account *Account, now time.Time, reason string) {
+func riskRecordStop(r *AccountRiskRule, account *Account, now time.Time, reason string, kinds ...string) {
 	riskReset(&r.Observation, "stopped", reason)
-	appendAccountRiskAction(r, account, AccountRiskEvent{At: now, Reason: reason})
+	event := AccountRiskEvent{At: now, Reason: reason}
+	if len(kinds) > 0 {
+		event.Kind, event.Action = kinds[0], "stop"
+	}
+	appendAccountRiskAction(r, account, event)
 }
 
 func appendAccountRiskAction(r *AccountRiskRule, account *Account, event AccountRiskEvent) {
@@ -699,6 +716,7 @@ func appendAccountRiskAction(r *AccountRiskRule, account *Account, event Account
 	if r.Config.NotifyEnabled {
 		event.Notification = "pending"
 	}
+	filterRiskNotification(r.Config, &event)
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	trimAccountRiskEvents(r)
 }
@@ -852,6 +870,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		if notifyOnly {
 			o.LastProbeResult = reason + "，仅提醒，未停止调度"
 			event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: account.ID, AccountName: riskNotificationName(account.Name), Reason: o.LastProbeResult, Kind: kind, Action: "notify_only", Notification: "pending"}
+			filterRiskNotification(r.Config, &event)
 			r.Events = append([]AccountRiskEvent{event}, r.Events...)
 			trimAccountRiskEvents(r)
 			recorded = true
@@ -863,8 +882,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		}
 		if changed {
 			o.LastProbeResult = reason + "，已关闭账号调度"
-			riskRecordStop(r, account, now, o.LastProbeResult)
-			r.Events[0].Kind, r.Events[0].Action = kind, "stop"
+			riskRecordStop(r, account, now, o.LastProbeResult, kind)
 			recorded = true
 		} else {
 			o.LastProbeResult = "账号已变化，本次结果作废"
