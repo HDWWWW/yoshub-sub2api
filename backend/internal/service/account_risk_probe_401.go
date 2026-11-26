@@ -12,6 +12,7 @@ import (
 )
 
 const accountRiskProbe401 = "probe_401"
+const risk401ReclaimNote = "，已到号商预计回收时间，本次提醒已静默"
 
 // Only an upstream HTTP response produces evidence. Never retain the body,
 // tokens, or a provider-controlled string in the rule, logs, or notification.
@@ -37,9 +38,13 @@ func (e *riskProbe401Evidence) captureAlertTarget(ctx context.Context, reporter 
 	if e.alertTarget == nil {
 		e.alertTarget = reporter.targetAt401(ctx, sourceID, e.ownerID)
 	}
+	// An in-flight probe can also carry a deadline from its original lease.
+	if t := e.alertTarget; t != nil && e.reclaimAt != nil && (t.ReclaimAt == nil || e.reclaimAt.Before(*t.ReclaimAt)) {
+		t.ReclaimAt = e.reclaimAt
+	}
 }
 
-func (e *riskProbe401Evidence) shouldNotify(r *AccountRiskRule) bool {
+func (e *riskProbe401Evidence) alertsEnabled(r *AccountRiskRule) bool {
 	return r.Config.Notify401Enabled && e.alertTarget != nil && e.alertTarget.AccountID > 0
 }
 
@@ -68,28 +73,27 @@ func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe
 func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRule, scheduling AccountRiskScheduling, job *accountRiskJob, evidence *riskProbe401Evidence, now time.Time) (*Account, time.Time, error) {
 	if evidence.failure == "" || !r.Config.Probe401Enabled {
 		r.Observation.LastProbeResult = "自动风控探测收到上游 HTTP 401"
-		if evidence.shouldNotify(r) {
-			appendProbe401Event(r, job, evidence, now, "notify_only", r.Observation.LastProbeResult)
+		if evidence.alertsEnabled(r) {
+			return nil, time.Time{}, appendProbe401Event(r, scheduling, job, evidence, now, "notify_only", r.Observation.LastProbeResult, false)
 		}
 		return nil, time.Time{}, nil
 	}
 	stale := "自动风控探测收到上游 HTTP 401，账号、凭据或分组已变化，未执行停调"
-	alertStale := func() {
+	alertStale := func() error {
 		r.Observation.LastProbeResult = stale
-		if evidence.shouldNotify(r) {
-			appendProbe401Event(r, job, evidence, now, "notify_only", stale)
+		if evidence.alertsEnabled(r) {
+			return appendProbe401Event(r, scheduling, job, evidence, now, "notify_only", stale, false)
 		}
+		return nil
 	}
 	source, err := s.probeAccount(ctx, job, now)
 	if err != nil {
-		alertStale()
-		return nil, time.Time{}, nil
+		return nil, time.Time{}, alertStale()
 	}
 	owner := source
 	if source.IsShadow() {
 		if *source.ParentAccountID != evidence.ownerID {
-			alertStale()
-			return nil, time.Time{}, nil
+			return nil, time.Time{}, alertStale()
 		}
 		owner, err = s.accounts.GetByID(ctx, evidence.ownerID)
 		if err != nil {
@@ -97,8 +101,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 		}
 	}
 	if owner == nil || owner.ID != evidence.ownerID || !owner.IsActive() || riskModelAccountIdentity(owner) != evidence.identity {
-		alertStale()
-		return nil, time.Time{}, nil
+		return nil, time.Time{}, alertStale()
 	}
 	reason := fmt.Sprintf("自动风控探测收到上游 HTTP 401（%s）", evidence.failure)
 	if owner.ID != source.ID {
@@ -118,8 +121,7 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 		return nil, time.Time{}, err
 	}
 	if !changed {
-		alertStale()
-		return nil, time.Time{}, nil
+		return nil, time.Time{}, alertStale()
 	}
 	r.Observation.LastProbeResult = reason
 	if action == "stop" {
@@ -135,28 +137,52 @@ func (s *AccountRiskService) applyProbe401(ctx context.Context, r *AccountRiskRu
 			}
 		}
 	}
-	appendProbe401Event(r, job, evidence, now, action, r.Observation.LastProbeResult)
-	return owner, blockedUntil, nil
+	return owner, blockedUntil, appendProbe401Event(r, scheduling, job, evidence, now, action, r.Observation.LastProbeResult, false)
 }
 
 // The reservation owns one terminal 401, including a late result saved after a rule edit.
-func appendProbe401Event(r *AccountRiskRule, job *accountRiskJob, evidence *riskProbe401Evidence, now time.Time, action, reason string) {
+func appendProbe401Event(r *AccountRiskRule, tx AccountRiskScheduling, job *accountRiskJob, evidence *riskProbe401Evidence, now time.Time, action, reason string, reclaimed bool) error {
 	id := job.pending.ID + "/401"
 	if slices.ContainsFunc(r.Events, func(e AccountRiskEvent) bool { return e.ID == id }) {
-		return
+		return nil
 	}
-	appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, action, reason, evidence.shouldNotify(r))
-	r.Events[0].ID = id
-	r.Events[0].AccountEmail = evidence.ownerEmail
+	at := evidence.observedAt(now)
+	reclaimed = reclaimed || supplierReclaimed(evidence.reclaimAt, at) || (evidence.alertTarget != nil && supplierReclaimed(evidence.alertTarget.ReclaimAt, at))
+	if reclaimed {
+		reason += risk401ReclaimNote
+	}
+	event := AccountRiskEvent{ID: id, At: at, AccountID: evidence.ownerID, AccountName: evidence.ownerName,
+		AccountEmail: evidence.ownerEmail, Kind: accountRiskProbe401, Action: action, Reason: reason}
+	return appendRisk401Event(r, tx, evidence.ownerID, event, evidence.alertsEnabled(r) && !reclaimed)
 }
 
-func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time, kind, action, reason string, notify bool) {
-	notification := "disabled"
-	if notify {
-		notification = "pending"
+// Claim the first delivery and persist the audit row in the same transaction as
+// any probe action. A group filter or a reclaimed lease never consumes a claim.
+func appendRisk401Event(r *AccountRiskRule, tx AccountRiskScheduling, ownerID int64, event AccountRiskEvent, notify bool) error {
+	if event.ID == "" {
+		event.ID = uuid.NewString()
 	}
-	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: id, AccountName: riskNotificationName(name), Reason: reason, Kind: kind, Action: action, Notification: notification}
-	filterRiskNotification(r.Config, &event)
+	event.AccountName = riskNotificationName(event.AccountName)
+	event.Notification = "disabled"
+	if notify && riskNotificationTypeEnabled(r.Config, event) {
+		first, count, err := tx.Record401(r.GroupID, ownerID, event.ID, event.At)
+		if err != nil {
+			return err
+		}
+		event.Occurrences = count
+		event.Notification = "merged"
+		if first == event.ID && count == 1 {
+			event.Notification = "pending"
+		} else if count > 1 {
+			for i := range r.Events {
+				if r.Events[i].ID == first {
+					r.Events[i].Occurrences = count
+					break
+				}
+			}
+		}
+	}
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	trimAccountRiskEvents(r)
+	return nil
 }

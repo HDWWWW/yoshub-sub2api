@@ -85,7 +85,7 @@ func TestAccountRisk401CapturesEmailAtReceipt(t *testing.T) {
 	require.Equal(t, "receipt@example.test", evidence.ownerEmail)
 	evidence.alertTarget = &Account401AlertTarget{AccountID: 1}
 	accounts.pool[0].Credentials["email"] = "changed@example.test"
-	appendProbe401Event(rule, &accountRiskJob{pending: AccountRiskPending{ID: "probe"}}, evidence, now.Add(time.Second), "stop", "401")
+	require.NoError(t, appendProbe401Event(rule, AccountRiskScheduling{Record401: store.record401}, &accountRiskJob{pending: AccountRiskPending{ID: "probe"}}, evidence, now.Add(time.Second), "stop", "401", false))
 	require.Equal(t, "receipt@example.test", rule.Events[0].AccountEmail)
 }
 

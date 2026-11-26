@@ -19,16 +19,20 @@ func TestAccountRisk401AlertTarget(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	store := NewAccountRiskStore(db, nil)
-	for _, present := range []bool{true, false} {
-		rows := sqlmock.NewRows([]string{"id", "name", "groups", "email"})
-		if present {
-			rows.AddRow(12, "account", "{7,8}", "account@example.test")
+	cutoff := time.Unix(1795708816, 0).UTC()
+	for _, tc := range []struct {
+		present bool
+		cutoff  *time.Time
+	}{{true, &cutoff}, {true, nil}, {false, nil}} {
+		rows := sqlmock.NewRows([]string{"id", "name", "groups", "email", "owner_id", "reclaim_at"})
+		if tc.present {
+			rows.AddRow(12, "account", "{7,8}", "account@example.test", 15, tc.cutoff)
 		}
 		mock.ExpectQuery(`SELECT a.id, a.name, ARRAY`).WithArgs(int64(12), int64(15)).WillReturnRows(rows)
 		target, err := store.Lookup401AlertTarget(context.Background(), 12, 15)
 		require.NoError(t, err)
-		if present {
-			require.Equal(t, service.Account401AlertTarget{AccountID: 12, Name: "account", Email: "account@example.test", GroupIDs: []int64{7, 8}}, target)
+		if tc.present {
+			require.Equal(t, service.Account401AlertTarget{AccountID: 12, OwnerID: 15, Name: "account", Email: "account@example.test", GroupIDs: []int64{7, 8}, ReclaimAt: tc.cutoff}, target)
 		} else {
 			require.Zero(t, target)
 		}

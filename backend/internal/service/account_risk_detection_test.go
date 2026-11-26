@@ -20,28 +20,37 @@ import (
 )
 
 type riskTestStore struct {
-	mu       sync.Mutex
-	state    *AccountRiskState
-	stopped  []int64
-	resumed  []int64
-	accounts *riskTestAccounts
-	fail     bool
-	busy     int
-	cas      bool
+	mu        sync.Mutex
+	state     *AccountRiskState
+	stopped   []int64
+	resumed   []int64
+	accounts  *riskTestAccounts
+	fail      bool
+	busy      int
+	incidents map[[2]int64]test401Incident
+	cas       bool
 }
 
 func (s *riskTestStore) Lookup401AlertTarget(ctx context.Context, sourceID, ownerID int64) (Account401AlertTarget, error) {
-	var target Account401AlertTarget
-	for _, id := range []int64{sourceID, ownerID} {
-		a, err := s.accounts.GetByID(ctx, id)
-		if err != nil || a == nil || a.Platform != PlatformOpenAI || !a.IsActive() || !a.Schedulable {
+	source, err := s.accounts.GetByID(ctx, sourceID)
+	if err != nil || source == nil || source.Platform != PlatformOpenAI || !source.IsActive() || !source.Schedulable {
+		return Account401AlertTarget{}, err
+	}
+	var owner *Account
+	if ownerID != sourceID || source.IsShadow() {
+		lookupID := ownerID
+		if ownerID == sourceID {
+			lookupID = *source.ParentAccountID
+		}
+		owner, err = s.accounts.GetByID(ctx, lookupID)
+		if err != nil || (owner == nil || owner.Platform != PlatformOpenAI || !owner.IsActive() || !owner.Schedulable) {
 			return Account401AlertTarget{}, err
 		}
-		if id == sourceID {
-			target = Account401AlertTarget{AccountID: a.ID, Name: a.Name, Email: riskAccountEmail(a), GroupIDs: a.GroupIDs}
-		}
 	}
-	return target, nil
+	if owner != nil {
+		ownerID = owner.ID
+	}
+	return Account401AlertTarget{OwnerID: ownerID, AccountID: source.ID, Name: source.Name, Email: riskAccountEmail(source), GroupIDs: source.GroupIDs, ReclaimAt: riskProbeDeadline(source, owner)}, nil
 }
 
 func (s *riskTestStore) Read(context.Context) (*AccountRiskState, error) {
@@ -147,7 +156,7 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 		}
 		return false, nil
 	}
-	return fn(s.state, AccountRiskScheduling{ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume})
+	return fn(s.state, AccountRiskScheduling{Record401: s.record401, ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume})
 }
 
 type riskTestAccounts struct {

@@ -265,6 +265,7 @@ type AccountRiskState struct {
 }
 
 type AccountRiskScheduling struct {
+	Record401         func(groupID, ownerID int64, eventID string, at time.Time) (firstEventID string, occurrences int, err error)
 	ReduceConcurrency func(groupID int64, account *Account, limit int) (bool, error)
 	ApplyProbe401     func(groupID int64, source, owner *Account, reason string, cooldownUntil *time.Time) (bool, error)
 	Stop              func(groupID int64, account *Account) (bool, error)
@@ -274,13 +275,20 @@ type AccountRiskScheduling struct {
 
 // A zero AccountID means that the account or its credential owner was already stopped.
 type Account401AlertTarget struct {
+	OwnerID   int64
 	AccountID int64
 	Name      string
 	Email     string
 	GroupIDs  []int64
+	ReclaimAt *time.Time
+}
+
+func (t *Account401AlertTarget) eligibleAt(receivedAt time.Time) bool {
+	return t != nil && t.AccountID > 0 && !supplierReclaimed(t.ReclaimAt, receivedAt)
 }
 
 type AccountRiskStore interface {
+	Recover401(ctx context.Context, ownerID int64, startedAt time.Time) error
 	Lookup401AlertTarget(ctx context.Context, sourceID, ownerID int64) (Account401AlertTarget, error)
 	Read(context.Context) (*AccountRiskState, error)
 	Update(context.Context, func(*AccountRiskState, AccountRiskScheduling) error) error
@@ -768,35 +776,40 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		if r == nil {
 			return nil
 		}
-		current := released && r.Config.Enabled && r.Revision == job.pending.Revision && (!isScheduledRiskProbe(job.pending.Kind) || r.Config.ProbeEnabled)
-		notify401 := observed401 && result.auth401.shouldNotify(r)
-		if !current || (observed401 && !job.pending.ExpiresAt.After(now)) {
-			if notify401 {
-				appendProbe401Event(r, job, result.auth401, now, "notify_only", "自动风控探测收到上游 401，探测任务已变更或结束")
-				recorded = true
-			}
-			return nil
-		}
+		current := released && r.Config.Enabled && r.Revision == job.pending.Revision && (!isScheduledRiskProbe(job.pending.Kind) || r.Config.ProbeEnabled) && (!observed401 || job.pending.ExpiresAt.After(now))
 		o := &r.Observation
-		if errors.Is(probeErr, errRiskSupplierReclaimed) {
+		if current && errors.Is(probeErr, errRiskSupplierReclaimed) {
 			o.LastProbeResult = errRiskSupplierReclaimed.Error()
 			return nil
 		}
-		auth401 := (r.Config.Probe401Enabled || r.Config.Notify401Enabled) && observed401
-		if auth401 {
+		auth401 := observed401 && (r.Config.Probe401Enabled || r.Config.Notify401Enabled)
+		record401 := observed401 && result.auth401.alertsEnabled(r)
+		if auth401 && (current || record401) {
+			// The supplier may have synchronized the lease after receipt. Compare
+			// against receipt time even for a stale job or a retried transaction.
 			at := result.auth401.observedAt(now)
 			reclaimed, err := s.risk401Reclaimed(ctx, &job.account, result.auth401.ownerID, at)
 			if err != nil {
 				return err
 			}
 			if reclaimed || supplierReclaimed(result.auth401.reclaimAt, at) {
-				o.LastProbeResult = errRiskSupplierReclaimed.Error()
-				if notify401 {
-					appendProbe401Event(r, job, result.auth401, now, "notify_only", "已发出的自动探测在号商回收后收到上游 401")
-					recorded = true
+				if record401 {
+					if err := appendProbe401Event(r, stop, job, result.auth401, now, "observed", "自动风控探测收到上游 401", true); err != nil {
+						return err
+					}
+				}
+				if current {
+					o.LastProbeResult = errRiskSupplierReclaimed.Error()
 				}
 				return nil
 			}
+		}
+		if !current {
+			if record401 {
+				recorded = true
+				return appendProbe401Event(r, stop, job, result.auth401, now, "notify_only", "自动风控探测收到上游 401，探测任务已变更或结束", false)
+			}
+			return nil
 		}
 		if job.pauseToken != "" {
 			if !auth401 {
@@ -804,9 +817,9 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 			}
 			p := state.CapacityPauses[job.account.ID]
 			if p == nil || p.Token != job.pauseToken || p.Revision != r.Revision || r.Config.CapacityNotifyOnly {
-				if notify401 {
-					appendProbe401Event(r, job, result.auth401, now, "notify_only", "自动风控探测收到上游 401，容量暂停任务已变更")
+				if record401 {
 					recorded = true
+					return appendProbe401Event(r, stop, job, result.auth401, now, "notify_only", "自动风控探测收到上游 401，容量暂停任务已变更", false)
 				}
 				return nil
 			}
@@ -831,7 +844,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		if auth401 {
 			var applyErr error
 			authOwner, cooldownUntil, applyErr = s.applyProbe401(ctx, r, stop, job, result.auth401, now)
-			recorded = authOwner != nil || notify401
+			recorded = authOwner != nil || record401
 			return applyErr
 		}
 		exhausted429 := isScheduledRiskProbe(job.pending.Kind) && r.Config.Probe429StopEnabled &&

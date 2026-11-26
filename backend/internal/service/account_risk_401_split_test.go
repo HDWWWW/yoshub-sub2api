@@ -71,9 +71,10 @@ func TestAccountRisk401IndependentSwitches(t *testing.T) {
 				if alert && stop {
 					require.Len(t, n.messages, 1)
 				} else if alert {
-					require.Len(t, n.messages, 2)
-					require.Contains(t, n.messages[1], "业务请求")
-					require.Contains(t, n.messages[1], "网关")
+					require.Len(t, n.messages, 1)
+					require.Equal(t, "merged", r.Events[0].Notification)
+					require.Equal(t, 2, r.Events[0].Occurrences)
+					require.Contains(t, r.Events[0].Reason, "业务请求")
 				} else {
 					require.Empty(t, n.messages)
 				}

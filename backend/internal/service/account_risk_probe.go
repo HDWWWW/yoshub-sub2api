@@ -39,10 +39,14 @@ func (s *AccountTestService) RunRiskProbe(ctx context.Context, a *Account, c Acc
 	w := httptest.NewRecorder()
 	gc, _ := gin.CreateTestContext(w)
 	gc.Request = (&http.Request{}).WithContext(ctx)
+	startedAt := time.Now().UTC()
 	err := s.testOpenAIAccountConnection(gc, a, c.Model, c.ProbePrompt, AccountTestModeDefault)
 	// Never retain or log upstream bodies/error messages here.
 	if err != nil {
 		return call.result, errors.New("risk probe did not complete")
+	}
+	if call.result.Completed && call.result.UpstreamStatus == http.StatusOK {
+		s.openaiGatewayService.reporter401().recovered(ctx, call.credentialOwner, startedAt)
 	}
 	return call.result, nil
 }

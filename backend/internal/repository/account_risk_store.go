@@ -55,15 +55,25 @@ func NewAccountRiskStore(db *sql.DB, accounts service.AccountRepository) service
 	return &accountRiskStore{db: db, accounts: repo}
 }
 
-// Read only routing metadata and the email at receipt time. A temporary rate limit or OAuth
-// cooldown does not turn off the account's explicit scheduling switch.
+// Match the supplier column, including legacy imports. Pending supplier lookups
+// and local retention deadlines do not establish that credentials were reclaimed.
+func riskSupplierReclaimSQL(alias string) string {
+	extra := alias + ".extra"
+	return "CASE WHEN " + alias + ".type='oauth' AND (" + extra + "->>'" + service.AccountSourceExpiryOriginExtraKey + "') IS DISTINCT FROM 'supplier_pending' THEN " + accountSourceExpirySQL(extra) + " END"
+}
+
+// Capture the earliest known source/credential-owner lease in the same snapshot
+// as the explicit scheduling switches. A temporary OAuth cooldown is separate.
 func (s *accountRiskStore) Lookup401AlertTarget(ctx context.Context, sourceID, ownerID int64) (service.Account401AlertTarget, error) {
 	var target service.Account401AlertTarget
-	err := s.db.QueryRowContext(ctx, `SELECT a.id, a.name, ARRAY(SELECT ag.group_id FROM account_groups ag WHERE ag.account_id=a.id), COALESCE(a.credentials->>'email', '')
-		FROM accounts a WHERE a.id=$1 AND a.deleted_at IS NULL AND a.platform='openai' AND a.status='active' AND a.schedulable
-		AND (a.id=$2 OR EXISTS (SELECT 1 FROM accounts owner WHERE owner.id=$2 AND owner.deleted_at IS NULL
-			AND owner.platform='openai' AND owner.status='active' AND owner.schedulable))`, sourceID, ownerID).
-		Scan(&target.AccountID, &target.Name, pq.Array(&target.GroupIDs), &target.Email)
+	err := s.db.QueryRowContext(ctx, `SELECT a.id, a.name, ARRAY(SELECT ag.group_id FROM account_groups ag WHERE ag.account_id=a.id), COALESCE(a.credentials->>'email', ''), COALESCE(owner.id,a.id),
+		LEAST(`+riskSupplierReclaimSQL("a")+`, `+riskSupplierReclaimSQL("owner")+`)
+		FROM accounts a LEFT JOIN accounts owner ON owner.id=a.parent_account_id
+			AND owner.deleted_at IS NULL AND owner.platform='openai'
+		WHERE a.id=$1 AND a.deleted_at IS NULL AND a.platform='openai' AND a.status='active' AND a.schedulable
+			AND (a.id=$2 OR a.parent_account_id=$2)
+			AND (a.parent_account_id IS NULL OR (owner.status='active' AND owner.schedulable))`, sourceID, ownerID).
+		Scan(&target.AccountID, &target.Name, pq.Array(&target.GroupIDs), &target.Email, &target.OwnerID, &target.ReclaimAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.Account401AlertTarget{}, nil
 	}
@@ -267,7 +277,10 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 		changed = append(changed, owner.ID)
 		return true, nil
 	}
-	if err = fn(state, service.AccountRiskScheduling{ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume}); err != nil {
+	record401 := func(groupID, ownerID int64, eventID string, at time.Time) (string, int, error) {
+		return recordRisk401(ctx, tx, groupID, ownerID, eventID, at)
+	}
+	if err = fn(state, service.AccountRiskScheduling{Record401: record401, ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume}); err != nil {
 		return err
 	}
 	syncAccountRiskLegacyGuard(state)

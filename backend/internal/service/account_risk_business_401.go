@@ -90,6 +90,23 @@ func (r *Account401Reporter) observeID(ctx context.Context, accountID int64, sta
 	}
 }
 
+// Only an actual grant/validated PAT or a completed authenticated probe can
+// rearm notifications. The check must have started after the last observed 401.
+func (r *Account401Reporter) recovered(ctx context.Context, owner *Account, startedAt time.Time) {
+	if r == nil || r.store == nil || owner == nil || owner.ID <= 0 || owner.Platform != PlatformOpenAI {
+		return
+	}
+	id := owner.ID
+	if owner.IsShadow() {
+		id = *owner.ParentAccountID
+	}
+	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := r.store.Recover401(persist, id, startedAt); err != nil {
+		slog.Warn("account_risk_401_recovery_failed", "account_id", id, "error", err)
+	}
+}
+
 type account401ScopeKey struct{}
 type account401Scope struct {
 	reporter  *Account401Reporter
@@ -122,7 +139,11 @@ func (r *Account401Reporter) record(ctx context.Context, groupID int64, account 
 		return
 	}
 	at := time.Now().UTC()
-	r.enqueue(ctx, groupID, r.targetAt401(ctx, account.ID, account.ID), at, kind, action, reason)
+	ownerID := account.ID
+	if account.IsShadow() {
+		ownerID = *account.ParentAccountID
+	}
+	r.enqueue(ctx, groupID, r.targetAt401(ctx, account.ID, ownerID), at, kind, action, reason)
 }
 
 // Use the database state when the response arrives, before authentication handlers
@@ -145,6 +166,10 @@ func (r *Account401Reporter) enqueue(ctx context.Context, groupID int64, target 
 	if target == nil || target.AccountID <= 0 {
 		return
 	}
+	notify := target.eligibleAt(at)
+	if !notify {
+		reason += risk401ReclaimNote
+	}
 	ids := target.GroupIDs
 	if groupID > 0 {
 		ids = []int64{groupID}
@@ -156,14 +181,17 @@ func (r *Account401Reporter) enqueue(ctx context.Context, groupID int64, target 
 	defer cancel()
 	for {
 		queued := false
-		err := r.store.Update(persist, func(state *AccountRiskState, _ AccountRiskScheduling) error {
+		err := r.store.Update(persist, func(state *AccountRiskState, tx AccountRiskScheduling) error {
 			for id, rule := range state.Rules {
 				if rule == nil || !rule.Config.Notify401Enabled || !slices.Contains(ids, id) {
 					continue
 				}
-				appendRisk401Event(rule, target.AccountID, target.Name, at, kind, action, reason, true)
-				rule.Events[0].AccountEmail = riskNotificationEmail(target.Email, target.Name)
-				queued = true
+				event := AccountRiskEvent{At: at, AccountID: target.AccountID, AccountName: target.Name,
+					AccountEmail: riskNotificationEmail(target.Email, target.Name), Kind: kind, Action: action, Reason: reason}
+				if err := appendRisk401Event(rule, tx, target.OwnerID, event, notify); err != nil {
+					return err
+				}
+				queued = queued || rule.Events[0].Notification == "pending"
 			}
 			return nil
 		})

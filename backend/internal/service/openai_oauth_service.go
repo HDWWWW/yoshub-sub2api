@@ -223,9 +223,13 @@ func (s *OpenAIOAuthService) RefreshTokenWithClientID(ctx context.Context, refre
 }
 
 func (s *OpenAIOAuthService) refreshTokenWithPrivacy(ctx context.Context, refreshToken, proxyURL, clientID string, privacyAccount *Account) (*OpenAITokenInfo, error) {
+	startedAt := time.Now().UTC()
 	tokenResp, err := s.oauthClient.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
 	if err != nil {
 		return nil, err
+	}
+	if tokenResp != nil && strings.TrimSpace(tokenResp.AccessToken) != "" {
+		s.alerts401.recovered(ctx, privacyAccount, startedAt)
 	}
 
 	// Parse ID token to get user info
@@ -405,7 +409,12 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 		if accessToken == "" {
 			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CODEX_PAT_REQUIRED", "access token is required")
 		}
-		return s.ValidateCodexPersonalAccessToken(ctx, accessToken, proxyURL)
+		startedAt := time.Now().UTC()
+		info, err := s.ValidateCodexPersonalAccessToken(ctx, accessToken, proxyURL)
+		if err == nil {
+			s.alerts401.recovered(ctx, account, startedAt)
+		}
+		return info, err
 	}
 
 	refreshToken := account.GetCredential("refresh_token")

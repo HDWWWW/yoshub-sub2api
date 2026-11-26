@@ -6,16 +6,21 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+// Use the first valid supplier/import timestamp, in the same order and range as
+// Account.SourceExpiresAt. A local expiry is never a source timestamp.
+func accountSourceExpirySQL(extra string) string {
+	stamp := func(key string) string {
+		value := extra + "->>'" + key + "'"
+		return fmt.Sprintf(`CASE WHEN %[1]s ~ '^[0-9]{1,12}$' THEN CASE WHEN (%[1]s)::bigint BETWEEN 1 AND 253402214399 THEN to_timestamp((%[1]s)::bigint) END END`, value)
+	}
+	return "COALESCE(" + stamp(service.AccountSourceExpiryExtraKey) + ", " + stamp("import_original_expires_at") + ")"
+}
+
 // Identifiers are supplied only by repository code/Ent, never request input.
 // Keep source lease precedence and bounded grace aligned with SchedulingExpiresAt.
 func accountSchedulingExpirySQL(expires, platform, kind, extra string) string {
 	raw := fmt.Sprintf("(CASE WHEN %s ? '%s' THEN %s->>'%s' ELSE %s->>'import_expiry_offset_seconds' END)", extra, service.AccountImportExpiryGraceExtraKey, extra, service.AccountImportExpiryGraceExtraKey, extra)
-	source := expires
-	// Keep validation and precedence aligned with SourceExpiresAt.
-	for _, key := range []string{"import_original_expires_at", service.AccountSourceExpiryExtraKey} {
-		value := extra + "->>'" + key + "'"
-		source = fmt.Sprintf(`(CASE WHEN %s ~ '^[0-9]{1,12}$' THEN CASE WHEN (%s)::bigint BETWEEN 1 AND 253402214399 THEN LEAST(%s, to_timestamp((%s)::bigint)) ELSE %s END ELSE %s END)`, value, value, expires, value, source, source)
-	}
+	source := "LEAST(" + expires + ", " + accountSourceExpirySQL(extra) + ")"
 	base := fmt.Sprintf("(CASE WHEN %s IS NULL THEN NULL WHEN %s = 'openai' AND %s = 'oauth' THEN %s ELSE %s END)", expires, platform, kind, source, expires)
 	legacy := fmt.Sprintf(`(%s + CASE WHEN %s = 'openai' AND %s = 'oauth'
 		AND %s ~ '^[0-9]{1,5}$'

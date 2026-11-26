@@ -72,8 +72,11 @@ func TestAccountRiskSupplierReclaimProbe401(t *testing.T) {
 				require.Empty(t, store.state.ActiveProbes)
 				require.Equal(t, stop && offset < 0, !accounts.pool[0].Schedulable)
 				require.Len(t, r.Events, 1)
-				require.Equal(t, "pending", r.Events[0].Notification)
-				if offset >= 0 {
+				if offset < 0 {
+					require.Equal(t, "pending", r.Events[0].Notification)
+				} else {
+					require.Equal(t, "disabled", r.Events[0].Notification)
+					require.Contains(t, r.Events[0].Reason, risk401ReclaimNote)
 					require.Nil(t, accounts.pool[0].TempUnschedulableUntil)
 					require.Contains(t, r.Observation.LastProbeResult, "回收")
 				}
@@ -194,22 +197,100 @@ func TestAccountRiskSupplierReclaimLiveAndQueued401(t *testing.T) {
 		observer.ObserveOpenAI([]byte(`{"type":"error","error":{"type":"authentication_error"}}`), "error")
 		observer.ObserveOpenAI([]byte(`{"type":"response.failed","response":{"error":{"status":401}}}`), "response.failed")
 		require.Empty(t, counter.counts)
-		require.Len(t, r.Events, 4, "each actual 401 alerts, including after reclaim")
+		s.reporter401().observe(ctx, r.GroupID, &a, 401, "用量探测")
+		ObserveAccountHTTPStatus(s.reporter401().withScope(ctx, a.ID, "账号凭据刷新"), 401)
+		require.Len(t, r.Events, 6)
+		for _, event := range r.Events[:5] {
+			require.Equal(t, "disabled", event.Notification)
+			require.Contains(t, event.Reason, risk401ReclaimNote)
+		}
+		require.Equal(t, "pending", r.Events[5].Notification)
 		require.True(t, accounts.pool[0].Schedulable)
-		for i := range 4 {
-			sentAt := cutoff.Add(time.Duration(i) * 3 * time.Second)
-			require.NoError(t, s.deliverNotification(ctx, sentAt))
-			require.NoError(t, s.deliverNotification(ctx, sentAt.Add(2999*time.Millisecond)))
-			require.Len(t, notifier.messages, i+1)
-		}
-		for _, event := range r.Events {
-			require.Equal(t, "sent", event.Notification)
-		}
+		require.NoError(t, s.deliverNotification(ctx, cutoff))
+		require.NoError(t, s.deliverNotification(ctx, cutoff.Add(time.Minute)))
+		require.Len(t, notifier.messages, 1)
+		require.Equal(t, "sent", r.Events[5].Notification)
 		// The cutoff is specific to 401 for business errors.
 		gw.observeRiskHTTP(ctx, &a, &http.Response{StatusCode: 503})
 		gw.observeRiskHTTP(ctx, &a, &http.Response{StatusCode: 503})
 		require.Equal(t, []int64{a.ID}, store.stopped)
 	})
+}
+
+// A queued/retried result can outlive the reservation and a supplier sync. Keep
+// the original receipt time and the single audit event across both finishes.
+func TestAccountRiskLate401ReclaimSync(t *testing.T) {
+	for _, before := range []bool{true, false} {
+		s, store, accounts, _, now := riskHarness()
+		r := store.state.Rules[7]
+		r.Config.Notify401Enabled = true
+		job := riskDueJob(t, s, accounts, now)
+		cutoff := now.Add(310 * time.Second).Truncate(time.Second)
+		at := cutoff
+		if before {
+			at = at.Add(-time.Nanosecond)
+		}
+		ctx := context.Background()
+		e := &riskProbe401Evidence{ownerID: job.account.ID, receivedAt: at}
+		e.captureAlertTarget(ctx, s.reporter401(), job.account.ID)
+		require.Nil(t, e.alertTarget.ReclaimAt)
+		accounts.pool[0].Extra = riskLeaseExtra(cutoff)
+		r.Revision++
+		result := AccountRiskProbeResult{UpstreamStatus: 401, auth401: e}
+		for range 2 {
+			require.NoError(t, s.finishProbe(ctx, job, result, errors.New("rejected"), cutoff.Add(time.Minute)))
+		}
+		require.Len(t, r.Events, 1)
+		require.Equal(t, at, r.Events[0].At)
+		if before {
+			require.Equal(t, "pending", r.Events[0].Notification)
+		} else {
+			require.Equal(t, "disabled", r.Events[0].Notification)
+			require.Contains(t, r.Events[0].Reason, risk401ReclaimNote)
+		}
+		require.Empty(t, store.stopped)
+	}
+}
+
+// ID-only usage/refresh transports must also honor the upstream owner's lease.
+// Local retention, an unknown cutoff and a temporary OAuth cooldown are separate.
+func TestAccountRiskMaintenance401SourceAndOwnerLease(t *testing.T) {
+	for _, lease := range []string{"parent", "source", "legacy", "pending", "local only"} {
+		t.Run(lease, func(t *testing.T) {
+			s, store, accounts, _, now := riskHarness()
+			r := store.state.Rules[7]
+			r.Config.Notify401Enabled = true
+			source, owner := &accounts.pool[0], &accounts.pool[1]
+			source.ParentAccountID = &owner.ID
+			past, future := now.Add(-time.Minute), now.Add(time.Hour)
+			source.TempUnschedulableUntil = &future
+			source.ExpiresAt, owner.ExpiresAt = &past, &past
+			switch lease {
+			case "parent":
+				source.Extra, owner.Extra = riskLeaseExtra(future), riskLeaseExtra(past)
+			case "source":
+				source.Extra, owner.Extra = riskLeaseExtra(past), riskLeaseExtra(future)
+			case "legacy":
+				owner.Extra = map[string]any{"import_original_expires_at": past.Unix()}
+			case "pending":
+				owner.Extra = map[string]any{AccountSourceExpiryOriginExtraKey: "supplier_pending", AccountSourceExpiryExtraKey: past.Unix()}
+			}
+			reporter := s.reporter401()
+			ctx := reporter.withScope(context.Background(), source.ID, "用量查询")
+			ObserveAccountHTTPStatus(ctx, 401)
+			reporter.observe(ctx, 7, source, 401, "用量探测")
+			require.Len(t, r.Events, 2)
+			for i, event := range r.Events {
+				require.Equal(t, source.ID, event.AccountID)
+				if lease == "pending" || lease == "local only" {
+					require.Equal(t, []string{"merged", "pending"}[i], event.Notification)
+				} else {
+					require.Equal(t, "disabled", event.Notification)
+					require.Contains(t, event.Reason, risk401ReclaimNote)
+				}
+			}
+		})
+	}
 }
 
 func TestAccountRiskSupplierReclaimCapacityAndRetry(t *testing.T) {

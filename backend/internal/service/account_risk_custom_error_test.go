@@ -90,7 +90,9 @@ func TestAccountRisk401LiveRetryWithRiskAndProbeDisabled(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		require.NoError(t, risk.deliverNotification(ctx, now.Add(time.Minute*time.Duration(i))))
 	}
-	require.Len(t, n.messages, 3)
+	require.Len(t, n.messages, 1)
+	require.Contains(t, n.messages[0], "合并异常次数：3")
+	require.Equal(t, "merged", r.Events[0].Notification)
 	require.NotContains(t, n.messages[0], "secret-error")
 	require.Empty(t, store.stopped)
 }

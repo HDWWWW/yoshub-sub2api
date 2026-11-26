@@ -140,7 +140,7 @@ func TestAccountRiskNotificationFiltersDoNotSuppressSchedulingActions(t *testing
 	require.Equal(t, []int64{1}, store.stopped)
 	require.Equal(t, "disabled", rule.Events[0].Notification)
 	// A filtered 401 remains in the history and never becomes pending.
-	appendRisk401Event(rule, 1, "account", now, accountRiskAccount401, "observed", "401", true)
+	require.NoError(t, appendRisk401Event(rule, AccountRiskScheduling{}, 1, AccountRiskEvent{AccountID: 1, At: now, Kind: accountRiskAccount401, Action: "observed", Reason: "401"}, true))
 	require.Equal(t, "disabled", rule.Events[0].Notification)
 }
 

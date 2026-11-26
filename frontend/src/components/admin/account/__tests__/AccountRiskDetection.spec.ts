@@ -199,6 +199,13 @@ describe('account risk detection', () => {
     expect(w.text()).toContain('accountRisk.occurrences')
     w.unmount()
   })
+  it('shows cumulative 401s and their suppressed delivery status', async () => {
+    get.mockResolvedValue({ ...structuredClone(baseline), events: [{ at: new Date().toISOString(), account_id: 1, reason: 'usage 401', kind: 'account_401', occurrences: 3, notification: 'merged' }] })
+    const w = await open()
+    expect(w.text()).toContain('accountRisk.auth401Occurrences')
+    expect(w.get('[data-testid="risk-notification-result"]').text()).toContain('accountRisk.notification.merged')
+    w.unmount()
+  })
   it.each([[true, false], [false, true], [true, true]])('saves capacity-only notification %s and scheduled-only notification %s independently', async (capacity, probe) => {
     const w = await open()
     await w.get('[data-testid="risk-capacity-notify-only"]').setValue(capacity)
