@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
 	"sort"
 	"strings"
 	"time"
@@ -93,6 +94,29 @@ func riskNotificationName(name string) string {
 		runes = runes[:100]
 	}
 	return string(runes)
+}
+
+func riskAccountEmail(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	email, _ := account.Credentials["email"].(string)
+	return riskNotificationEmail(email, account.Name)
+}
+
+// Capture only a validated email, never a credential blob or provider response.
+func riskNotificationEmail(email, name string) string {
+	for _, candidate := range []string{email, name} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || len(candidate) > 254 || strings.ContainsFunc(candidate, unicode.IsControl) {
+			continue
+		}
+		address, err := mail.ParseAddress(candidate)
+		if err == nil && address.Address == candidate {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // Older queued probe events carry the cooldown deadline in their reason text.
@@ -203,7 +227,11 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 	case "pause":
 		action = "已暂停此账号调度，消息复测通过后自动恢复，现有请求继续完成。"
 	}
-	content := fmt.Sprintf("SUB2API 风控检测告警\n分组：#%d %s\n账号：#%d %s\n北京时间：%s\n原因：%s\n处理：%s", groupID, groupName, event.AccountID, event.AccountName, formatNotificationTime(event.At), riskNotificationReason(event), action)
+	email := riskNotificationEmail(event.AccountEmail, event.AccountName)
+	if email == "" {
+		email = "未提供"
+	}
+	content := fmt.Sprintf("SUB2API 风控检测告警\n分组：#%d %s\n账号 ID：#%d\n账号名称：%s\n账号邮箱：%s\n北京时间：%s\n原因：%s\n处理：%s", groupID, groupName, event.AccountID, event.AccountName, email, formatNotificationTime(event.At), riskNotificationReason(event), action)
 	if event.Occurrences > 1 {
 		content += fmt.Sprintf("\n合并异常次数：%d", event.Occurrences)
 	}

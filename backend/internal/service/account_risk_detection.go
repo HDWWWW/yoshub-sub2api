@@ -229,6 +229,7 @@ type AccountRiskEvent struct {
 	At                  time.Time  `json:"at"`
 	AccountID           int64      `json:"account_id"`
 	AccountName         string     `json:"account_name,omitempty"`
+	AccountEmail        string     `json:"account_email,omitempty"`
 	Reason              string     `json:"reason"`
 	Kind                string     `json:"kind,omitempty"`
 	Action              string     `json:"action,omitempty"`
@@ -275,6 +276,7 @@ type AccountRiskScheduling struct {
 type Account401AlertTarget struct {
 	AccountID int64
 	Name      string
+	Email     string
 	GroupIDs  []int64
 }
 
@@ -713,6 +715,7 @@ func riskRecordStop(r *AccountRiskRule, account *Account, now time.Time, reason 
 
 func appendAccountRiskAction(r *AccountRiskRule, account *Account, event AccountRiskEvent) {
 	event.ID, event.AccountID, event.AccountName = uuid.NewString(), account.ID, riskNotificationName(account.Name)
+	event.AccountEmail = riskAccountEmail(account)
 	if r.Config.NotifyEnabled {
 		event.Notification = "pending"
 	}
@@ -870,6 +873,7 @@ func (s *AccountRiskService) finishProbe(ctx context.Context, job *accountRiskJo
 		if notifyOnly {
 			o.LastProbeResult = reason + "，仅提醒，未停止调度"
 			event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: account.ID, AccountName: riskNotificationName(account.Name), Reason: o.LastProbeResult, Kind: kind, Action: "notify_only", Notification: "pending"}
+			event.AccountEmail = riskAccountEmail(account)
 			filterRiskNotification(r.Config, &event)
 			r.Events = append([]AccountRiskEvent{event}, r.Events...)
 			trimAccountRiskEvents(r)

@@ -38,7 +38,7 @@ func (s *riskTestStore) Lookup401AlertTarget(ctx context.Context, sourceID, owne
 			return Account401AlertTarget{}, err
 		}
 		if id == sourceID {
-			target = Account401AlertTarget{AccountID: a.ID, Name: a.Name, GroupIDs: a.GroupIDs}
+			target = Account401AlertTarget{AccountID: a.ID, Name: a.Name, Email: riskAccountEmail(a), GroupIDs: a.GroupIDs}
 		}
 	}
 	return target, nil
