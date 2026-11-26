@@ -1642,6 +1642,7 @@ export interface CreateAccountRequest {
 }
 
 export interface UpdateAccountRequest {
+	health_duration_minutes?: number
 	yoshub_priority_mode?: 'manual' | 'auto'
   name?: string
   notes?: string | null

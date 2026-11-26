@@ -490,6 +490,56 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
+  it('saves a relative health duration and reopens the returned absolute deadline without restarting it', async () => {
+    const account = buildOpenAIOAuthParentAccount()
+    const deadline = Math.floor(Date.now() / 1000) + 6000
+    const saved = { ...account, expires_at: deadline, auto_pause_on_expired: true }
+    updateAccountMock.mockReset().mockResolvedValue(saved)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="expiry-mode-duration"]').setValue()
+    const minutes = wrapper.get<HTMLInputElement>('[data-testid="health-duration-minutes"]')
+    expect(minutes.element.value).toBe('100')
+    expect(wrapper.get('[data-testid="auto-pause-on-expired"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('input[type="datetime-local"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]).toMatchObject({ health_duration_minutes: 100, auto_pause_on_expired: true })
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('expires_at')
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true, account: saved })
+    expect(wrapper.get<HTMLInputElement>('[data-testid="expiry-mode-date"]').element.checked).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('input[type="datetime-local"]').element.value).not.toBe('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(updateAccountMock.mock.calls[1]?.[1]).not.toHaveProperty('health_duration_minutes')
+    expect(updateAccountMock.mock.calls[1]?.[1]?.expires_at).toBe(deadline)
+    wrapper.unmount()
+  })
+
+  it.each([0, -1, 1.5, 525601, ''])('rejects invalid health duration %s before submitting', async value => {
+    updateAccountMock.mockReset()
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="expiry-mode-duration"]').setValue()
+    await wrapper.get('[data-testid="health-duration-minutes"]').setValue(value)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('discards the relative duration when switching back to a fixed deadline', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="expiry-mode-duration"]').setValue()
+    await wrapper.get('[data-testid="health-duration-minutes"]').setValue(35)
+    await wrapper.get('[data-testid="expiry-mode-date"]').setValue()
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('health_duration_minutes')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.expires_at).toBe(0)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.auto_pause_on_expired).toBe(account.auto_pause_on_expired)
+    wrapper.unmount()
+  })
+
   it('allows removing assigned inactive groups and undoing the selection before saving', async () => {
     authIsSimpleMode.value = false
     const account = buildAccount()

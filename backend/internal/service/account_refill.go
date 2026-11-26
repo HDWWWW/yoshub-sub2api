@@ -100,6 +100,7 @@ type AccountRefillDeliveryConfig struct {
 	FingerprintMode                  string            `json:"fingerprint_mode"`
 	ExpiryMode                       string            `json:"expiry_mode"`
 	FixedExpiresAt                   *int64            `json:"fixed_expires_at"`
+	HealthDurationMinutes            int               `json:"health_duration_minutes,omitempty"`
 	ModelMapping                     map[string]string `json:"model_mapping"`
 }
 
@@ -189,8 +190,11 @@ func (c AccountRefillConfig) Validate() error {
 	if _, err := NormalizeAccountProxyMode(d.ProxyMode, d.ProxyID, false); err != nil {
 		return err
 	}
-	if !slices.Contains([]string{"rental", "fixed"}, d.ExpiryMode) || (d.ExpiryMode == "fixed" && (d.FixedExpiresAt == nil || ((c.Enabled || refillDailyScheduleEnabled(c)) && *d.FixedExpiresAt <= time.Now().Unix()))) {
+	if !slices.Contains([]string{"rental", "fixed", "health_duration"}, d.ExpiryMode) || (d.ExpiryMode == "fixed" && (d.FixedExpiresAt == nil || ((c.Enabled || refillDailyScheduleEnabled(c)) && *d.FixedExpiresAt <= time.Now().Unix()))) {
 		return errors.New("指定截止时间必须在未来")
+	}
+	if d.ExpiryMode == "health_duration" && (d.HealthDurationMinutes < 1 || d.HealthDurationMinutes > 525600 || !d.AutoPauseOnExpired) {
+		return errors.New("健康时长须为 1–525600 的整数分钟，且必须开启到期自动暂停")
 	}
 	for k, v := range d.ModelMapping {
 		if strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" || len(k) > 256 || len(v) > 256 {

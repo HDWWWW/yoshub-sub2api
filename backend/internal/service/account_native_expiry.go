@@ -123,6 +123,11 @@ func ApplyAccountExpiryExtra(a *Account, updates map[string]any) {
 }
 
 type accountExpiryWriteKey struct{}
+type accountAutoPauseWriteKey struct{}
+
+func withAccountAutoPauseWrite(ctx context.Context, enabled *bool) context.Context {
+	return context.WithValue(ctx, accountAutoPauseWriteKey{}, enabled)
+}
 
 func WithAccountExpiryWrite(ctx context.Context, expires *int64) context.Context {
 	return context.WithValue(ctx, accountExpiryWriteKey{}, expires)
@@ -152,8 +157,12 @@ func MergeLockedAccountExpiry(ctx context.Context, incoming, current *Account) {
 			incoming.Extra[key] = value
 		}
 	}
-	if current.hasExpiryPolicy() {
+	if current.hasExpiryPolicy() || isAccountHealthDurationWrite(ctx) {
 		incoming.ExpiresAt = current.ExpiresAt
+	}
+	incoming.AutoPauseOnExpired = current.AutoPauseOnExpired
+	if enabled, _ := ctx.Value(accountAutoPauseWriteKey{}).(*bool); enabled != nil {
+		incoming.AutoPauseOnExpired = *enabled
 	}
 	ReapplyAccountExpiryWrite(ctx, incoming)
 }
@@ -164,14 +173,18 @@ func accountDeliveryKeyMatches(ctx context.Context, a *Account) bool {
 }
 
 func ApplyAccountExpiryWrite(ctx context.Context, a *Account, expires int64) {
-	if a.hasExpiryPolicy() {
+	healthDuration := isAccountHealthDurationWrite(ctx)
+	if a.hasExpiryPolicy() || healthDuration {
 		MaterializeAccountExpiry(a)
 	}
 	a.Extra = maps.Clone(a.Extra)
 	if a.Extra == nil {
 		a.Extra = make(map[string]any)
 	}
-	if accountDeliveryKeyMatches(ctx, a) {
+	if healthDuration && a.HasNativeExpiry() {
+		a.Extra[AccountExpiryManualExtraKey] = true
+	}
+	if !healthDuration && accountDeliveryKeyMatches(ctx, a) {
 		if expires == expiryTimestamp(a.Extra[AccountDeliveryExpiryExtraKey]) {
 			return // An echoed supplier timestamp must not undo an admin edit.
 		}

@@ -1999,22 +1999,35 @@
       </div>
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
-        <input v-model="expiresAtInput" type="datetime-local" class="input" />
-        <div class="mt-2 flex gap-2">
-          <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(1)">
-            {{ t('payment.oneMonth') }}
-          </button>
-          <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(12)">
-            {{ t('payment.oneYear') }}
-          </button>
+        <div class="mb-3 flex flex-wrap gap-4" role="radiogroup" :aria-label="t('admin.accounts.expiresAt')">
+          <label class="flex items-center gap-2 text-sm"><input v-model="expiryMode" type="radio" value="date" data-testid="expiry-mode-date" />{{ t('admin.accounts.expiryModeDate') }}</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="expiryMode" type="radio" value="duration" data-testid="expiry-mode-duration" />{{ t('admin.accounts.healthDuration') }}</label>
         </div>
-        <p class="input-hint">
-          {{ t('admin.accounts.expiresAtHint') }}
-          {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
-        </p>
-        <template v-if="account?.platform === 'openai' && account.type === 'oauth' && !isSparkShadow">
-          <p class="input-hint">{{ t('accountRefill.nativeExpiryHint') }}</p>
-          <AccountExpiryGraceSettings :account-id="account.id" :active="show" @saved="form.expires_at = $event" />
+        <template v-if="expiryMode === 'duration'">
+          <label class="block">
+            <span class="input-label">{{ t('admin.accounts.healthDurationMinutes') }}</span>
+            <input v-model.number="healthDurationMinutes" class="input" type="number" min="1" max="525600" step="1" required data-testid="health-duration-minutes" aria-describedby="health-duration-hint" />
+          </label>
+          <p id="health-duration-hint" class="input-hint">{{ t('admin.accounts.healthDurationHint') }}</p>
+        </template>
+        <template v-else>
+          <input v-model="expiresAtInput" type="datetime-local" class="input" />
+          <div class="mt-2 flex gap-2">
+            <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(1)">
+              {{ t('payment.oneMonth') }}
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(12)">
+              {{ t('payment.oneYear') }}
+            </button>
+          </div>
+          <p class="input-hint">
+            {{ t('admin.accounts.expiresAtHint') }}
+            {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
+          </p>
+          <template v-if="account?.platform === 'openai' && account.type === 'oauth' && !isSparkShadow">
+            <p class="input-hint">{{ t('accountRefill.nativeExpiryHint') }}</p>
+            <AccountExpiryGraceSettings :account-id="account.id" :active="show" @saved="form.expires_at = $event" />
+          </template>
         </template>
       </div>
 
@@ -2746,15 +2759,18 @@
           <button
             type="button"
             @click="autoPauseOnExpired = !autoPauseOnExpired"
+            :disabled="expiryMode === 'duration'"
+            :aria-pressed="expiryMode === 'duration' || autoPauseOnExpired"
+            data-testid="auto-pause-on-expired"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              autoPauseOnExpired ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+              expiryMode === 'duration' || autoPauseOnExpired ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
             ]"
           >
             <span
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                autoPauseOnExpired ? 'translate-x-5' : 'translate-x-0'
+                expiryMode === 'duration' || autoPauseOnExpired ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -4135,6 +4151,8 @@ const loadGrokMediaEligibility = async (accountID: number): Promise<GrokMediaEli
 
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
+const expiryMode = ref<'date' | 'duration'>('date')
+const healthDurationMinutes = ref<number | string>(100)
 const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
@@ -4690,6 +4708,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     : 'active'
   form.group_ids = newAccount.group_ids || []
   form.expires_at = newAccount.expires_at ?? null
+  expiryMode.value = 'date'
+  healthDurationMinutes.value = 100
 
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
@@ -5725,6 +5745,11 @@ const handleSubmit = async () => {
   if (!props.account) return
   const accountID = props.account.id
 
+  if (expiryMode.value === 'duration' && (typeof healthDurationMinutes.value !== 'number' || !Number.isInteger(healthDurationMinutes.value) || healthDurationMinutes.value < 1 || healthDurationMinutes.value > 525600)) {
+    appStore.showError(t('admin.accounts.healthDurationInvalid'))
+    return
+  }
+
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     appStore.showError(t('admin.accounts.pleaseSelectStatus'))
     return
@@ -5756,6 +5781,11 @@ const handleSubmit = async () => {
       updatePayload.load_factor = 0
     }
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
+    if (expiryMode.value === 'duration') {
+      delete updatePayload.expires_at
+      updatePayload.health_duration_minutes = healthDurationMinutes.value
+      updatePayload.auto_pause_on_expired = true
+    }
     if (props.account.type === 'apikey') {
       if (form.name === props.account.name) delete updatePayload.name
       if (form.notes === (props.account.notes || '')) delete updatePayload.notes

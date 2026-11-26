@@ -150,6 +150,7 @@ type CreateAccountRequest struct {
 // UpdateAccountRequest represents update account request
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateAccountRequest struct {
+	HealthDurationMinutes   *int           `json:"health_duration_minutes" binding:"omitempty,min=1,max=525600"`
 	ProxyMode               string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
 	PrivacyEnabled          *bool          `json:"privacy_enabled"`
 	SchedulingPriorityMode  string         `json:"yoshub_priority_mode"`
@@ -1197,6 +1198,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
 	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
+		HealthDurationMinutes:  req.HealthDurationMinutes,
 		PrivacyEnabled:         req.PrivacyEnabled,
 		SchedulingPriorityMode: req.SchedulingPriorityMode,
 		Name:                   req.Name,
