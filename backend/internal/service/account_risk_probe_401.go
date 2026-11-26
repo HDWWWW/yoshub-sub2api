@@ -21,6 +21,7 @@ type riskProbe401Evidence struct {
 	reclaimAt   *time.Time
 	ownerID     int64
 	ownerName   string
+	ownerEmail  string
 	identity    [32]byte
 	failure     credential401Failure
 }
@@ -59,7 +60,7 @@ func readRiskProbe401(owner *Account, model string, reader io.Reader) *riskProbe
 		tempUnschedRulesApply(owner, http.StatusUnauthorized, body, model) {
 		return nil
 	}
-	return &riskProbe401Evidence{ownerID: owner.ID, ownerName: riskNotificationName(owner.Name), identity: riskModelAccountIdentity(owner), failure: classifyCredential401(owner, body)}
+	return &riskProbe401Evidence{ownerID: owner.ID, ownerName: riskNotificationName(owner.Name), ownerEmail: riskAccountEmail(owner), identity: riskModelAccountIdentity(owner), failure: classifyCredential401(owner, body)}
 }
 
 // Apply the response only to the credential version that actually sent the probe.
@@ -146,6 +147,7 @@ func appendProbe401Event(r *AccountRiskRule, job *accountRiskJob, evidence *risk
 	}
 	appendRisk401Event(r, evidence.ownerID, evidence.ownerName, evidence.observedAt(now), accountRiskProbe401, action, reason, evidence.shouldNotify(r))
 	r.Events[0].ID = id
+	r.Events[0].AccountEmail = evidence.ownerEmail
 }
 
 func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time, kind, action, reason string, notify bool) {
@@ -154,6 +156,7 @@ func appendRisk401Event(r *AccountRiskRule, id int64, name string, now time.Time
 		notification = "pending"
 	}
 	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: id, AccountName: riskNotificationName(name), Reason: reason, Kind: kind, Action: action, Notification: notification}
+	filterRiskNotification(r.Config, &event)
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	trimAccountRiskEvents(r)
 }

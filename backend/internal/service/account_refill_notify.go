@@ -200,13 +200,7 @@ func (s *AccountRefillService) sendRefillNotification(ctx context.Context, state
 		}
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		root := s.rootService()
-		root.rulesMu.Lock()
-		if root.qqNotifier == nil {
-			root.qqNotifier = &qqRefillNotifier{}
-		}
-		notifier := root.qqNotifier
-		root.rulesMu.Unlock()
+		notifier := s.qqNotificationSender()
 		if err := notifier.Send(ctx, state.Config.Notifications, secret, content); err != nil {
 			state.NotificationStatus.Message = err.Error() + "；补号继续处理"
 			var deliveryErr *qqRefillDeliveryError

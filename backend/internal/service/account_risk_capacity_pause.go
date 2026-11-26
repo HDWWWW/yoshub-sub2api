@@ -65,10 +65,11 @@ func pauseCapacityAccount(state *AccountRiskState, r *AccountRiskRule, a *Accoun
 
 func riskCapacityEvent(r *AccountRiskRule, a *Account, now time.Time, reason, action string) {
 	event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: a.ID, AccountName: riskNotificationName(a.Name),
-		Kind: accountRiskProbeCapacity, Action: action, Reason: reason}
+		AccountEmail: riskAccountEmail(a), Kind: accountRiskProbeCapacity, Action: action, Reason: reason}
 	if action == "pause" && r.Config.NotifyEnabled {
 		event.Notification = "pending"
 	}
+	filterRiskNotification(r.Config, &event)
 	r.Events = append([]AccountRiskEvent{event}, r.Events...)
 	trimAccountRiskEvents(r)
 }

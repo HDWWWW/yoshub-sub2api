@@ -72,6 +72,16 @@ type qqRefillNotifier struct {
 	expires     time.Time
 }
 
+func (s *AccountRefillService) qqNotificationSender() *qqRefillNotifier {
+	root := s.rootService()
+	root.rulesMu.Lock()
+	defer root.rulesMu.Unlock()
+	if root.qqNotifier == nil {
+		root.qqNotifier = &qqRefillNotifier{}
+	}
+	return root.qqNotifier
+}
+
 func (n *qqRefillNotifier) post(ctx context.Context, path, token string, payload any, delivery bool) (*qqRefillReply, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {

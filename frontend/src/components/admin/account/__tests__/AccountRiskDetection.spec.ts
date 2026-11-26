@@ -11,6 +11,8 @@ const baseline: AccountRiskRule = {
   config: { rate_limit_429_reduce_concurrency: false, rate_limit_429_concurrency_limit: 1, custom_error_enabled: false, custom_error_window_seconds: 60, custom_error_threshold: 20, custom_error_rules: [], rate_limit_429_enabled: false, rate_limit_429_window_seconds: 60, rate_limit_429_threshold: 20, enabled: false, notify_enabled: false, capacity_notify_only: false, probe_enabled: true, probe_scope: 'single', probe_notify_only: false, probe_mismatch_max_retries: 0, probe_401_enabled: false, notify_401_enabled: false, probe_429_stop_enabled: false, probe_429_max_retries: 3, model_mismatch_action: 'off', first_below_percent: 60, second_at_least_percent: 90, sustain_seconds: 10, probe_interval_seconds: 300, probe_prompt: 'Reply 21', expected_text: '21', model: 'gpt-6.1-sol', reasoning_effort: 'high' },
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
+baseline.config.notification_channel = 'wecom'
+baseline.config.notification_types = { capacity: true, business_429: true, custom_error: true, scheduled_mismatch: true, scheduled_429: true, auth_401: true, model_mismatch: true }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
 async function open() {
   const w = mount(AccountRiskDetection, { props: { groups, initialGroup: '7' }, global: { stubs: { Icon: true, BaseDialog: { template: '<div><slot /></div>' } } } })
@@ -18,6 +20,52 @@ async function open() {
 }
 describe('account risk detection', () => {
   beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => structuredClone(baseline)); save.mockImplementation(async (group_id, revision, config) => ({ ...structuredClone(baseline), group_id, revision: revision + 1, config })) })
+  it('selects the risk channel and its status independently of the refill channel', async () => {
+    get.mockResolvedValue({ ...structuredClone(baseline), notification_channels: { wecom: 'ready', qq: 'missing' } })
+    const w = await open()
+    expect(w.get('[data-testid="risk-webhook-status"]').text()).toContain('accountRisk.webhook.ready')
+    await w.get('[data-testid="risk-notification-channel"]').setValue('qq')
+    expect(w.get('[data-testid="risk-webhook-status"]').text()).toContain('accountRisk.webhook.missing')
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save).toHaveBeenCalledWith(7, 3, expect.objectContaining({ notification_channel: 'qq', notify_enabled: false }))
+    expect(w.get<HTMLSelectElement>('[data-testid="risk-notification-channel"]').element.value).toBe('qq')
+    w.unmount()
+  })
+  it('saves selected message types without changing detection actions', async () => {
+    const w = await open()
+    for (const type of Object.keys(baseline.config.notification_types!)) {
+      await w.get(`[data-testid="risk-notify-type-${type}"]`).setValue(type === 'auth_401')
+    }
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save).toHaveBeenCalledWith(7, 3, { ...baseline.config, notification_types: {
+      capacity: false, business_429: false, custom_error: false, scheduled_mismatch: false, scheduled_429: false, auth_401: true, model_mismatch: false
+    } })
+    expect(w.get<HTMLInputElement>('[data-testid="risk-notify-type-auth_401"]').element.checked).toBe(true)
+    expect(w.get<HTMLInputElement>('[data-testid="risk-notify-type-scheduled_429"]').element.checked).toBe(false)
+    w.unmount()
+  })
+  it('defaults old rules to WeCom and all types while preserving explicit all-off', async () => {
+    const old = structuredClone(baseline)
+    delete old.config.notification_channel; delete old.config.notification_types
+    get.mockResolvedValue(old)
+    const w = await open()
+    expect(w.get<HTMLSelectElement>('[data-testid="risk-notification-channel"]').element.value).toBe('wecom')
+    for (const type of Object.keys(baseline.config.notification_types!)) {
+      expect(w.get<HTMLInputElement>(`[data-testid="risk-notify-type-${type}"]`).element.checked).toBe(true)
+      await w.get(`[data-testid="risk-notify-type-${type}"]`).setValue(false)
+    }
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(Object.values(save.mock.calls[0]![2].notification_types)).toEqual(Array(7).fill(false))
+    expect(w.get<HTMLInputElement>('[data-testid="risk-notify-type-capacity"]').element.checked).toBe(false)
+    w.unmount()
+  })
+  it('shows the actual sent channel after the current selection changes', async () => {
+    get.mockResolvedValue({ ...structuredClone(baseline), events: [{ at: new Date().toISOString(), account_id: 1, reason: 'risk', notification: 'sent', notification_channel: 'qq' }] })
+    const w = await open()
+    expect(w.get('[data-testid="risk-notification-result"]').text()).toContain('accountRisk.channels.qq')
+    expect(w.get('[data-testid="risk-notification-result"]').text()).toContain('accountRisk.notification.sent')
+    w.unmount()
+  })
   it('saves combined and independent custom matches with a separate burst window', async () => {
     const w = await open()
     await w.get('[data-testid="risk-custom-enabled"]').setValue(true)

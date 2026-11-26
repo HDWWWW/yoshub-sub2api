@@ -24,6 +24,9 @@ func riskModelMismatchEnabled(c AccountRiskConfig) bool {
 }
 
 func riskEventNotificationEnabled(c AccountRiskConfig, event AccountRiskEvent) bool {
+	if !riskNotificationTypeEnabled(c, event) {
+		return false
+	}
 	if event.Kind == accountRiskProbe401 || event.Kind == accountRiskBusiness401 || event.Kind == accountRiskAccount401 {
 		return c.Notify401Enabled
 	}
@@ -104,6 +107,8 @@ func (s *AccountRiskService) HandleModelMismatch(ctx context.Context, groupID in
 			reason += "，仅通知，未停止调度"
 		}
 		event := AccountRiskEvent{ID: uuid.NewString(), At: now, AccountID: current.ID, AccountName: riskNotificationName(current.Name), Reason: reason, Kind: "model_mismatch", Action: action, Occurrences: 1, Notification: "pending"}
+		event.AccountEmail = riskAccountEmail(current)
+		filterRiskNotification(r.Config, &event)
 		r.Events = append([]AccountRiskEvent{event}, r.Events...)
 		trimAccountRiskEvents(r)
 		recorded = true

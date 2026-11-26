@@ -1,6 +1,19 @@
 import { apiClient } from '../client'
 
+export type AccountRiskNotificationChannel = 'wecom' | 'qq'
+export interface AccountRiskNotificationTypes {
+  capacity: boolean
+  business_429: boolean
+  custom_error: boolean
+  scheduled_mismatch: boolean
+  scheduled_429: boolean
+  auth_401: boolean
+  model_mismatch: boolean
+}
+
 export interface AccountRiskConfig {
+  notification_channel?: AccountRiskNotificationChannel
+  notification_types?: AccountRiskNotificationTypes
   custom_error_enabled: boolean
   custom_error_window_seconds: number
   custom_error_threshold: number
@@ -51,6 +64,7 @@ export interface AccountRiskRule {
   revision: number
   test_accounts?: { id: number; name: string; schedulable: boolean }[]
   webhook_status?: 'ready' | 'missing' | 'unavailable'
+  notification_channels?: Record<AccountRiskNotificationChannel, 'ready' | 'missing' | 'unavailable'>
   config: AccountRiskConfig
   observation: {
     checked_at: string
@@ -74,7 +88,7 @@ export interface AccountRiskRule {
     input_tokens: number
     output_tokens: number
   }
-  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'observed' | 'gateway' | 'stop' | 'reduce_concurrency' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string }[]
+  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'observed' | 'gateway' | 'stop' | 'reduce_concurrency' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string; notification_channel?: AccountRiskNotificationChannel }[]
 }
 export interface AccountRiskManualResult {
   account_id: number

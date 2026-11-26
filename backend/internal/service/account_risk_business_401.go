@@ -162,6 +162,7 @@ func (r *Account401Reporter) enqueue(ctx context.Context, groupID int64, target 
 					continue
 				}
 				appendRisk401Event(rule, target.AccountID, target.Name, at, kind, action, reason, true)
+				rule.Events[0].AccountEmail = riskNotificationEmail(target.Email, target.Name)
 				queued = true
 			}
 			return nil

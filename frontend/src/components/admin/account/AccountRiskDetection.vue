@@ -21,9 +21,26 @@
             <span class="text-sm font-medium">{{ t('accountRisk.enabled') }}</span>
           </label>
           <section class="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-600" data-testid="risk-notification-settings">
+            <label class="block sm:max-w-sm">
+              <span class="input-label">{{ t('accountRisk.notificationChannel') }}</span>
+              <select v-model="draft.notification_channel" class="input" data-testid="risk-notification-channel">
+                <option value="wecom">{{ t('accountRisk.channels.wecom') }}</option>
+                <option value="qq">{{ t('accountRisk.channels.qq') }}</option>
+              </select>
+            </label>
+            <p class="text-xs" :class="notificationStatus === 'ready' ? 'text-green-600' : 'text-amber-600'" data-testid="risk-webhook-status">{{ t(`accountRisk.webhook.${notificationStatus}`, { channel: t(`accountRisk.channels.${draft.notification_channel}`) }) }}</p>
             <label class="flex items-center gap-3"><input v-model="draft.notify_enabled" data-testid="risk-notify-enabled" type="checkbox" class="rounded" /><span class="text-sm font-medium">{{ t('accountRisk.notifyEnabled') }}</span></label>
             <p class="text-xs text-gray-500">{{ t('accountRisk.notifyHint') }}</p>
-            <p class="text-xs" :class="view.webhook_status === 'ready' ? 'text-green-600' : 'text-amber-600'" data-testid="risk-webhook-status">{{ t(`accountRisk.webhook.${view.webhook_status || 'unavailable'}`) }}</p>
+            <fieldset class="space-y-2" data-testid="risk-notification-types">
+              <legend class="text-sm font-medium">{{ t('accountRisk.notificationTypes') }}</legend>
+              <div class="grid gap-2 sm:grid-cols-2">
+                <label v-for="type in notificationTypes" :key="type" class="flex items-start gap-2 text-sm">
+                  <input v-model="draft.notification_types[type]" type="checkbox" class="mt-0.5 rounded" :data-testid="`risk-notify-type-${type}`" />
+                  <span>{{ t(`accountRisk.types.${type}`) }}</span>
+                </label>
+              </div>
+              <p class="text-xs text-gray-500">{{ t('accountRisk.notificationTypesHint') }}</p>
+            </fieldset>
           </section>
           <section class="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
             <label class="flex items-center gap-3">
@@ -198,7 +215,7 @@
         </section>
         <section v-if="view.events.length" class="space-y-2 text-sm">
           <h3 class="font-semibold">{{ t('accountRisk.history') }}</h3>
-          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatNotificationTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.action" class="text-xs" data-testid="risk-event-action">{{ t(`accountRisk.action.${event.action}`) }}</p><p v-if="event.kind !== 'rate_limit_429' && (event.occurrences || 0) > 1" class="text-xs">{{ t('accountRisk.occurrences', { count: event.occurrences }) }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result">{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
+          <div v-for="(event, index) in view.events" :key="event.id || index" class="border-l-2 border-amber-400 pl-3"><p>{{ formatNotificationTime(event.at) }} · #{{ event.account_id }}</p><p class="text-gray-500">{{ event.reason }}</p><p v-if="event.action" class="text-xs" data-testid="risk-event-action">{{ t(`accountRisk.action.${event.action}`) }}</p><p v-if="event.kind !== 'rate_limit_429' && (event.occurrences || 0) > 1" class="text-xs">{{ t('accountRisk.occurrences', { count: event.occurrences }) }}</p><p v-if="event.notification" class="text-xs" data-testid="risk-notification-result"><span v-if="event.notification_channel">{{ t(`accountRisk.channels.${event.notification_channel}`) }} · </span>{{ t(`accountRisk.notification.${event.notification}`) }}</p></div>
         </section>
       </form>
     </div>
@@ -210,7 +227,7 @@ import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { accountRiskAPI, type AccountRiskConfig, type AccountRiskRule, type AccountRiskManualResult } from '@/api/admin/accountRisk'
+import { accountRiskAPI, type AccountRiskConfig, type AccountRiskRule, type AccountRiskManualResult, type AccountRiskNotificationChannel, type AccountRiskNotificationTypes } from '@/api/admin/accountRisk'
 import { formatNotificationTime } from '@/utils/beijingTime'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
@@ -219,7 +236,18 @@ const { t } = useI18n()
 const show = ref(false), loading = ref(false), saving = ref(false), refreshing = ref(false), saved = ref(false)
 const testing = ref(false), testAccountID = ref(0), testResult = ref<AccountRiskManualResult | null>(null)
 const groupID = ref(0), error = ref(''), now = ref(Date.now())
-const view = ref<AccountRiskRule | null>(null), draft = ref<AccountRiskConfig | null>(null)
+type RiskDraft = AccountRiskConfig & { notification_channel: AccountRiskNotificationChannel; notification_types: AccountRiskNotificationTypes }
+const view = ref<AccountRiskRule | null>(null), draft = ref<RiskDraft | null>(null)
+const notificationTypes: (keyof AccountRiskNotificationTypes)[] = ['capacity', 'business_429', 'custom_error', 'scheduled_mismatch', 'scheduled_429', 'auth_401', 'model_mismatch']
+function notificationDraft(config: AccountRiskConfig): Pick<RiskDraft, 'notification_channel' | 'notification_types'> {
+  return { notification_channel: config.notification_channel || 'wecom', notification_types: config.notification_types ? { ...config.notification_types } : {
+    capacity: true, business_429: true, custom_error: true, scheduled_mismatch: true, scheduled_429: true, auth_401: true, model_mismatch: true
+  } }
+}
+const notificationStatus = computed(() => {
+  const channel = draft.value?.notification_channel || 'wecom'
+  return view.value?.notification_channels?.[channel] ?? (channel === 'wecom' ? view.value?.webhook_status : undefined) ?? 'unavailable'
+})
 const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const openAIGroups = computed(() => props.groups.filter(g => g.platform === 'openai'))
 const scheduledChecks = computed(() => Object.values(view.value?.observation.scheduled_checks ?? {})
@@ -283,7 +311,7 @@ async function load() {
   view.value = null; draft.value = null; testResult.value = null; testAccountID.value = 0; error.value = ''; saved.value = false
   if (!groupID.value) return
   loading.value = true
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config,
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, ...notificationDraft(data.config),
     rate_limit_429_reduce_concurrency: data.config.rate_limit_429_reduce_concurrency ?? false,
     rate_limit_429_concurrency_limit: data.config.rate_limit_429_concurrency_limit || 1,
     custom_error_enabled: data.config.custom_error_enabled ?? false, custom_error_window_seconds: data.config.custom_error_window_seconds || 60,
@@ -297,7 +325,7 @@ async function refresh() {
   const current = generation
   refreshing.value = true
   // Refresh actual state without overwriting the draft or its revision guard.
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events; view.value.webhook_status = data.webhook_status; view.value.test_accounts = data.test_accounts } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events; view.value.webhook_status = data.webhook_status; view.value.notification_channels = data.notification_channels; view.value.test_accounts = data.test_accounts } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { refreshing.value = false }
 }
@@ -305,7 +333,7 @@ async function save() {
   if (!valid.value || !view.value || !draft.value || loading.value || saving.value || testing.value) return
   generation++
   saving.value = true; error.value = ''; saved.value = false
-  try { view.value = await accountRiskAPI.save(groupID.value, view.value.revision, { ...draft.value }); draft.value = { ...view.value.config }; saved.value = true }
+  try { view.value = await accountRiskAPI.save(groupID.value, view.value.revision, { ...draft.value }); draft.value = { ...view.value.config, ...notificationDraft(view.value.config) }; saved.value = true }
   catch (e) { error.value = extractApiErrorMessage(e, t('accountRisk.saveError')) }
   finally { saving.value = false }
 }

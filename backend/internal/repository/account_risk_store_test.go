@@ -20,15 +20,15 @@ func TestAccountRisk401AlertTarget(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	store := NewAccountRiskStore(db, nil)
 	for _, present := range []bool{true, false} {
-		rows := sqlmock.NewRows([]string{"id", "name", "groups"})
+		rows := sqlmock.NewRows([]string{"id", "name", "groups", "email"})
 		if present {
-			rows.AddRow(12, "account", "{7,8}")
+			rows.AddRow(12, "account", "{7,8}", "account@example.test")
 		}
 		mock.ExpectQuery(`SELECT a.id, a.name, ARRAY`).WithArgs(int64(12), int64(15)).WillReturnRows(rows)
 		target, err := store.Lookup401AlertTarget(context.Background(), 12, 15)
 		require.NoError(t, err)
 		if present {
-			require.Equal(t, service.Account401AlertTarget{AccountID: 12, Name: "account", GroupIDs: []int64{7, 8}}, target)
+			require.Equal(t, service.Account401AlertTarget{AccountID: 12, Name: "account", Email: "account@example.test", GroupIDs: []int64{7, 8}}, target)
 		} else {
 			require.Zero(t, target)
 		}
