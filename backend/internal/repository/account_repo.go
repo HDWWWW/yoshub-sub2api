@@ -696,7 +696,7 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'grok_observed_models',
 			extra -> 'upstream_model_metadata',
 			extra -> 'yoshub_manual_scheduling_priority',
-			expires_at, extra,
+			expires_at, auto_pause_on_expired, extra,
 			extra -> 'upstream_billing_group_sync_enabled'
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
@@ -731,6 +731,7 @@ func lockAndMergeAccountProbeExtra(
 		currentUpstreamModelMetadata   []byte
 		currentManualPriority          []byte
 		currentExpiry                  sql.NullTime
+		currentAutoPause               bool
 		currentExtra                   []byte
 	)
 	if err := rows.Scan(
@@ -750,6 +751,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentUpstreamModelMetadata,
 		&currentManualPriority,
 		&currentExpiry,
+		&currentAutoPause,
 		&currentExtra,
 		&currentGroupSyncEnabled,
 	); err != nil {
@@ -760,7 +762,7 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
-	locked := &service.Account{Platform: account.Platform, Type: account.Type}
+	locked := &service.Account{Platform: account.Platform, Type: account.Type, AutoPauseOnExpired: currentAutoPause}
 	if currentExpiry.Valid {
 		locked.ExpiresAt = &currentExpiry.Time
 	}

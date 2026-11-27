@@ -14,6 +14,11 @@ func (s *AccountRefillService) refillDeliveryInput(ctx context.Context, j *Accou
 // allowExpired is used only to record a confirmed, already ended pushed order.
 // Such input must never pass through the normal account activation path.
 func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *AccountRefillJob, delivery *RefillDelivery, allowExpired bool) (*CreateAccountInput, error) {
+	pushTime := time.Now()
+	healthDuration := j.DeliveryConfig.ExpiryMode == "health_duration"
+	if healthDuration && (j.DeliveryConfig.HealthDurationMinutes < 1 || j.DeliveryConfig.HealthDurationMinutes > 525600) {
+		return nil, errors.New("健康时长须为 1–525600 的整数分钟")
+	}
 	if err := validateRefillDelivery(delivery); err != nil {
 		return nil, err
 	}
@@ -61,6 +66,14 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 		graceMinutes = *j.ExpiryGraceMinutes
 	}
 	deadline, extra = ImportedAccountExpiryWithGrace(deadline, extra, graceMinutes)
+	if healthDuration && !allowExpired {
+		// The committed account and refill_job_id are the recovery anchor; a
+		// retry reuses that account instead of creating another relative deadline.
+		healthDeadline := pushTime.Add(time.Duration(j.DeliveryConfig.HealthDurationMinutes) * time.Minute).Unix()
+		deadline = &healthDeadline
+		extra[AccountExpiryManualExtraKey] = true
+		extra[AccountImportExpiryGraceExtraKey] = 0
+	}
 	// The supplier lease is independent of a locally shortened deadline.
 	if a.ExpiresAt != nil {
 		extra[AccountSourceExpiryExtraKey] = *a.ExpiresAt
@@ -88,7 +101,6 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 		name = "补号 " + j.SupplierID
 	}
 	expires := time.Unix(*deadline, 0)
-	pushTime := time.Now()
 	if j.DeliveryConfig.NameTemplate != "" {
 		name = refillTemplate(j.DeliveryConfig.NameTemplate, name, email, j.SupplierID, j.Plan, pushTime, expires)
 	}
@@ -97,7 +109,7 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 		n := refillTemplate(j.DeliveryConfig.NotesTemplate, a.Name, email, j.SupplierID, j.Plan, pushTime, expires)
 		notes = &n
 	}
-	autoPause := j.DeliveryConfig.AutoPauseOnExpired
+	autoPause := j.DeliveryConfig.AutoPauseOnExpired || healthDuration
 	var proxyID *int64
 	if !allowExpired && j.DeliveryConfig.ProxyMode != "random" && j.DeliveryConfig.ProxyMode != "ovh_ipv6" {
 		var err error

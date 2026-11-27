@@ -647,7 +647,13 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.ProxyMode != "" || s.needsProxyWriteTransaction(ctx, input.ProxyID) {
 		return s.updateAccountProxyMode(ctx, id, input)
 	}
+	var durationErr error
+	ctx, input, durationErr = prepareAccountHealthDuration(ctx, input, time.Now())
+	if durationErr != nil {
+		return nil, durationErr
+	}
 	ctx = WithAccountExpiryWrite(ctx, input.ExpiresAt)
+	ctx = withAccountAutoPauseWrite(ctx, input.AutoPauseOnExpired)
 	if err := validateSchedulingPriorityMode(ctx, input.SchedulingPriorityMode, input.Priority); err != nil {
 		return nil, err
 	}

@@ -126,6 +126,14 @@ func (s *adminServiceImpl) AdoptRefillAccount(ctx context.Context, id int64, inp
 		if err = s.accountRepo.UpdateExtra(txctx, id, policy); err != nil {
 			return nil, err
 		}
+		if input.Extra[AccountExpiryManualExtraKey] == true && input.ExpiresAt != nil {
+			// Apply the absolute health deadline after installing native expiry
+			// metadata. Never recompute it when recovering an adopted account.
+			expiryCtx := context.WithValue(txctx, accountHealthDurationWriteKey{}, true)
+			if _, err = s.UpdateAccount(expiryCtx, id, &UpdateAccountInput{ExpiresAt: input.ExpiresAt, AutoPauseOnExpired: input.AutoPauseOnExpired}); err != nil {
+				return nil, err
+			}
+		}
 		if err = s.accountRepo.SetSchedulable(txctx, id, false); err != nil {
 			return nil, err
 		}

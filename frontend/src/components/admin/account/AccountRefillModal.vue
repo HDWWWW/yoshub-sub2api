@@ -168,12 +168,16 @@
               <label v-for="plan in ['pro5x', 'pro20x']" :key="plan"><span class="input-label">{{ plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }} · {{ t('accountRefill.import_concurrency') }}</span><input v-if="form.plan_import_concurrency" v-model.number="form.plan_import_concurrency[plan]" type="number" min="1" max="10000" step="1" class="input" :data-testid="`refill-concurrency-${plan}`" /></label>
               <label v-for="field in deliveryFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form.delivery[field.key]" type="number" min="0" :max="field.max" :step="field.step" class="input" /></label>
               <label><span class="input-label">{{ t('accountRefill.status') }}</span><select v-model="form.delivery.status" class="input"><option value="active">{{ t('accountRefill.active') }}</option><option value="inactive">{{ t('accountRefill.inactive') }}</option></select></label>
-              <label><span class="input-label">{{ t('accountRefill.expiry_mode') }}</span><select v-model="form.delivery.expiry_mode" class="input"><option value="rental">{{ t('accountRefill.rental') }}</option><option value="fixed">{{ t('accountRefill.fixedExpiry') }}</option></select></label>
+              <label><span class="input-label">{{ t('accountRefill.expiry_mode') }}</span><select v-model="form.delivery.expiry_mode" class="input" data-testid="refill-expiry-mode" @change="onExpiryModeChange"><option value="rental">{{ t('accountRefill.rental') }}</option><option value="fixed">{{ t('accountRefill.fixedExpiry') }}</option><option value="health_duration">{{ t('accountRefill.healthDuration') }}</option></select></label>
               <label v-if="form.delivery.expiry_mode === 'fixed'"><span class="input-label">{{ t('accountRefill.fixed_expires_at') }}</span><input v-model="fixedExpiry" type="datetime-local" class="input" /></label>
+              <label v-if="form.delivery.expiry_mode === 'health_duration'"><span class="input-label">{{ t('accountRefill.health_duration_minutes') }}</span><input v-model.number="form.delivery.health_duration_minutes" type="number" min="1" max="525600" step="1" required class="input" data-testid="refill-health-duration" /></label>
             </div>
-            <div class="flex flex-wrap gap-6"><label class="flex items-center gap-2 text-sm"><input v-model="form.delivery.schedulable" type="checkbox" />{{ t('accountRefill.schedulable') }}</label><label class="flex items-center gap-2 text-sm"><input v-model="form.delivery.auto_pause_on_expired" type="checkbox" />{{ t('accountRefill.auto_pause_on_expired') }}</label></div>
-            <label class="block"><span class="input-label">{{ t('accountRefill.import_expiry_grace_minutes') }}</span><input v-model.number="form.import_expiry_grace_minutes" type="number" min="0" max="1440" step="1" class="input" data-testid="refill-import-grace" /></label>
-            <p class="input-hint">{{ t('accountRefill.expiryHint') }}</p>
+            <div class="flex flex-wrap gap-6"><label class="flex items-center gap-2 text-sm"><input v-model="form.delivery.schedulable" type="checkbox" />{{ t('accountRefill.schedulable') }}</label><label class="flex items-center gap-2 text-sm"><input v-model="form.delivery.auto_pause_on_expired" type="checkbox" :disabled="form.delivery.expiry_mode === 'health_duration'" data-testid="refill-auto-pause" />{{ t('accountRefill.auto_pause_on_expired') }}</label></div>
+            <p v-if="form.delivery.expiry_mode === 'health_duration'" class="input-hint">{{ t('accountRefill.healthDurationHint') }}</p>
+            <template v-else>
+              <label class="block"><span class="input-label">{{ t('accountRefill.import_expiry_grace_minutes') }}</span><input v-model.number="form.import_expiry_grace_minutes" type="number" min="0" max="1440" step="1" class="input" data-testid="refill-import-grace" /></label>
+              <p class="input-hint">{{ t('accountRefill.expiryHint') }}</p>
+            </template>
             <label class="block"><span class="input-label">{{ t('accountRefill.name_template') }}</span><input v-model="form.delivery.name_template" class="input" maxlength="256" /></label>
             <label class="block"><span class="input-label">{{ t('accountRefill.notes_template') }}</span><textarea v-model="form.delivery.notes_template" class="input" rows="2" maxlength="2000"></textarea></label>
             <p class="input-hint">{{ t('accountRefill.templateHint') }} <code v-pre>{name} {email} {id} {plan_type} {push_time} {expire_time}</code></p>
@@ -607,6 +611,7 @@ function accept(data: RefillView, reset: boolean) {
   data.config.delivery.same_account_retry_count ??= DEFAULT_SAME_ACCOUNT_RETRY_COUNT
   data.config.delivery.privacy_enabled ??= true
   data.config.delivery.openai_responses_flatten_namespaces ??= false
+  data.config.delivery.health_duration_minutes ||= 100
   data.config.forecast_enabled ??= true
   data.config.immediate_failure_retry ??= true
   data.config.timeout_retry_enabled ??= true
@@ -691,6 +696,13 @@ function dailyStatus(id: string) {
 }
 async function save() {
   if (!form.value || busy.value || conflict.value) return
+  if (form.value.delivery.expiry_mode === 'health_duration') {
+    const minutes = form.value.delivery.health_duration_minutes
+    if (!Number.isInteger(minutes) || minutes! < 1 || minutes! > 525600) {
+      error.value = t('accountRefill.healthDurationInvalid'); activeTab.value = 'delivery'; return
+    }
+    form.value.delivery.auto_pause_on_expired = true
+  }
   const alert = form.value.notifications.muze_remaining
   if (alert?.enabled && (!alert.products.length || alert.products.length > 64 || !Number.isInteger(alert.threshold) || alert.threshold < 0 || alert.threshold > 10000000)) {
     error.value = t('accountRefill.muzeAlertInvalid'); activeTab.value = 'notifications'; return
@@ -721,6 +733,9 @@ async function save() {
     token.value = ''; webhook.value = ''; qqSecret.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
   } catch (e) { error.value = message(e) }
   finally { busy.value = false }
+}
+function onExpiryModeChange() {
+  if (form.value?.delivery.expiry_mode === 'health_duration') form.value.delivery.auto_pause_on_expired = true
 }
 async function testNotification() {
   if (busy.value || dirty.value || conflict.value || !view.value) return

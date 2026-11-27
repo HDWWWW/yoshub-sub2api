@@ -66,7 +66,7 @@ func (r *refillAdoptTestRepository) ScopedAdminCommitted(ctx context.Context, _ 
 }
 
 func TestMuzeAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
-	for _, mode := range []string{"random", "direct", "wrong_identity", "policy_failure", "commit_failure", "recovery"} {
+	for _, mode := range []string{"random", "direct", "wrong_identity", "policy_failure", "commit_failure", "recovery", "health_duration", "health_equal"} {
 		t.Run(mode, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
@@ -100,6 +100,14 @@ func TestMuzeAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
 			}
 			lease := time.Now().Add(time.Hour).Unix()
 			deadline, extra := ImportedAccountExpiryWithGrace(&lease, map[string]any{"refill_job_id": "local-job", "import_source": "muze_api", AccountSourceExpiryExtraKey: lease, AccountSourceExpiryOriginExtraKey: "supplier_api"}, 30)
+			if mode == "health_duration" || mode == "health_equal" {
+				if mode == "health_duration" {
+					*deadline = time.Now().Add(100 * time.Minute).Unix()
+				} else {
+					*deadline = lease
+				}
+				extra[AccountExpiryManualExtraKey], extra[AccountImportExpiryGraceExtraKey] = true, 0
+			}
 			rate, autoPause := 1.5, true
 			input := &CreateAccountInput{Name: "saved-name", Credentials: map[string]any{"email": "fixture@example.test", "access_token": "stale-access", "refresh_token": "stale-refresh"}, Extra: extra,
 				GroupIDs: []int64{2, 3}, Concurrency: 77, Priority: 8, RateMultiplier: &rate, ExpiresAt: deadline, AutoPauseOnExpired: &autoPause, ProxyMode: "random"}
@@ -132,7 +140,12 @@ func TestMuzeAdoptionAppliesPolicyWithinTransaction(t *testing.T) {
 				require.Equal(t, "inactive", account.Status)
 				require.False(t, account.Schedulable)
 				require.True(t, account.AutoPauseOnExpired)
-				require.Equal(t, lease+1800, account.ExpiresAt.Unix())
+				require.Equal(t, *deadline, account.ExpiresAt.Unix())
+				if mode == "health_duration" || mode == "health_equal" {
+					require.Equal(t, true, account.Extra[AccountExpiryManualExtraKey])
+					ApplyAccountExpiryExtra(account, map[string]any{AccountSourceExpiryExtraKey: lease + 7200})
+					require.Equal(t, *deadline, account.ExpiresAt.Unix())
+				}
 				if mode == "direct" {
 					require.Nil(t, account.ProxyID)
 				} else {

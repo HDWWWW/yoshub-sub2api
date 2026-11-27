@@ -32,6 +32,7 @@ export interface RefillDeliveryConfig {
   openai_responses_flatten_namespaces?: boolean | null
   expiry_mode: string
   fixed_expires_at: number | null
+  health_duration_minutes?: number
   model_mapping: Record<string, string>
 }
 export interface RefillConfig {
