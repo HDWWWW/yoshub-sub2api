@@ -12,6 +12,7 @@ export interface AccountRiskNotificationTypes {
 }
 
 export interface AccountRiskConfig {
+  api_fallback?: { enabled: boolean; account_id: number } | null
   notification_channel?: AccountRiskNotificationChannel
   notification_types?: AccountRiskNotificationTypes
   custom_error_enabled: boolean
@@ -60,6 +61,8 @@ export interface AccountRiskCapacityCheck {
   last_probe_at?: string
 }
 export interface AccountRiskRule {
+  api_fallback_accounts?: { id: number; name: string; schedulable: boolean }[] | null
+  api_fallback_status?: { account_id: number; state: string; healthy: number; checked_at: string } | null
   group_id: number
   revision: number
   test_accounts?: { id: number; name: string; schedulable: boolean }[]

@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -156,7 +157,32 @@ func (s *riskTestStore) Update(_ context.Context, fn func(*AccountRiskState, Acc
 		}
 		return false, nil
 	}
-	return fn(s.state, AccountRiskScheduling{Record401: s.record401, ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume})
+	setAPIFallback := func(groupID int64, a *Account, token string, enabled bool) (bool, error) {
+		s.accounts.mu.Lock()
+		defer s.accounts.mu.Unlock()
+		for i := range s.accounts.pool {
+			current := &s.accounts.pool[i]
+			if !s.cas || current.ID != a.ID || !current.UpdatedAt.Equal(a.UpdatedAt) || !riskAPIAccount(current) {
+				continue
+			}
+			if enabled && (current.Schedulable || !current.IsActive() || !slices.Contains(current.GroupIDs, groupID)) || !enabled && current.Extra[AccountRiskAPIFallbackExtraKey] != token {
+				return false, nil
+			}
+			current.Extra = maps.Clone(current.Extra)
+			if current.Extra == nil {
+				current.Extra = map[string]any{}
+			}
+			current.Schedulable = enabled
+			if enabled {
+				current.Extra[AccountRiskAPIFallbackExtraKey] = token
+			} else {
+				delete(current.Extra, AccountRiskAPIFallbackExtraKey)
+			}
+			return true, nil
+		}
+		return false, nil
+	}
+	return fn(s.state, AccountRiskScheduling{SetAPIFallback: setAPIFallback, Record401: s.record401, ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume})
 }
 
 type riskTestAccounts struct {
