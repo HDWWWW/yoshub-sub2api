@@ -1,0 +1,36 @@
+name: Verify YosHub hot update
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published YosHub release tag
+        required: true
+        type: string
+permissions:
+  contents: write
+  packages: read
+concurrency:
+  group: hot-update-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+jobs:
+  linux-amd64:
+    if: github.repository == 'HDWWWW/yoshub-sub2api' && (github.event_name == 'workflow_dispatch' || (!github.event.release.prerelease && contains(github.event.release.tag_name, '-yoshub.')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Verify or attach the update from the versioned image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          for delay in 0 15 45 90; do
+            sleep "$delay"
+            if python3 .github/release-tools/ensure_hot_update.py "$TAG"; then exit 0; fi
+          done
+          exit 1

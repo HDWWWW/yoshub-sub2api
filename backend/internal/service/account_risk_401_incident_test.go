@@ -75,7 +75,7 @@ func TestAccountRisk401IncidentConcurrentSources(t *testing.T) {
 			defer wg.Done()
 			r := NewAccount401Reporter(store)
 			r.record(ctx, 7, shadow, accountRiskBusiness401, "gateway", "握手 401")
-			r.observe(ctx, 0, a, 401, "用量探测")
+			r.observe(ctx, 0, a, 401, "获取模型列表")
 			errs <- store.Update(ctx, func(_ *AccountRiskState, tx AccountRiskScheduling) error {
 				e := &riskProbe401Evidence{ownerID: a.ID, ownerName: a.Name, alertTarget: &Account401AlertTarget{AccountID: a.ID}, receivedAt: time.Now().UTC()}
 				job := &accountRiskJob{pending: AccountRiskPending{ID: fmt.Sprintf("probe-%d", i)}}
@@ -112,7 +112,7 @@ func TestAccountRisk401IncidentConcurrentSources(t *testing.T) {
 	require.Equal(t, reps, store.incidents[[2]int64{8, a.ID}].count)
 	// Simulate an evicted sent row and a worker restart. Neither rearms the notice.
 	rule.Events = nil
-	NewAccount401Reporter(store).observe(ctx, 7, a, 401, "用量探测")
+	NewAccount401Reporter(store).observe(ctx, 7, a, 401, "获取模型列表")
 	require.Equal(t, "merged", rule.Events[0].Notification)
 	require.Equal(t, 3*reps+1, rule.Events[0].Occurrences)
 }
@@ -126,7 +126,7 @@ func TestAccountRisk401IncidentRearmsOnVerifiedProbe(t *testing.T) {
 	a.Credentials = map[string]any{"access_token": "fixture"}
 	r := s.reporter401()
 	observe := func(want string) {
-		r.observe(ctx, 7, a, 401, "用量探测")
+		r.observe(ctx, 7, a, 401, "获取模型列表")
 		require.Equal(t, want, rule.Events[0].Notification)
 	}
 	observe("pending")
@@ -151,4 +151,46 @@ func TestAccountRisk401IncidentRearmsOnVerifiedProbe(t *testing.T) {
 	observe("pending")
 	require.Equal(t, 1, rule.Events[0].Occurrences)
 	observe("merged")
+}
+
+func TestAccountRisk401UsageOnlyLeavesFirstNotificationAvailable(t *testing.T) {
+	s, store, accounts, _, _ := riskHarness()
+	ctx := context.Background()
+	rule := store.state.Rules[7]
+	rule.Config.Notify401Enabled = true
+	a := &accounts.pool[0]
+	r := s.reporter401()
+	usage := withUsage401Audit(ctx)
+	r.observe(usage, 7, a, 401, "用量探测")
+	ObserveAccountHTTPStatus(r.withScope(usage, a.ID, "查询账号用量"), 401)
+	ObserveAccountHTTPStatus(r.withScope(usage, a.ID, "注册账号任务"), 401)
+	require.Len(t, rule.Events, 3)
+	for _, event := range rule.Events {
+		require.Equal(t, risk401HistoryOnly, event.Notification)
+		require.Zero(t, event.Occurrences)
+	}
+	require.Empty(t, store.incidents)
+	r.record(ctx, 7, a, accountRiskBusiness401, "gateway", "业务请求收到上游 401")
+	require.Equal(t, "pending", rule.Events[0].Notification)
+	require.Equal(t, 1, rule.Events[0].Occurrences)
+	ObserveAccountHTTPStatus(r.withScope(usage, a.ID, "查询账号用量"), 401)
+	ObserveAccountHTTPStatus(r.withScope(ctx, a.ID, "账号凭据刷新"), 401)
+	require.Equal(t, "merged", rule.Events[0].Notification)
+	require.Equal(t, 2, rule.Events[0].Occurrences)
+}
+
+func TestAccountRisk401PendingLegacyUsageIsHistoryOnly(t *testing.T) {
+	s, store, accounts, _, now := riskHarness()
+	rule := store.state.Rules[7]
+	rule.Config.Notify401Enabled = true
+	s.notifier = &riskNoticeStub{}
+	for _, reason := range []string{"用量探测收到上游 401", "查询账号用量收到上游 401"} {
+		rule.Events = append(rule.Events, AccountRiskEvent{ID: reason, At: now, AccountID: accounts.pool[0].ID,
+			Kind: accountRiskAccount401, Action: "observed", Reason: reason, Notification: "pending"})
+	}
+	require.NoError(t, s.deliverNotification(context.Background(), now))
+	for _, e := range rule.Events {
+		require.Equal(t, risk401HistoryOnly, e.Notification)
+	}
+	require.Empty(t, s.notifier.(*riskNoticeStub).messages)
 }

@@ -166,7 +166,7 @@ func NewOpenAIQuotaService(
 // OAuth account. Returns infraerrors so the handler layer can map them to
 // stable error codes / HTTP statuses.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
-	ctx = s.alerts401.withScope(ctx, accountID, "查询账号用量")
+	ctx = s.alerts401.withScope(withUsage401Audit(ctx), accountID, "查询账号用量")
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID)
 	if err != nil {
 		return nil, err

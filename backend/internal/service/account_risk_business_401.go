@@ -19,6 +19,7 @@ import (
 const (
 	accountRiskBusiness401 = "business_401"
 	accountRiskAccount401  = "account_401"
+	risk401HistoryOnly     = "history_only"
 )
 
 // Standalone from the scheduler so account maintenance clients can report actual
@@ -44,6 +45,14 @@ func (s *OpenAIGatewayService) reporter401() *Account401Reporter {
 		return nil
 	}
 	return s.accountRisk.reporter401()
+}
+
+// Usage reads may collect several HTTP responses (including credential setup).
+// Keep their audit events without reserving a group's next 401 notification.
+type usage401AuditKey struct{}
+
+func withUsage401Audit(ctx context.Context) context.Context {
+	return context.WithValue(ctx, usage401AuditKey{}, true)
 }
 
 type risk401GroupKey struct{}
@@ -166,8 +175,9 @@ func (r *Account401Reporter) enqueue(ctx context.Context, groupID int64, target 
 	if target == nil || target.AccountID <= 0 {
 		return
 	}
-	notify := target.eligibleAt(at)
-	if !notify {
+	eligible := target.eligibleAt(at)
+	auditOnly, _ := ctx.Value(usage401AuditKey{}).(bool)
+	if !eligible {
 		reason += risk401ReclaimNote
 	}
 	ids := target.GroupIDs
@@ -188,7 +198,10 @@ func (r *Account401Reporter) enqueue(ctx context.Context, groupID int64, target 
 				}
 				event := AccountRiskEvent{At: at, AccountID: target.AccountID, AccountName: target.Name,
 					AccountEmail: riskNotificationEmail(target.Email, target.Name), Kind: kind, Action: action, Reason: reason}
-				if err := appendRisk401Event(rule, tx, target.OwnerID, event, notify); err != nil {
+				if auditOnly {
+					event.Notification = risk401HistoryOnly
+				}
+				if err := appendRisk401Event(rule, tx, target.OwnerID, event, eligible && !auditOnly); err != nil {
 					return err
 				}
 				queued = queued || rule.Events[0].Notification == "pending"

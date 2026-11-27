@@ -921,6 +921,7 @@ func (s *AccountUsageService) shouldProbeOpenAICodexSnapshot(accountID int64, no
 }
 
 func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, account *Account) (map[string]any, error) {
+	ctx = withUsage401Audit(ctx)
 	if account == nil || !account.IsOAuth() {
 		return nil, nil
 	}

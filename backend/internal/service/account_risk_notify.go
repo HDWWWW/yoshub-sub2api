@@ -177,6 +177,12 @@ func (s *AccountRiskService) deliverNotification(ctx context.Context, now time.T
 						e.Notification = "unknown"
 					}
 				}
+				// Releases through .65 queued these two quota-read reasons. Leave sent
+				// and in-flight records intact during an upgrade.
+				if e.Notification == "pending" && e.Kind == accountRiskAccount401 && e.Action == "observed" &&
+					(e.Reason == "用量探测收到上游 401" || e.Reason == "查询账号用量收到上游 401") {
+					e.Notification = risk401HistoryOnly
+				}
 				if e.Notification == "pending" && !riskEventNotificationEnabled(r.Config, *e) {
 					e.Notification = "cancelled"
 				}

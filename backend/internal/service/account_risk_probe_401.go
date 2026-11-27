@@ -163,7 +163,9 @@ func appendRisk401Event(r *AccountRiskRule, tx AccountRiskScheduling, ownerID in
 		event.ID = uuid.NewString()
 	}
 	event.AccountName = riskNotificationName(event.AccountName)
-	event.Notification = "disabled"
+	if event.Notification == "" {
+		event.Notification = "disabled"
+	}
 	if notify && riskNotificationTypeEnabled(r.Config, event) {
 		first, count, err := tx.Record401(r.GroupID, ownerID, event.ID, event.At)
 		if err != nil {

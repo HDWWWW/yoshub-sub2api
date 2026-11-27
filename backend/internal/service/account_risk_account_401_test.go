@@ -227,7 +227,7 @@ func TestAccountRisk401MaintenanceUsesExplicitSchedulingState(t *testing.T) {
 	s, store, accounts, _, now := riskHarness()
 	r := store.state.Rules[7]
 	r.Config.Notify401Enabled = true
-	ctx := s.reporter401().withScope(context.Background(), 1, "用量查询")
+	ctx := s.reporter401().withScope(context.Background(), 1, "凭据刷新")
 	a := &accounts.pool[0]
 	a.Schedulable = false
 	ObserveAccountHTTPStatus(ctx, 401)
@@ -235,7 +235,7 @@ func TestAccountRisk401MaintenanceUsesExplicitSchedulingState(t *testing.T) {
 	ObserveAccountHTTPStatus(ctx, 401)
 	a.Status = StatusDisabled
 	ObserveAccountHTTPStatus(ctx, 401)
-	ObserveAccountHTTPStatus(s.reporter401().withScope(ctx, 99, "用量查询"), 401)
+	ObserveAccountHTTPStatus(s.reporter401().withScope(ctx, 99, "凭据刷新"), 401)
 	require.Empty(t, r.Events)
 	a.Status = StatusActive
 	until := now.Add(time.Minute)

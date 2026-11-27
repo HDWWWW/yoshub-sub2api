@@ -91,7 +91,7 @@ export interface AccountRiskRule {
     input_tokens: number
     output_tokens: number
   }
-  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'observed' | 'gateway' | 'stop' | 'reduce_concurrency' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'merged' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string; notification_channel?: AccountRiskNotificationChannel }[]
+  events: { id?: string; at: string; account_id: number; reason: string; kind?: string; action?: 'observed' | 'gateway' | 'stop' | 'reduce_concurrency' | 'cooldown' | 'pause' | 'resume' | 'notify_only'; occurrences?: number; notification?: 'disabled' | 'history_only' | 'merged' | 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'cancelled'; notification_at?: string; notification_channel?: AccountRiskNotificationChannel }[]
 }
 export interface AccountRiskManualResult {
   account_id: number

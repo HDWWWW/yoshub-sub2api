@@ -18,6 +18,12 @@ python3 .github/release-tools/package_hot_update.py "ghcr.io/hdwwww/yoshub-sub2a
 
 将生成的 `sub2api_<版本>_linux_<架构>.tar.gz` 和 `checksums.txt` 附到 `HDWWWW/yoshub-sub2api` 的同一个稳定 Release，标签可以是 `v<版本>` 或 `image-v<版本>`。手工发布多个架构时，为每个架构使用单独的输出目录，再把各架构的校验行合并成一个 `checksums.txt`。原来的 Docker 离线镜像包与 `SHA256SUMS` 可以继续一同提供。只有镜像包的历史版本可在发布页下载，后台不会将它们列为可安装的程序。
 
+发布编号版后，`Verify YosHub hot update` 会核对 Linux amd64 程序包与校验文件，缺包时从对应版本的 GHCR 镜像补齐。离线发版应先推送同版本镜像，然后把程序包和校验文件连同发布说明一起创建 Release。可重新运行该工作流，也可以在本地运行以下命令复核已发布附件。
+
+```sh
+python3 .github/release-tools/ensure_hot_update.py "v${VERSION}" --check-only
+```
+
 ## Deployment Methods
 
 | Method | Best For | Setup Wizard |
