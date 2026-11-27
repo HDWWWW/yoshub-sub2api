@@ -38,6 +38,7 @@ type AccountRiskErrorMatch struct {
 }
 
 type AccountRiskConfig struct {
+	APIFallback         *AccountRiskAPIFallbackConfig `json:"api_fallback,omitempty"`
 	NotificationChannel string                        `json:"notification_channel,omitempty"`
 	NotificationTypes   *AccountRiskNotificationTypes `json:"notification_types,omitempty"`
 
@@ -130,6 +131,9 @@ func (c *AccountRiskConfig) Normalize429() {
 }
 
 func (c AccountRiskConfig) Validate() error {
+	if c.APIFallback != nil && (c.APIFallback.AccountID < 0 || c.APIFallback.Enabled && c.APIFallback.AccountID == 0) {
+		return errors.New("请选择 API 兜底账号")
+	}
 	if !slices.Contains([]string{"", "wecom", "qq"}, c.NotificationChannel) {
 		return errors.New("请选择企业微信或 QQ 通知渠道")
 	}
@@ -239,11 +243,12 @@ type AccountRiskEvent struct {
 }
 
 type AccountRiskRule struct {
-	GroupID     int64                  `json:"group_id"`
-	Revision    int64                  `json:"revision"`
-	Config      AccountRiskConfig      `json:"config"`
-	Observation AccountRiskObservation `json:"observation"`
-	Events      []AccountRiskEvent     `json:"events"`
+	APIFallback *AccountRiskAPIFallbackStatus `json:"api_fallback_status,omitempty"`
+	GroupID     int64                         `json:"group_id"`
+	Revision    int64                         `json:"revision"`
+	Config      AccountRiskConfig             `json:"config"`
+	Observation AccountRiskObservation        `json:"observation"`
+	Events      []AccountRiskEvent            `json:"events"`
 }
 
 type AccountRiskPending struct {
@@ -257,15 +262,17 @@ type AccountRiskPending struct {
 }
 
 type AccountRiskState struct {
-	ActiveProbes       map[int64]*AccountRiskPending       `json:"active_probes,omitempty"`
-	CapacityPauses     map[int64]*AccountRiskCapacityPause `json:"capacity_pauses,omitempty"`
-	Rules              map[int64]*AccountRiskRule          `json:"rules"`
-	Pending            *AccountRiskPending                 `json:"pending,omitempty"`
-	NextNotificationAt time.Time                           `json:"next_notification_at,omitempty"`
+	APIFallbackLeases  map[int64]AccountRiskAPIFallbackLease `json:"api_fallback_leases,omitempty"`
+	ActiveProbes       map[int64]*AccountRiskPending         `json:"active_probes,omitempty"`
+	CapacityPauses     map[int64]*AccountRiskCapacityPause   `json:"capacity_pauses,omitempty"`
+	Rules              map[int64]*AccountRiskRule            `json:"rules"`
+	Pending            *AccountRiskPending                   `json:"pending,omitempty"`
+	NextNotificationAt time.Time                             `json:"next_notification_at,omitempty"`
 }
 
 type AccountRiskScheduling struct {
 	Record401         func(groupID, ownerID int64, eventID string, at time.Time) (firstEventID string, occurrences int, err error)
+	SetAPIFallback    func(groupID int64, account *Account, token string, enabled bool) (bool, error)
 	ReduceConcurrency func(groupID int64, account *Account, limit int) (bool, error)
 	ApplyProbe401     func(groupID int64, source, owner *Account, reason string, cooldownUntil *time.Time) (bool, error)
 	Stop              func(groupID int64, account *Account) (bool, error)
@@ -351,6 +358,8 @@ func (s *AccountRiskService) Start() {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
 		s.wg.Add(1)
+		go s.apiFallbackLoop(ctx)
+		s.wg.Add(1)
 		go s.notificationLoop(ctx)
 		s.wg.Add(1)
 		go func() {
@@ -404,11 +413,15 @@ func (s *AccountRiskService) View(ctx context.Context, groupID int64) (*AccountR
 		return nil, err
 	}
 	for _, a := range accounts {
+		if riskAPIAccount(&a) && a.IsActive() && slices.Contains(a.GroupIDs, groupID) {
+			v.APIFallbackAccounts = append(v.APIFallbackAccounts, AccountRiskTestAccount{ID: a.ID, Name: a.Name, Schedulable: a.Schedulable})
+		}
 		if a.Platform == PlatformOpenAI {
 			v.TestAccounts = append(v.TestAccounts, AccountRiskTestAccount{ID: a.ID, Name: a.Name, Schedulable: a.Schedulable})
 		}
 	}
 	sort.Slice(v.TestAccounts, func(i, j int) bool { return v.TestAccounts[i].ID < v.TestAccounts[j].ID })
+	sort.Slice(v.APIFallbackAccounts, func(i, j int) bool { return v.APIFallbackAccounts[i].ID < v.APIFallbackAccounts[j].ID })
 	if s.notifier != nil {
 		channels, err := s.notifier.RiskNotificationChannels(ctx, groupID)
 		if err == nil {
@@ -445,9 +458,16 @@ func (s *AccountRiskService) Configure(ctx context.Context, groupID, revision in
 		if r.Revision != revision {
 			return ErrAccountRiskConflict
 		}
-		// An auth/notification-only edit invalidates in-flight probes as usual, but it
+		if c.APIFallback == nil {
+			c.APIFallback = r.Config.APIFallback
+		}
+		if err := s.validateAPIFallback(ctx, groupID, c); err != nil {
+			return err
+		}
+		// An auth/notification/fallback edit invalidates in-flight probes as usual, but it
 		// must not strand accounts already waiting for a capacity recheck.
 		previous := r.Config
+		previous.APIFallback = c.APIFallback
 		previous.Probe401Enabled = c.Probe401Enabled
 		previous.Notify401Enabled = c.Notify401Enabled
 		previous.NotifyEnabled = c.NotifyEnabled

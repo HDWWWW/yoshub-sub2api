@@ -65,6 +65,18 @@
             </label>
             <p class="text-xs text-gray-500">{{ t('accountRisk.modelMismatchHint') }}</p>
           </section>
+          <section v-if="draft.api_fallback" class="space-y-3 border-y border-gray-200 py-4 dark:border-dark-600" data-testid="risk-api-fallback">
+            <label class="flex items-center gap-3"><input v-model="draft.api_fallback.enabled" type="checkbox" data-testid="risk-api-fallback-enabled" /><span class="text-sm font-medium">{{ t('accountRisk.apiFallbackEnabled') }}</span></label>
+            <label class="block"><span class="input-label">{{ t('accountRisk.apiFallbackAccount') }}</span>
+              <select v-model.number="draft.api_fallback.account_id" class="input" :disabled="!draft.api_fallback.enabled" data-testid="risk-api-fallback-account">
+                <option :value="0" disabled>{{ t('accountRisk.apiFallbackChoose') }}</option>
+                <option v-if="draft.api_fallback.account_id && !view.api_fallback_accounts?.some(a => a.id === draft!.api_fallback!.account_id)" :value="draft.api_fallback.account_id" disabled>#{{ draft.api_fallback.account_id }} · {{ t('accountRisk.apiFallback_unavailable') }}</option>
+                <option v-for="account in view.api_fallback_accounts || []" :key="account.id" :value="account.id">#{{ account.id }} {{ account.name }} · {{ account.schedulable ? t('accountRisk.schedulingOn') : t('accountRisk.schedulingOff') }}</option>
+              </select>
+            </label>
+            <p v-if="draft.api_fallback.enabled && !draft.enabled" class="text-sm text-amber-600">{{ t('accountRisk.apiFallbackNeedsRule') }}</p>
+            <p v-if="view.api_fallback_status" class="text-sm text-gray-500" data-testid="risk-api-fallback-status">#{{ view.api_fallback_status.account_id }} · {{ t(`accountRisk.apiFallback_${view.api_fallback_status.state}`) }} · {{ t('accountRisk.apiFallbackHealthy', { count: view.api_fallback_status.healthy }) }} · {{ formatNotificationTime(view.api_fallback_status.checked_at) }}</p>
+          </section>
           <section class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
             <label class="flex items-center gap-3">
               <input v-model="burst429Action" true-value="stop" false-value="off" data-testid="risk-429-enabled" type="checkbox" class="rounded" />
@@ -284,6 +296,7 @@ const valid429Window = computed(() => {
 const valid = computed(() => {
   const c = draft.value
   return !!c && valid429Window.value && (!c.rate_limit_429_reduce_concurrency || valid429Limit(c.rate_limit_429_concurrency_limit)) &&
+    (!c.api_fallback?.enabled || (Number.isSafeInteger(c.api_fallback.account_id) && c.api_fallback.account_id > 0 && (!c.enabled || !!view.value?.api_fallback_accounts?.some(a => a.id === c.api_fallback?.account_id)))) &&
     (!c.custom_error_enabled || (c.custom_error_rules.length > 0 &&
       Number.isInteger(c.custom_error_window_seconds) && c.custom_error_window_seconds >= 1 && c.custom_error_window_seconds <= 3600 &&
       Number.isInteger(c.custom_error_threshold) && c.custom_error_threshold >= 1 && c.custom_error_threshold <= 10000 &&
@@ -312,6 +325,7 @@ async function load() {
   if (!groupID.value) return
   loading.value = true
   try { const data = await accountRiskAPI.get(groupID.value); if (current === generation) { view.value = data; draft.value = { ...data.config, ...notificationDraft(data.config),
+    api_fallback: { enabled: false, account_id: 0, ...data.config.api_fallback },
     rate_limit_429_reduce_concurrency: data.config.rate_limit_429_reduce_concurrency ?? false,
     rate_limit_429_concurrency_limit: data.config.rate_limit_429_concurrency_limit || 1,
     custom_error_enabled: data.config.custom_error_enabled ?? false, custom_error_window_seconds: data.config.custom_error_window_seconds || 60,
@@ -325,7 +339,7 @@ async function refresh() {
   const current = generation
   refreshing.value = true
   // Refresh actual state without overwriting the draft or its revision guard.
-  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events; view.value.webhook_status = data.webhook_status; view.value.notification_channels = data.notification_channels; view.value.test_accounts = data.test_accounts } }
+  try { const data = await accountRiskAPI.get(groupID.value); if (current === generation && view.value) { view.value.config = data.config; view.value.observation = data.observation; view.value.events = data.events; view.value.webhook_status = data.webhook_status; view.value.notification_channels = data.notification_channels; view.value.test_accounts = data.test_accounts; view.value.api_fallback_accounts = data.api_fallback_accounts; view.value.api_fallback_status = data.api_fallback_status } }
   catch (e) { if (current === generation) error.value = extractApiErrorMessage(e, t('accountRisk.loadError')) }
   finally { refreshing.value = false }
 }
@@ -333,7 +347,7 @@ async function save() {
   if (!valid.value || !view.value || !draft.value || loading.value || saving.value || testing.value) return
   generation++
   saving.value = true; error.value = ''; saved.value = false
-  try { view.value = await accountRiskAPI.save(groupID.value, view.value.revision, { ...draft.value }); draft.value = { ...view.value.config, ...notificationDraft(view.value.config) }; saved.value = true }
+  try { view.value = await accountRiskAPI.save(groupID.value, view.value.revision, { ...draft.value }); draft.value = { ...view.value.config, ...notificationDraft(view.value.config), api_fallback: { enabled: false, account_id: 0, ...view.value.config.api_fallback } }; saved.value = true }
   catch (e) { error.value = extractApiErrorMessage(e, t('accountRisk.saveError')) }
   finally { saving.value = false }
 }

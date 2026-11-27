@@ -13,6 +13,7 @@ import (
 
 type AccountRiskView struct {
 	*AccountRiskRule
+	APIFallbackAccounts  []AccountRiskTestAccount `json:"api_fallback_accounts"`
 	TestAccounts         []AccountRiskTestAccount `json:"test_accounts"`
 	WebhookStatus        string                   `json:"webhook_status"`
 	NotificationChannels map[string]string        `json:"notification_channels"`

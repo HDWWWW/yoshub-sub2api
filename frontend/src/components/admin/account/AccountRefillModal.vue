@@ -386,7 +386,8 @@
         <h4 class="text-sm font-medium">{{ t('accountRefill.evaluation') }}</h4>
         <p class="text-xs text-gray-500">{{ t('accountRefill.evaluationLocalHint') }} {{ t('accountRefill.evaluationUpdated') }}: {{ date(view.evaluation.checked_at) }}</p>
         <p v-if="view.evaluation.error" class="text-sm text-amber-700" role="alert">{{ view.evaluation.error }}</p>
-        <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in view.evaluation.accounts" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}<div v-if="account.plan" class="text-xs text-gray-500">{{ account.plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }}</div></td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}<div v-if="account.min_remaining_5h != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_5h) }) }}</div></td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}<div v-if="account.min_remaining_7d != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_7d) }) }}</div></td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
+        <div class="overflow-x-auto" data-testid="refill-evaluation"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in pagedEvaluation" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}<div v-if="account.plan" class="text-xs text-gray-500">{{ account.plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }}</div></td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}<div v-if="account.min_remaining_5h != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_5h) }) }}</div></td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}<div v-if="account.min_remaining_7d != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_7d) }) }}</div></td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
+        <Pagination v-if="evaluationAccounts.length" v-model:page="evaluationPage" :total="evaluationAccounts.length" :page-size="evaluationPageSize" :show-page-size-selector="false" data-testid="refill-evaluation-pagination" />
       </div>
       <p v-if="conflict" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.conflict') }}</p>
     </div>
@@ -445,6 +446,10 @@ const downloadStepUp = useStepUp()
 const jobsPageSize = 10
 const jobsPage = ref(1)
 const pagedJobs = computed(() => view.value?.jobs.slice((jobsPage.value - 1) * jobsPageSize, jobsPage.value * jobsPageSize) || [])
+const evaluationPageSize = 10
+const evaluationPage = ref(1)
+const evaluationAccounts = computed(() => [...(view.value?.evaluation.accounts || [])].sort((a, b) => a.id - b.id))
+const pagedEvaluation = computed(() => evaluationAccounts.value.slice((evaluationPage.value - 1) * evaluationPageSize, evaluationPage.value * evaluationPageSize))
 const token = ref(''), mapping = ref('{}'), saved = ref(''), error = ref('')
 const webhook = ref('')
 const qqSecret = ref('')
@@ -656,9 +661,11 @@ function accept(data: RefillView, reset: boolean) {
   if (!view.value || view.value.config.group_id !== data.config.group_id) {
     manualPlans.value.muze = ''
     jobsPage.value = 1
+    evaluationPage.value = 1
     confirmedJobs.value = []
   } else {
     jobsPage.value = Math.min(jobsPage.value, Math.max(1, Math.ceil(data.jobs.length / jobsPageSize)))
+    evaluationPage.value = Math.min(evaluationPage.value, Math.max(1, Math.ceil(data.evaluation.accounts.length / evaluationPageSize)))
   }
   if (reset || !muzeDirty.value) muzeConnectionID.value = data.muze?.connection_id || ''
   if (view.value?.config.group_id === data.config.group_id && view.value.revision === data.revision && view.value.muze?.checked_at && data.muze?.checked_at && Date.parse(view.value.muze.checked_at) > Date.parse(data.muze.checked_at)) data.muze = view.value.muze

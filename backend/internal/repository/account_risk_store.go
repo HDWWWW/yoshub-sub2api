@@ -155,6 +155,39 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 	probesBefore, _ := json.Marshal(state.ActiveProbes)
 	pausesBefore, _ := json.Marshal(state.CapacityPauses)
 	changed := []int64{}
+	setAPIFallback := func(groupID int64, a *service.Account, token string, enabled bool) (bool, error) {
+		// Ownership, the scheduling switch and scheduler invalidation commit
+		// together. CAS rejects concurrent admin, credential or policy changes.
+		query := `UPDATE accounts SET schedulable=false,
+		 extra=COALESCE(extra,'{}'::jsonb)-'yoshub_risk_api_fallback', updated_at=NOW()
+		 WHERE id=$1 AND updated_at=$2 AND deleted_at IS NULL AND platform='openai' AND type='apikey'
+		 AND parent_account_id IS NULL AND extra->>'yoshub_risk_api_fallback'=$3`
+		args := []any{a.ID, a.UpdatedAt, token}
+		if enabled {
+			query = `UPDATE accounts SET schedulable=true,
+			 extra=jsonb_set(COALESCE(extra,'{}'::jsonb),'{yoshub_risk_api_fallback}',to_jsonb($3::text)), updated_at=NOW()
+			 WHERE id=$1 AND updated_at=$2 AND deleted_at IS NULL AND platform='openai' AND type='apikey'
+			 AND parent_account_id IS NULL AND status='active' AND schedulable=false
+			 AND COALESCE(extra->>'yoshub_risk_capacity_pause','')=''
+			 AND EXISTS (SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id
+			 WHERE ag.account_id=accounts.id AND ag.group_id=$4 AND g.deleted_at IS NULL AND g.status='active' AND g.platform='openai'
+			 FOR SHARE OF ag,g)`
+			args = append(args, groupID)
+		}
+		result, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return false, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil || n == 0 {
+			return false, err
+		}
+		if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &a.ID, nil, nil); err != nil {
+			return false, err
+		}
+		changed = append(changed, a.ID)
+		return true, nil
+	}
 	reduceConcurrency := func(groupID int64, a *service.Account, limit int) (bool, error) {
 		// Nonpositive account concurrency means unlimited. Only lower a still-active
 		// member's limit; keep its scheduling switch and any in-flight slots intact.
@@ -280,7 +313,7 @@ func (s *accountRiskStore) Update(ctx context.Context, fn func(*service.AccountR
 	record401 := func(groupID, ownerID int64, eventID string, at time.Time) (string, int, error) {
 		return recordRisk401(ctx, tx, groupID, ownerID, eventID, at)
 	}
-	if err = fn(state, service.AccountRiskScheduling{Record401: record401, ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume}); err != nil {
+	if err = fn(state, service.AccountRiskScheduling{SetAPIFallback: setAPIFallback, Record401: record401, ApplyProbe401: apply401, ReduceConcurrency: reduceConcurrency, Stop: stop, Pause: pause, Resume: resume}); err != nil {
 		return err
 	}
 	syncAccountRiskLegacyGuard(state)

@@ -12,6 +12,7 @@ const baseline: AccountRiskRule = {
   observation: { checked_at: '', mode: 'disabled', message: 'off', eligible_accounts: 0, input_tokens: 0, output_tokens: 0 }, events: []
 }
 baseline.config.notification_channel = 'wecom'
+baseline.config.api_fallback = { enabled: false, account_id: 0 }
 baseline.config.notification_types = { capacity: true, business_429: true, custom_error: true, scheduled_mismatch: true, scheduled_429: true, auth_401: true, model_mismatch: true }
 const groups = [{ id: 7, name: 'OpenAI A', platform: 'openai' }, { id: 8, name: 'OpenAI B', platform: 'openai' }, { id: 9, name: 'Claude', platform: 'anthropic' }]
 async function open() {
@@ -20,6 +21,37 @@ async function open() {
 }
 describe('account risk detection', () => {
   beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => structuredClone(baseline)); save.mockImplementation(async (group_id, revision, config) => ({ ...structuredClone(baseline), group_id, revision: revision + 1, config })) })
+  it('configures API fallback in risk control and shows automatic recovery status', async () => {
+    get.mockResolvedValue({ ...structuredClone(baseline), api_fallback_accounts: [{ id: 99, name: 'Backup API', schedulable: false }], api_fallback_status: { account_id: 99, state: 'standby', healthy: 1, checked_at: '2026-11-27T00:00:00Z' } })
+    const w = await open()
+    expect(w.get('[data-testid="risk-api-fallback-account"]').attributes('disabled')).toBeDefined()
+    await w.get('[data-testid="risk-api-fallback-enabled"]').setValue(true)
+    expect(w.text()).toContain('accountRisk.apiFallbackNeedsRule')
+    await w.get('[data-testid="risk-enabled"]').setValue(true)
+    expect(w.get('[data-testid="risk-save"]').attributes('disabled')).toBeDefined()
+    await w.get('[data-testid="risk-api-fallback-account"]').setValue(99)
+    expect(w.get('[data-testid="risk-api-fallback-status"]').text()).toContain('accountRisk.apiFallback_standby')
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save).toHaveBeenCalledWith(7, 3, expect.objectContaining({ enabled: true, api_fallback: { enabled: true, account_id: 99 } }))
+    expect(test).not.toHaveBeenCalled()
+    w.unmount()
+  })
+  it('defaults old risk rules to fallback off and permits disabling an unavailable target', async () => {
+    const data = structuredClone(baseline)
+    delete data.config.api_fallback
+    get.mockResolvedValue(data)
+    const w = await open()
+    expect(w.get<HTMLInputElement>('[data-testid="risk-api-fallback-enabled"]').element.checked).toBe(false)
+    data.config.api_fallback = { enabled: true, account_id: 999 }
+    data.config.enabled = true
+    await w.get('[data-testid="risk-group"]').setValue(8); await flushPromises()
+    expect(w.get('[data-testid="risk-api-fallback-account"]').text()).toContain('#999')
+    expect(w.get('[data-testid="risk-save"]').attributes('disabled')).toBeDefined()
+    await w.get('[data-testid="risk-api-fallback-enabled"]').setValue(false)
+    await w.get('form').trigger('submit'); await flushPromises()
+    expect(save).toHaveBeenCalledWith(8, 3, expect.objectContaining({ api_fallback: { enabled: false, account_id: 999 } }))
+    w.unmount()
+  })
   it('selects the risk channel and its status independently of the refill channel', async () => {
     get.mockResolvedValue({ ...structuredClone(baseline), notification_channels: { wecom: 'ready', qq: 'missing' } })
     const w = await open()
