@@ -249,6 +249,7 @@ func ProvideAccountUsageService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
 	alerts401 *Account401Reporter,
+	opsService *OpsService,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -265,6 +266,9 @@ func ProvideAccountUsageService(
 	)
 	service.agentIdentityWS = openAIGatewayService
 	service.alerts401 = alerts401
+	if opsService != nil {
+		service.opsMonitoring = opsService
+	}
 	return service
 }
 

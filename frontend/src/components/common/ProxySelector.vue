@@ -95,13 +95,6 @@
                 <span class="truncate font-medium">{{ proxy.name }}</span>
                 <span v-if="proxy.managed_ipv6" class="badge badge-primary">{{ t(proxy.managed_ipv6_pool === 'backup' ? 'ovhIPv6.backup' : 'ovhIPv6.source') }}</span>
                 <span v-if="proxy.managed_ipv6_state === 'reserved'" class="text-xs text-gray-500">{{ t('ovhIPv6.reserved') }}</span>
-                <!-- Account count badge -->
-                <span
-                  v-if="proxy.account_count !== undefined"
-                  class="inline-flex flex-shrink-0 items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600 dark:bg-dark-600 dark:text-gray-400"
-                >
-                  {{ proxy.account_count }}
-                </span>
                 <!-- Test result badges -->
                 <template v-if="testResults[proxy.id]">
                   <span
@@ -127,6 +120,16 @@
                 {{ proxy.managed_ipv6 || `${proxy.protocol}://${proxy.host}:${proxy.port}` }}
               </div>
             </div>
+
+            <!-- Account count: accounts currently bound to this proxy -->
+            <span
+              v-if="proxy.account_count !== undefined"
+              class="account-count-badge"
+              :title="t('admin.proxies.selectorAccountCountTitle')"
+              data-test="proxy-account-count"
+            >
+              {{ t('admin.proxies.selectorAccountCount', proxy.account_count) }}
+            </span>
 
             <!-- Individual test button -->
             <button
@@ -433,6 +436,11 @@ onUnmounted(() => {
 .select-empty {
   @apply px-4 py-8 text-center text-sm;
   @apply text-gray-500 dark:text-dark-400;
+}
+
+.account-count-badge {
+  @apply inline-flex flex-shrink-0 items-center whitespace-nowrap rounded px-1.5 py-0.5 text-xs tabular-nums;
+  @apply bg-gray-100 text-gray-600 dark:bg-dark-600 dark:text-gray-400;
 }
 
 .test-btn {

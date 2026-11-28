@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,31 @@ import (
 // openAICompactSSEKeepaliveKey stores non-output SSE signals: compact/Responses
 // heartbeat comments and the optional Responses initial metadata notification.
 const openAICompactSSEKeepaliveKey = "openai_compact_sse_keepalive"
+
+// openAICompactSSEKeepaliveAccountingKey 存放同一请求内所有心跳器共享的累计
+// 注释字节数。/v1/responses 透传路径每次尝试进入流式循环都会新建心跳器并覆盖
+// openAICompactSSEKeepaliveKey，而旧实例写出的注释仍留在底层 writer 的 Size
+// 里；若只扣除当前实例的字节，failover 后的下一次尝试会把上一次尝试的心跳
+// 误判为语义输出，从而放弃换号。
+const openAICompactSSEKeepaliveAccountingKey = "openai_compact_sse_keepalive_accounting"
+
+// openAICompactSSEKeepaliveAccounting 是请求级心跳字节计数，跨心跳器实例共享。
+type openAICompactSSEKeepaliveAccounting struct {
+	bytes atomic.Int64
+}
+
+func (a *openAICompactSSEKeepaliveAccounting) add(n int) {
+	if a != nil && n > 0 {
+		a.bytes.Add(int64(n))
+	}
+}
+
+func (a *openAICompactSSEKeepaliveAccounting) load() int {
+	if a == nil {
+		return 0
+	}
+	return int(a.bytes.Load())
+}
 
 // openAICompactSSEKeepalive 在 compact 上游 unary 等待期间向下游写 SSE 注释行
 // 心跳。上游 /responses/compact 在模型处理期间不发送任何字节（大上下文可长达
@@ -31,11 +57,9 @@ type openAICompactSSEKeepalive struct {
 	started          bool
 	stopped          bool
 	initialEventSent bool
-	// bytes counts heartbeat comments and initial metadata bytes, neither of
-	// which is semantic output. Exclude them from the handler's written-size
-	// check so they cannot prevent account failover.
-	bytes int
-	stop  chan struct{}
+	// All signal writers share the request total, including the optional initial metadata.
+	accounting *openAICompactSSEKeepaliveAccounting
+	stop       chan struct{}
 }
 
 // StartOpenAICompactSSEKeepalive 为已标记 body-signal 客户端流式的 compact
@@ -72,8 +96,9 @@ func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay 
 	}
 	originalWriter := c.Writer
 	k := &openAICompactSSEKeepalive{
-		writer: originalWriter,
-		stop:   make(chan struct{}),
+		writer:     originalWriter,
+		accounting: openAICompactSSEKeepaliveAccountingFor(c),
+		stop:       make(chan struct{}),
 	}
 	// A retried account shares the downstream response. Keep all earlier
 	// non-output bytes excluded, and emit the initial event at most once.
@@ -81,7 +106,7 @@ func startOpenAISSESignals(c *gin.Context, interval time.Duration, initialDelay 
 		if previous, valid := value.(*openAICompactSSEKeepalive); valid && previous != nil {
 			previous.mu.Lock()
 			previous.markStoppedLocked()
-			k.bytes, k.started, k.initialEventSent = previous.bytes, previous.started, previous.initialEventSent
+			k.started, k.initialEventSent = previous.started, previous.initialEventSent
 			previous.mu.Unlock()
 		}
 	}
@@ -164,7 +189,7 @@ func (k *openAICompactSSEKeepalive) writeSignal(frame []byte, initial bool) bool
 		k.started = true
 	}
 	n, err := k.writer.Write(frame)
-	k.bytes += n
+	k.accounting.add(n)
 	if err != nil {
 		k.markStoppedLocked()
 		return false
@@ -209,7 +234,8 @@ func StopOpenAICompactSSEKeepaliveCommitted(c *gin.Context) bool {
 	}
 	k.mu.Lock()
 	k.markStoppedLocked()
-	committed := k.started
+	// 当前实例未心跳时，前一次尝试（或外层）的心跳器可能已把响应头提交为 200。
+	committed := k.started || k.accounting.load() > 0
 	k.mu.Unlock()
 	return committed
 }
@@ -234,7 +260,7 @@ func OpenAICompactKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 		if k, valid := value.(*openAICompactSSEKeepalive); valid && k != nil {
 			k.mu.Lock()
 			size = k.writer.Size()
-			compactKeepaliveBytes = k.bytes
+			compactKeepaliveBytes = k.accounting.load()
 			k.mu.Unlock()
 		}
 	}
@@ -249,6 +275,19 @@ func OpenAICompactKeepaliveAdjustedWrittenSize(c *gin.Context) int {
 		return real
 	}
 	return -1
+}
+
+// openAICompactSSEKeepaliveAccountingFor 返回本请求共享的心跳字节计数，
+// 首次调用时创建并存入 gin.Context。
+func openAICompactSSEKeepaliveAccountingFor(c *gin.Context) *openAICompactSSEKeepaliveAccounting {
+	if value, ok := c.Get(openAICompactSSEKeepaliveAccountingKey); ok {
+		if accounting, valid := value.(*openAICompactSSEKeepaliveAccounting); valid && accounting != nil {
+			return accounting
+		}
+	}
+	accounting := &openAICompactSSEKeepaliveAccounting{}
+	c.Set(openAICompactSSEKeepaliveAccountingKey, accounting)
+	return accounting
 }
 
 // openAICompactKeepaliveWriter 包装 gin.ResponseWriter：写侧方法先停拍心跳

@@ -5,6 +5,7 @@ package service_test
 import (
 	"bufio"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -207,6 +208,55 @@ func TestHappyFirstTokenWire(t *testing.T) {
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestHappyFirstTokenDeltaAcrossThreeAttempts(t *testing.T) {
+	const metadata = `{"type":"codex.response.metadata","metadata":{}}`
+	const overload = `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_is_overloaded","message":"Selected model is at capacity"}}}`
+	for _, ws := range []bool{false, true} {
+		for _, passthrough := range []bool{false, true} {
+			t.Run(fmt.Sprintf("ws=%t/passthrough=%t", ws, passthrough), func(t *testing.T) {
+				gate := make(chan struct{})
+				release := sync.OnceFunc(func() { close(gate) })
+				defer release()
+				f := newParityGateway(t, parityScript{
+					ws: ws, passthrough: passthrough,
+					configure: func(gw *service.OpenAIGatewayService, up *httptest.Server) {
+						service.ConfigureHappyWireForTest(t, gw, up, true, true, 0)
+					},
+					attempt: func(n int32) parityScript {
+						switch n {
+						case 1:
+							return parityScript{prefix: []string{metadata}, gate: gate, tail: []string{overload}}
+						case 2:
+							return parityScript{tail: []string{overload}}
+						default:
+							return parityScript{tail: []string{parityCreated, parityDelta, parityDone}}
+						}
+					},
+				})
+				f.repo.a.Extra["same_account_retry_count"] = 2
+				resp := f.post(t, "/v1/responses", parityResponses)
+				defer resp.Body.Close()
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				reader := bufio.NewReader(resp.Body)
+				readHappyWireNotice(t, f, reader, true)
+				release()
+				tail := parityRest(t, reader)
+				require.NotContains(t, tail, "gateway.status")
+				require.NotContains(t, tail, "server_is_overloaded")
+				require.Contains(t, tail, "visible-parity")
+				require.Equal(t, 1, strings.Count(tail, `"type":"response.completed"`))
+				if ws {
+					require.EqualValues(t, 3, f.ws.Load())
+					require.Zero(t, f.http.Load())
+				} else {
+					require.EqualValues(t, 3, f.http.Load())
+					require.Zero(t, f.ws.Load())
+				}
+			})
 		}
 	}
 }

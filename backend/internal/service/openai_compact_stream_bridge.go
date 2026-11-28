@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -127,6 +128,12 @@ func writeOpenAIControlFailure(c *gin.Context, statusCode int, opsErrType, messa
 		publicError["code"] = openAICapacityShedRetryableClientCode
 	}
 	MarkOpsStreamError(c, opsErrType, message, statusCode)
+	model := ""
+	if c.Request != nil {
+		ctx := c.Request.Context()
+		model, _ = ctx.Value(ctxkey.Model).(string)
+		model = compositeClientModel(ctx, model)
+	}
 	payload, err := json.Marshal(map[string]any{
 		"type":            "response.failed",
 		"sequence_number": 0,
@@ -136,6 +143,7 @@ func writeOpenAIControlFailure(c *gin.Context, statusCode int, opsErrType, messa
 			// 严格客户端把 created_at 当必填字段，缺失会反序列化失败，
 			// 终止事件就白发了（退化成盲重连）。与 writeResponsesFailedSSE 对齐。
 			"created_at": time.Now().Unix(),
+			"model":      model,
 			"status":     "failed",
 			"output":     []any{},
 			"error":      publicError,
