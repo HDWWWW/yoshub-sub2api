@@ -111,7 +111,7 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 	}
 	autoPause := j.DeliveryConfig.AutoPauseOnExpired || healthDuration
 	var proxyID *int64
-	if !allowExpired && j.DeliveryConfig.ProxyMode != "random" && j.DeliveryConfig.ProxyMode != "ovh_ipv6" {
+	if !allowExpired && !j.DeliveryConfig.allocatesProxyAtSave() {
 		var err error
 		proxyID, err = s.selectProxy(ctx, j.DeliveryConfig)
 		if err != nil {
@@ -130,4 +130,13 @@ func (s *AccountRefillService) buildRefillDeliveryInput(ctx context.Context, j *
 		ExpiresAt: deadline, AutoPauseOnExpired: &autoPause, ProxyID: proxyID, InitiallyInactive: true, SkipDefaultGroupBind: true}
 
 	return input, nil
+}
+
+func (d AccountRefillDeliveryConfig) allocatesProxyAtSave() bool {
+	switch d.ProxyMode {
+	case "random", "ovh_ipv6", "ovh_ipv6_backup", "ovh_ipv6_next":
+		return true
+	default:
+		return false
+	}
 }

@@ -117,3 +117,37 @@ func TestOvhPoolConcurrentEditsHaveSeparateAddresses(t *testing.T) {
 	require.Equal(t, 4, b)
 	require.Equal(t, 8, ips)
 }
+
+func TestOvhPoolRefillRulesRotateAtCommitAndManualEditsHaveTheirOwnTurn(t *testing.T) {
+	db, r, _ := ovhRepoFixture(t)
+	r.ipv6Backup, _ = newTestPoolHost(t, "2001:db8:2::/64", 11980)
+	ctx := context.Background()
+	first := ovhipv6.ForRefillRule(ctx, 7)
+	second := ovhipv6.ForRefillRule(ctx, 8)
+	require.ErrorContains(t, bindTestPool(first, r, 1, "ovh_ipv6_backup"), "备用池自动分配")
+	_, err := r.SetOVHIPv6(ovhipv6.WithPool(ctx, ovhipv6.Backup), true)
+	require.NoError(t, err)
+	bind := func(ctx context.Context, account int64, mode string, pool ovhipv6.Pool) {
+		t.Helper()
+		require.NoError(t, bindTestPool(ctx, r, account, mode))
+		var stored string
+		require.NoError(t, db.QueryRow("SELECT lease_id FROM yoshub_ovh_ipv6_leases WHERE owner_account_id=$1 AND state='bound'", account).Scan(&stored))
+		got, _ := ovhipv6.SplitID(stored)
+		require.Equal(t, pool, got)
+	}
+	bind(first, 1, "ovh_ipv6_next", ovhipv6.Primary)
+	bind(second, 2, "ovh_ipv6_next", ovhipv6.Primary)
+	bind(ovhipv6.AccountEdit(ctx), 3, "ovh_ipv6_next", ovhipv6.Primary)
+	// Fail after address allocation, before the account can persist its binding.
+	tx, err := r.client.Tx(first)
+	require.NoError(t, err)
+	_, err = r.SelectAccountProxy(dbent.NewTxContext(first, tx), "ovh_ipv6_next")
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback())
+	bind(first, 4, "ovh_ipv6_next", ovhipv6.Backup)
+	bind(first, 5, "ovh_ipv6_backup", ovhipv6.Backup)
+	bind(first, 6, "ovh_ipv6_next", ovhipv6.Primary)
+	var unique int
+	require.NoError(t, db.QueryRow("SELECT COUNT(DISTINCT address) FROM yoshub_ovh_ipv6_leases WHERE state='bound'").Scan(&unique))
+	require.Equal(t, 6, unique)
+}

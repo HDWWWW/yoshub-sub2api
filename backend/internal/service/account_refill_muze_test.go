@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,9 +58,10 @@ func (p *muzeTestProvider) Cycle(context.Context, string, string) (*muzeCycle, e
 
 type muzeTestAdmin struct {
 	*refillTestAccounts
-	input  *CreateAccountInput
-	adopt  int
-	closed int
+	input     *CreateAccountInput
+	adoptRule int64
+	adopt     int
+	closed    int
 }
 
 func (a *muzeTestAdmin) SyncMuzeAccountLease(ctx context.Context, j AccountRefillJob, cycle *muzeCycle, now time.Time) (*int64, error) {
@@ -82,7 +84,8 @@ func (a *muzeTestAdmin) SyncMuzeAccountLease(ctx context.Context, j AccountRefil
 	return nil, ErrAccountNotFound
 }
 
-func (a *muzeTestAdmin) AdoptRefillAccount(_ context.Context, id int64, in *CreateAccountInput) (*Account, error) {
+func (a *muzeTestAdmin) AdoptRefillAccount(ctx context.Context, id int64, in *CreateAccountInput) (*Account, error) {
+	a.adoptRule, _ = ovhipv6.RefillRule(ctx)
 	a.input, a.adopt = in, a.adopt+1
 	v, err := buildAccountForCreate(in, in.Extra)
 	if err != nil {
@@ -136,7 +139,9 @@ func muzeRequest() ManualAccountRefillRequest {
 
 func TestMuzeManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 	s, store, p, accounts := muzeHarness(t)
+	s.proxies = &refillIPv6Proxies{status: ovhipv6.Status{Configured: true, Available: true, Enabled: true}}
 	store.mutate(t, func(state *accountRefillState) {
+		state.Config.Delivery.ProxyMode = "ovh_ipv6_next"
 		state.Config.DeliveryGroupIDs = []int64{2, 3}
 		state.Config.PlanImportConcurrency = map[string]int{"pro20x": 77}
 		state.Config.ImportExpiryGraceMinutes = 30
@@ -163,6 +168,7 @@ func TestMuzeManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 		state.Revision++
 		state.Config.ImportConcurrency = 3
 		state.Config.Delivery.Priority = 99
+		state.Config.Delivery.ProxyMode = "direct"
 	})
 	require.NoError(t, s.run(ctx, false))
 	require.Equal(t, 1, p.orders)
@@ -176,6 +182,8 @@ func TestMuzeManualSnapshotAndPushedAccountRecovery(t *testing.T) {
 	require.Equal(t, 1, accounts.adopt)
 	a := accounts.accounts[0]
 	require.Equal(t, "backup-pro20x", a.Name)
+	require.Equal(t, "ovh_ipv6_next", accounts.input.ProxyMode)
+	require.Equal(t, refillTestConfig().GroupID, accounts.adoptRule)
 	require.Equal(t, 77, a.Concurrency)
 	require.Equal(t, 8, a.Priority)
 	require.Equal(t, []int64{2, 3}, a.GroupIDs)

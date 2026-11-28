@@ -2,7 +2,7 @@ export default {
   pool: '地址池',
   primary: '主池',
   backup: 'vRack 备用池',
-  backupAuto: '手动绑号时允许主备轮流分配',
+  backupAuto: '备用池自动分配（补号及手动轮转）',
   records: '退役记录',
   retiredAt: '退役时间',
   emptyRecords: '暂无退役记录',
@@ -29,7 +29,7 @@ export default {
   managedHint: '此 IPv6 随账号自动管理，删除账号或更换代理后永久停用。',
   fixedBindingLimit: '绑定上限：1（固定）',
   manualBindingOnly: '仅调整手动导入代理的绑定上限',
-  mode: { ovh_ipv6_next: '主备轮流领取独占 IPv6', ovh_ipv6_backup: '从备用池领取 IPv6', ovh_ipv6: '自动分配 OVH IPv6', random: '随机选择代理', least_used: '选择绑定最少的手动代理' },
+  mode: { ovh_ipv6_next: '主备轮流领取独占 IPv6', ovh_ipv6_backup: '从备用池领取独占 IPv6', ovh_ipv6: '从主池领取独占 IPv6', random: '随机选择代理', least_used: '选择绑定最少的手动代理' },
   allocateOnSave: '保存时分配全新独占 IPv6；分配失败将报错。',
   oauthTiming: '自动分配在保存账号时执行。授权和验证如需固定出口，请先在 IP 池添加一个待绑定 IPv6，再选择该地址。',
   reserved: '待绑定',
@@ -73,5 +73,5 @@ export default {
     refresh: '刷新占用',
     loadFailed: '读取 IPv6 存储占用失败'
   },
-  refillSpecifiedHint: '指定代理仅支持手动导入的代理。补号使用 OVH IPv6 时，请选择“自动分配 OVH IPv6”，为每个新账号分配独立地址。'
+  refillSpecifiedHint: '指定代理可选手动导入的代理。选择主池、备用池或主备轮转时，每个新账号领取一个独占 IPv6。'
 }

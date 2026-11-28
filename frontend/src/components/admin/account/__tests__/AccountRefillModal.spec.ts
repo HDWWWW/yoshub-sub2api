@@ -635,7 +635,7 @@ describe('AccountRefillModal', () => {
   expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ proxy_mode: 'specified', proxy_id: 1 }) }), '', 1, '')
   w.unmount()
  })
- it('defaults legacy delivery privacy on and persists false with explicit OVH allocation', async () => {
+ it.each(['ovh_ipv6', 'ovh_ipv6_backup', 'ovh_ipv6_next'])('persists the chosen pool and privacy with %s', async (mode) => {
   const w = await open()
   const privacy = w.get('[data-testid="openai-privacy-enabled"]')
   expect((privacy.element as HTMLInputElement).checked).toBe(true)
@@ -643,9 +643,9 @@ describe('AccountRefillModal', () => {
   await w.findAll('nav button').find(b => b.text() === 'accountRefill.delivery')!.trigger('click')
   await privacy.setValue(false)
   const proxy = w.findAll('select').find(s => s.find('option[value="ovh_ipv6"]').exists())!
-  await proxy.setValue('ovh_ipv6')
+  await proxy.setValue(mode)
   await w.get('form').trigger('submit'); await flushPromises()
-  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ privacy_enabled: false, proxy_mode: 'ovh_ipv6', proxy_id: null }) }), '', 1, '')
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ delivery: expect.objectContaining({ privacy_enabled: false, proxy_mode: mode, proxy_id: null }) }), '', 1, '')
   expect((privacy.element as HTMLInputElement).checked).toBe(false)
   expect(manual).not.toHaveBeenCalled()
   w.unmount()

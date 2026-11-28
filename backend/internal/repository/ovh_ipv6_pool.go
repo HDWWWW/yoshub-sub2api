@@ -8,6 +8,13 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 )
 
+func ipv6SettingsTable(ctx context.Context) string {
+	if ovhipv6.SelectedPool(ctx) == ovhipv6.Backup {
+		return "yoshub_ovh_ipv6_backup_settings"
+	}
+	return "yoshub_ovh_ipv6_settings"
+}
+
 func (r *proxyRepository) ipv6Client(pool ovhipv6.Pool) *ovhipv6.Client {
 	if pool == ovhipv6.Backup {
 		return r.ipv6Backup
@@ -32,21 +39,36 @@ func (r *proxyRepository) ListIPv6Retirements(ctx context.Context, before int64)
 	return items, rows.Err()
 }
 
-// The cursor moves in the same transaction as the completed account edit.
-func (r *proxyRepository) nextManualIPv6Pool(ctx context.Context) (ovhipv6.Pool, error) {
+// The switch, rotation cursor and new account binding share one transaction.
+func (r *proxyRepository) selectStandbyIPv6(ctx context.Context, mode string) (int64, error) {
+	ruleID, refill := ovhipv6.RefillRule(ctx)
+	if !refill && !ovhipv6.IsAccountEdit(ctx) {
+		return 0, fmt.Errorf("请在补号规则或单账号编辑中选择地址池")
+	}
 	tx := dbent.TxFromContext(ctx)
 	if tx == nil {
-		return "", fmt.Errorf("IPv6 轮转需要账号写事务")
+		return 0, fmt.Errorf("IPv6 分配需要账号写事务")
 	}
-	var pool ovhipv6.Pool
-	err := scanSingleRow(ctx, tx.Client(), `UPDATE yoshub_ovh_ipv6_settings
- SET manual_next_pool = CASE manual_next_pool WHEN 'primary' THEN 'backup' ELSE 'primary' END
- WHERE id=1 AND backup_enabled
- RETURNING CASE manual_next_pool WHEN 'primary' THEN 'backup' ELSE 'primary' END`, nil, &pool)
-	if err != nil {
-		return "", fmt.Errorf("主备轮转无法分配，请确认备用自动分配开关已开启: %w", err)
+	if refill || mode == "ovh_ipv6_next" {
+		var enabled bool
+		if err := scanSingleRow(ctx, tx.Client(), `SELECT enabled FROM yoshub_ovh_ipv6_backup_settings WHERE id=1 FOR SHARE`, nil, &enabled); err != nil {
+			return 0, err
+		}
+		if !enabled {
+			return 0, fmt.Errorf("请先开启备用池自动分配")
+		}
 	}
-	return pool, nil
+	pool := ovhipv6.Backup
+	if mode == "ovh_ipv6_next" {
+		err := scanSingleRow(ctx, tx.Client(), `INSERT INTO yoshub_ovh_ipv6_pool_rotation AS cursor (rule_id, next_pool)
+            VALUES ($1, 'backup') ON CONFLICT (rule_id) DO UPDATE
+            SET next_pool = CASE cursor.next_pool WHEN 'primary' THEN 'backup' ELSE 'primary' END
+            RETURNING CASE next_pool WHEN 'primary' THEN 'backup' ELSE 'primary' END`, []any{ruleID}, &pool)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return r.allocateOVHIPv6(ovhipv6.WithPool(ctx, pool))
 }
 
 func validateLocalLeaseID(id string) error {

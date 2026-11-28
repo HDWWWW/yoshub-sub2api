@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 	"github.com/google/uuid"
 )
 
@@ -1082,7 +1083,7 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 		if err != nil {
 			return err
 		}
-		if j.DeliveryConfig.ProxyMode == "random" || j.DeliveryConfig.ProxyMode == "ovh_ipv6" {
+		if j.DeliveryConfig.allocatesProxyAtSave() {
 			creator, ok := s.admin.(interface {
 				CreateAccountWithProxySelection(context.Context, *CreateAccountInput) (*Account, error)
 			})
@@ -1090,7 +1091,7 @@ func (s *AccountRefillService) importDelivery(ctx context.Context, token string,
 				return errors.New("事务代理分配服务不可用，请稍后重试")
 			}
 			input.ProxyMode = j.DeliveryConfig.ProxyMode
-			account, err = creator.CreateAccountWithProxySelection(ctx, input)
+			account, err = creator.CreateAccountWithProxySelection(ovhipv6.ForRefillRule(ctx, j.GroupID), input)
 		} else {
 			account, err = s.admin.CreateAccount(ctx, input)
 		}
@@ -1119,17 +1120,29 @@ func (s *AccountRefillService) finishRefillImport(ctx context.Context, accountID
 }
 
 func (s *AccountRefillService) selectProxy(ctx context.Context, d AccountRefillDeliveryConfig) (*int64, error) {
-	if d.ProxyMode == "ovh_ipv6" {
+	if d.allocatesProxyAtSave() && d.ProxyMode != "random" {
 		r, ok := s.proxies.(OVHIPv6Admin)
 		if !ok {
 			return nil, errors.New("OVH IPv6 出口服务不可用")
 		}
-		status, err := r.GetOVHIPv6(ctx)
-		if err != nil {
-			return nil, err
+		pools := []ovhipv6.Pool{ovhipv6.Primary}
+		switch d.ProxyMode {
+		case "ovh_ipv6_backup":
+			pools = []ovhipv6.Pool{ovhipv6.Backup}
+		case "ovh_ipv6_next":
+			pools = append(pools, ovhipv6.Backup)
 		}
-		if !status.Configured || !status.Available {
-			return nil, errors.New("OVH IPv6 出口服务未就绪，暂停新增补号")
+		for _, pool := range pools {
+			status, err := r.GetOVHIPv6(ovhipv6.WithPool(ctx, pool))
+			if err != nil {
+				return nil, err
+			}
+			if status == nil || !status.Configured || !status.Available {
+				return nil, errors.New("OVH IPv6 出口服务未就绪，暂停新增补号")
+			}
+			if pool == ovhipv6.Backup && !status.Enabled {
+				return nil, errors.New("备用池自动分配已关闭")
+			}
 		}
 		return nil, nil
 	}

@@ -184,7 +184,7 @@ func (c AccountRefillConfig) Validate() error {
 		math.IsNaN(d.RateMultiplier) || math.IsInf(d.RateMultiplier, 0) || d.RateMultiplier < 0 || d.RateMultiplier > 1000 || len(d.NameTemplate) > 256 || len(d.NotesTemplate) > 2000 || len(d.ModelMapping) > 200 {
 		return errors.New("账号推送参数无效")
 	}
-	if !slices.Contains([]string{"direct", "specified", "random", "ovh_ipv6"}, d.ProxyMode) {
+	if !slices.Contains([]string{"direct", "specified", "random", "ovh_ipv6", "ovh_ipv6_backup", "ovh_ipv6_next"}, d.ProxyMode) {
 		return errors.New("代理模式无效")
 	}
 	if _, err := NormalizeAccountProxyMode(d.ProxyMode, d.ProxyID, false); err != nil {

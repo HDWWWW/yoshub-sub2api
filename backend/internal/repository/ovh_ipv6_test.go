@@ -55,6 +55,15 @@ CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxie
 		_, err = db.Exec(string(source))
 		require.NoError(t, err)
 	}
+	indexSQL, err := os.ReadFile(filepath.Join("..", "..", "migrations", "264_ovh_ipv6_endpoint_identity_notx.sql"))
+	require.NoError(t, err)
+	nonTx, err := validateMigrationExecutionMode("264_ovh_ipv6_endpoint_identity_notx.sql", string(indexSQL))
+	require.NoError(t, err)
+	require.True(t, nonTx)
+	for _, statement := range splitSQLStatements(string(indexSQL)) {
+		_, err = db.Exec(statement)
+		require.NoError(t, err)
+	}
 	repo := newProxyRepositoryWithSQL(client, db)
 	repo.ipv6Supported = true
 	var host *ovhTestHost

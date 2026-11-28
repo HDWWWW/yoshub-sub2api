@@ -163,7 +163,12 @@
             <div class="grid gap-4 sm:grid-cols-2">
               <label><span class="input-label">{{ t('accountRefill.ws_mode') }}</span><select v-model="form.delivery.ws_mode" class="input"><option v-for="mode in ['off', 'ctx_pool', 'http_bridge', 'passthrough']" :key="mode" :value="mode">{{ t(`accountRefill.${mode}`) }}</option></select></label>
               <label><span class="input-label">{{ t('accountRefill.fingerprint_mode') }}</span><select v-model="form.delivery.fingerprint_mode" class="input" data-testid="refill-fingerprint-mode"><option v-for="option in codexFingerprintModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
-              <label><span class="input-label">{{ t('accountRefill.proxy_mode') }}</span><select v-model="form.delivery.proxy_mode" class="input" @change="form.delivery.proxy_id = null"><option v-for="mode in ['direct', 'specified', 'random', 'ovh_ipv6']" :key="mode" :value="mode">{{ t(mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${mode}`) }}</option></select></label>
+              <label>
+                <span class="input-label">{{ t('accountRefill.proxy_mode') }}</span>
+                <select v-model="form.delivery.proxy_mode" class="input" @change="form.delivery.proxy_id = null">
+                  <option v-for="mode in deliveryProxyModes" :key="mode" :value="mode">{{ deliveryProxyLabel(mode) }}</option>
+                </select>
+              </label>
               <div v-if="form.delivery.proxy_mode === 'specified'"><span class="input-label">{{ t('accountRefill.proxy_id') }}</span><ProxySelector :model-value="form.delivery.proxy_id" :proxies="manualProxies" :disabled="busy" @update:model-value="form.delivery.proxy_id = $event; if ($event === null) form.delivery.proxy_mode = 'direct'" /><p class="input-hint">{{ t('ovhIPv6.refillSpecifiedHint') }}</p></div>
               <label v-for="plan in ['pro5x', 'pro20x']" :key="plan"><span class="input-label">{{ plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }} · {{ t('accountRefill.import_concurrency') }}</span><input v-if="form.plan_import_concurrency" v-model.number="form.plan_import_concurrency[plan]" type="number" min="1" max="10000" step="1" class="input" :data-testid="`refill-concurrency-${plan}`" /></label>
               <label v-for="field in deliveryFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form.delivery[field.key]" type="number" min="0" :max="field.max" :step="field.step" class="input" /></label>
@@ -286,7 +291,7 @@
             <div><dt class="text-gray-500">{{ t('accountRefill.import_concurrency') }}</dt><dd data-testid="refill-manual-concurrency">{{ view.config.plan_import_concurrency?.[manualTier] ?? view.config.import_concurrency }}</dd></div>
             <div><dt class="text-gray-500">{{ t('admin.accounts.privacyProtection') }}</dt><dd>{{ t(view.config.delivery.privacy_enabled !== false ? 'common.enabled' : 'common.disabled') }}</dd></div>
             <div><dt class="text-gray-500">{{ t('admin.accounts.openai.flattenNamespaces') }}</dt><dd data-testid="refill-manual-flatten-namespaces">{{ t(view.config.delivery.openai_responses_flatten_namespaces === true ? 'common.enabled' : 'common.disabled') }}</dd></div>
-            <div><dt class="text-gray-500">{{ t('accountRefill.proxy_mode') }}</dt><dd>{{ t(view.config.delivery.proxy_mode === 'ovh_ipv6' ? 'ovhIPv6.mode.ovh_ipv6' : `accountRefill.${view.config.delivery.proxy_mode}`) }} {{ view.config.delivery.proxy_mode === 'specified' ? `#${view.config.delivery.proxy_id}` : '' }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('accountRefill.proxy_mode') }}</dt><dd>{{ deliveryProxyLabel(view.config.delivery.proxy_mode) }} {{ view.config.delivery.proxy_mode === 'specified' ? `#${view.config.delivery.proxy_id}` : '' }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.import_expiry_grace_minutes') }}</dt><dd>{{ view.config.import_expiry_grace_minutes }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.priority') }} / {{ t('accountRefill.load_factor') }}</dt><dd>{{ view.config.delivery.priority }} / {{ view.config.delivery.load_factor }}</dd></div>
             <div><dt class="text-gray-500">{{ t('accountRefill.rate_multiplier') }}</dt><dd>{{ view.config.delivery.rate_multiplier }}</dd></div>
@@ -433,6 +438,10 @@ import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 const props = defineProps<{ show: boolean; initialTab?: 'connection' | 'manual' | 'muze' | 'supplier558669'; proxies?: Proxy[] }>()
 const emit = defineEmits<{ close: [] }>()
 const { t, te } = useI18n()
+const deliveryProxyModes = ['direct', 'specified', 'random', 'ovh_ipv6', 'ovh_ipv6_backup', 'ovh_ipv6_next']
+function deliveryProxyLabel(mode: string) {
+  return t(mode.startsWith('ovh_ipv6') ? `ovhIPv6.mode.${mode}` : `accountRefill.${mode}`)
+}
 const codexFingerprintModeOptions = computed(() => getCodexFingerprintModeOptions(t))
 const app = useAppStore()
 const tabs = ['connection', 'rules', 'delivery', 'manual', 'muze', 'supplier558669', 'notifications', 'progress'] as const

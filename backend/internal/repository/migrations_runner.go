@@ -294,6 +294,8 @@ type migrationConnection interface {
 
 func prepareNonTransactionalMigration(ctx context.Context, db migrationConnection, name string) error {
 	switch name {
+	case "264_ovh_ipv6_endpoint_identity_notx.sql":
+		return dropInvalidIndexIfPresent(ctx, db, "idx_ovh_ipv6_proxy_endpoint_identity")
 	case paymentOrdersOutTradeNoUniqueMigration:
 		return preparePaymentOrdersOutTradeNoUniqueMigration(ctx, db)
 	case schedulerOutboxPendingDedupKeyMigration:

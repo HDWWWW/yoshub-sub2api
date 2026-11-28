@@ -61,12 +61,18 @@ func TestOVHIPv6RefillSpecifiedRejectsManagedAddressBeforePurchaseAndImport(t *t
 	}
 }
 
-type refillIPv6Accounts struct{ *refillTestAccounts }
+type refillIPv6Accounts struct {
+	*refillTestAccounts
+	mode string
+}
 
 func (a *refillIPv6Accounts) CreateAccountWithProxySelection(ctx context.Context, in *CreateAccountInput) (*Account, error) {
 	a.selectionCalls++
-	if in.ProxyMode != "ovh_ipv6" || in.ProxyID != nil {
+	if in.ProxyMode != a.mode || in.ProxyID != nil {
 		return nil, errors.New("expected fresh IPv6 allocation at save")
+	}
+	if group, ok := ovhipv6.RefillRule(ctx); !ok || group != refillTestConfig().GroupID {
+		return nil, errors.New("delivery lost its rule group")
 	}
 	if a.selectionError != nil {
 		return nil, a.selectionError
@@ -76,10 +82,19 @@ func (a *refillIPv6Accounts) CreateAccountWithProxySelection(ctx context.Context
 }
 
 func TestOVHIPv6RefillDeliveryRetriesAllocationWithoutRepurchasing(t *testing.T) {
+	for _, mode := range []string{"ovh_ipv6", "ovh_ipv6_backup", "ovh_ipv6_next"} {
+		t.Run(mode, func(t *testing.T) { checkIPv6DeliveryRetry(t, mode) })
+	}
+}
+
+func checkIPv6DeliveryRetry(t *testing.T, mode string) {
 	s, store, provider, accounts := refillHarness(t)
-	s.admin = &refillIPv6Accounts{accounts}
-	s.proxies = &refillIPv6Proxies{status: ovhipv6.Status{Configured: true, Available: true, Enabled: false}}
-	store.mutate(t, func(v *accountRefillState) { v.Config.Delivery.ProxyMode = "ovh_ipv6" })
+	s.admin = &refillIPv6Accounts{accounts, mode}
+	s.proxies = &refillIPv6Proxies{status: ovhipv6.Status{Configured: true, Available: true, Enabled: mode != "ovh_ipv6"}}
+	store.mutate(t, func(v *accountRefillState) {
+		v.Config.Delivery.ProxyMode = mode
+		require.NoError(t, v.Config.Validate())
+	})
 	ctx := context.Background()
 	require.NoError(t, s.run(ctx, false))
 	provider.status = "succeeded"

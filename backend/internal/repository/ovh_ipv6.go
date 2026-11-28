@@ -22,11 +22,7 @@ func (r *proxyRepository) ovhIPv6Enabled(ctx context.Context) (bool, error) {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		query = tx.Client()
 	}
-	column := "enabled"
-	if ovhipv6.SelectedPool(ctx) == ovhipv6.Backup {
-		column = "backup_enabled"
-	}
-	err := scanSingleRow(ctx, query, "SELECT "+column+" FROM yoshub_ovh_ipv6_settings WHERE id=1", nil, &enabled)
+	err := scanSingleRow(ctx, query, "SELECT enabled FROM "+ipv6SettingsTable(ctx)+" WHERE id=1", nil, &enabled)
 	return enabled, err
 }
 
@@ -61,11 +57,7 @@ func (r *proxyRepository) SetOVHIPv6(ctx context.Context, enabled bool) (*ovhipv
 			return nil, fmt.Errorf("OVH IPv6 出口服务未就绪，无法开启自动分配")
 		}
 	}
-	column := "enabled"
-	if ovhipv6.SelectedPool(ctx) == ovhipv6.Backup {
-		column = "backup_enabled"
-	}
-	_, err := r.sql.ExecContext(ctx, "UPDATE yoshub_ovh_ipv6_settings SET "+column+"=$1, updated_at=NOW() WHERE id=1", enabled)
+	_, err := r.sql.ExecContext(ctx, "UPDATE "+ipv6SettingsTable(ctx)+" SET enabled=$1, updated_at=NOW() WHERE id=1", enabled)
 	if err != nil {
 		return nil, err
 	}

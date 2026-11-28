@@ -15,13 +15,23 @@ const (
 
 type poolKey struct{}
 type accountEditKey struct{}
+type refillRuleKey struct{}
 
-// A single-account administrator edit is the only entry point for applying
-// the interactive picker. Supply imports and background jobs do not carry it.
 func AccountEdit(ctx context.Context) context.Context {
 	return context.WithValue(ctx, accountEditKey{}, true)
 }
 func IsAccountEdit(ctx context.Context) bool { ok, _ := ctx.Value(accountEditKey{}).(bool); return ok }
+
+// The rule that owns the delivery, independent of other group memberships.
+func ForRefillRule(ctx context.Context, groupID int64) context.Context {
+	return context.WithValue(ctx, refillRuleKey{}, groupID)
+}
+
+func RefillRule(ctx context.Context) (int64, bool) {
+	id, ok := ctx.Value(refillRuleKey{}).(int64)
+	return id, ok && id > 0
+}
+
 func WithPool(ctx context.Context, pool Pool) context.Context {
 	return context.WithValue(ctx, poolKey{}, pool)
 }

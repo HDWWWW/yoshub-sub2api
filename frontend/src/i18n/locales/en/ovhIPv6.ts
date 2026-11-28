@@ -2,7 +2,7 @@ export default {
   pool: 'Address pool',
   primary: 'Primary pool',
   backup: 'vRack standby pool',
-  backupAuto: 'Allow alternating pools for individual account edits',
+  backupAuto: 'Automatic standby allocation for refill rules and manual rotation',
   records: 'Retired addresses',
   retiredAt: 'Retired at',
   emptyRecords: 'No recorded retirements',
@@ -29,7 +29,7 @@ export default {
   managedHint: 'This IPv6 is managed with its account and permanently retired when the account is deleted or its proxy is changed.',
   fixedBindingLimit: 'Account limit: 1 (fixed)',
   manualBindingOnly: 'Only change binding limits for manually imported proxies',
-  mode: { ovh_ipv6_next: 'Allocate a dedicated IPv6 from the next pool', ovh_ipv6_backup: 'Allocate from standby IPv6 pool', ovh_ipv6: 'Allocate a new OVH IPv6', random: 'Select a random proxy', least_used: 'Select the least-used manual proxy' },
+  mode: { ovh_ipv6_next: 'Alternate pools for each dedicated IPv6', ovh_ipv6_backup: 'Allocate a dedicated IPv6 from standby', ovh_ipv6: 'Allocate a dedicated IPv6 from primary', random: 'Select a random proxy', least_used: 'Select the least-used manual proxy' },
   allocateOnSave: 'Allocate a new dedicated IPv6 when saving. Allocation failures are reported.',
   oauthTiming: 'Automatic allocation happens when saving the account. For a fixed authorization or validation egress, first add a reserved IPv6 to the IP pool and select it here.',
   reserved: 'Awaiting assignment',
@@ -73,5 +73,5 @@ export default {
     refresh: 'Refresh storage',
     loadFailed: 'Failed to load IPv6 storage statistics'
   },
-  refillSpecifiedHint: 'Specified proxies must be manually imported. Select automatic OVH IPv6 allocation to give each replenished account its own address.'
+  refillSpecifiedHint: 'Choose a manually imported proxy for a fixed proxy ID. Primary, standby and alternating pool modes allocate a dedicated IPv6 for each new account.'
 }

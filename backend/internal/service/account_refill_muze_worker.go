@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 )
 
 const muzeStudioReview = "Muze 工作室订单回执待核对，请到号商「我的订单」确认原订单 ID 后关联"
@@ -416,7 +418,7 @@ func (s *AccountRefillService) importMuzeDelivery(ctx context.Context, j *Accoun
 		return errors.New("muze推送设置应用服务不可用")
 	}
 	input.ProxyMode = j.DeliveryConfig.ProxyMode
-	if _, err := adopter.AdoptRefillAccount(ctx, id, input); err != nil {
+	if _, err := adopter.AdoptRefillAccount(ovhipv6.ForRefillRule(ctx, j.GroupID), id, input); err != nil {
 		return errors.New("muze账号推送设置应用失败，请核对分组和可用代理后重试原任务")
 	}
 	if !activate {
