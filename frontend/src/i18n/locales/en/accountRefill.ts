@@ -309,6 +309,8 @@ export default {
   "close": "Close",
   "loadError": "Unable to load. Please retry.",
   "saved": "Settings saved",
+  "specifiedProxyRequired": "Select a proxy before saving this rule.",
+  "backupPoolHint": "You can save this rule now. It can place new orders once automatic allocation is enabled for the backup pool.",
   "dirty": "Unsaved changes",
   "conflict": "Settings changed in another session. Reopen before editing.",
   "error": "Operation failed. Please retry.",

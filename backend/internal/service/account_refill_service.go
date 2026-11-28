@@ -249,8 +249,12 @@ func (s *AccountRefillService) ConfigureWithNotificationSecrets(ctx context.Cont
 		if err := s.validateGroups(ctx, c); err != nil {
 			return err
 		}
-		if _, err := s.selectProxy(ctx, c.Delivery); err != nil {
-			return err
+		// A fixed proxy is part of the rule. Dynamic pool availability is
+		// checked before ordering and again when the account is imported.
+		if c.Delivery.ProxyMode == "specified" {
+			if _, err := s.selectProxy(ctx, c.Delivery); err != nil {
+				return err
+			}
 		}
 	}
 	token = strings.TrimSpace(token)

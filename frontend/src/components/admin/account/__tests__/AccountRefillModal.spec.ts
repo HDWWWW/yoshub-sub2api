@@ -3,13 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountRefillModal from '../AccountRefillModal.vue'
 import type { Proxy } from '@/types'
 
-const { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, saveAs, showSuccess, muzeProducts, configureMuze, reconcileMuze, testNotification } = vi.hoisted(() => ({ getImportThreshold: vi.fn(), setImportThreshold: vi.fn(), get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn(), muzeProducts: vi.fn(), configureMuze: vi.fn(), reconcileMuze: vi.fn(), testNotification: vi.fn() }))
+const { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, saveAs, showSuccess, showError, muzeProducts, configureMuze, reconcileMuze, testNotification } = vi.hoisted(() => ({ getImportThreshold: vi.fn(), setImportThreshold: vi.fn(), get: vi.fn(), save: vi.fn(), check: vi.fn(), retry: vi.fn(), manual: vi.fn(), download: vi.fn(), saveAs: vi.fn(), showSuccess: vi.fn(), showError: vi.fn(), muzeProducts: vi.fn(), configureMuze: vi.fn(), reconcileMuze: vi.fn(), testNotification: vi.fn() }))
 vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { getImportThreshold, setImportThreshold, get, save, check, retry, manual, download, muzeProducts, configureMuze, reconcileMuze, testNotification } }))
 vi.mock('file-saver', () => ({ saveAs }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { name: 'TotpStepUpDialog', props: ['controller'], template: '<div />' } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [{ id: 2, name: 'OpenAI', platform: 'openai', status: 'active' }, { id: 3, name: 'Second group', platform: 'openai', status: 'active' }] }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess, showError }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
 const config = {
  notifications: { refill_started: false, low_balance: false, low_balance_threshold: 100 },
@@ -45,6 +45,21 @@ async function openProgress() {
 describe('AccountRefillModal', () => {
  beforeEach(() => { sessionStorage.clear(); vi.useFakeTimers(); vi.resetAllMocks(); getImportThreshold.mockResolvedValue(99); get.mockResolvedValue(response()); save.mockImplementation(async (cfg) => ({ ...response(2), config: cfg })); check.mockResolvedValue(response()); manual.mockResolvedValue(response()) })
  afterEach(() => vi.useRealTimers())
+ it('shows a rejected proxy save, keeps the draft on refresh and confirms a successful retry', async () => {
+  const w = await open()
+  await w.get('[data-testid="refill-proxy-mode"]').setValue('ovh_ipv6_backup')
+  save.mockRejectedValueOnce(new Error('rule changed'))
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(showError).toHaveBeenCalledWith('rule changed')
+  expect(showSuccess).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(15000); await flushPromises()
+  expect(w.get('[role="alert"]').text()).toBe('rule changed')
+  expect(w.get<HTMLSelectElement>('[data-testid="refill-proxy-mode"]').element.value).toBe('ovh_ipv6_backup')
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(showSuccess).toHaveBeenCalledWith('accountRefill.saved')
+  expect(w.find('[role="alert"]').exists()).toBe(false)
+  w.unmount()
+ })
  it('saves a health duration with mandatory expiry pause and restores it on reopen', async () => {
   const data = response()
   data.config.delivery.auto_pause_on_expired = false

@@ -45,6 +45,11 @@ func TestOVHIPv6RefillSpecifiedRejectsManagedAddressBeforePurchaseAndImport(t *t
 			s.proxies = &refillIPv6Proxies{ovhRefillProxies: ovhRefillProxies{{ID: id, Username: "ovh6_100", ManagedIPv6State: state}}}
 			delivery := refillTestConfig().Delivery
 			delivery.ProxyMode, delivery.ProxyID = "specified", &id
+			view, err := s.View(context.Background())
+			require.NoError(t, err)
+			config := view.Config
+			config.Delivery = delivery
+			require.ErrorContains(t, s.Configure(context.Background(), config, "", view.Revision), "ovh_ipv6")
 			store.mutate(t, func(v *accountRefillState) { v.Config.Delivery = delivery })
 			ctx := context.Background()
 			require.NoError(t, s.run(ctx, false))
@@ -57,6 +62,29 @@ func TestOVHIPv6RefillSpecifiedRejectsManagedAddressBeforePurchaseAndImport(t *t
 			require.ErrorContains(t, err, "ovh_ipv6")
 			require.Zero(t, accounts.creates)
 			require.Empty(t, provider.submitted)
+		})
+	}
+}
+
+func TestOVHIPv6RefillSaveWithStandbyDisabled(t *testing.T) {
+	for _, mode := range []string{"ovh_ipv6_backup", "ovh_ipv6_next"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, provider, accounts := refillHarness(t)
+			s.proxies = &refillIPv6Proxies{status: ovhipv6.Status{Configured: true, Available: true}}
+			ctx := context.Background()
+			before, err := s.View(ctx)
+			require.NoError(t, err)
+			config := before.Config
+			config.Delivery.ProxyMode = mode
+			require.NoError(t, s.Configure(ctx, config, "", before.Revision))
+			require.NoError(t, s.run(ctx, false))
+			after, err := s.View(ctx)
+			require.NoError(t, err)
+			require.Equal(t, mode, after.Config.Delivery.ProxyMode)
+			require.Equal(t, before.Revision+1, after.Revision)
+			require.Contains(t, after.Message, "备用池自动分配已关闭")
+			require.Empty(t, provider.submitted)
+			require.Zero(t, accounts.creates)
 		})
 	}
 }

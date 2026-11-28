@@ -15,9 +15,9 @@
         <button v-for="tab in tabs" :key="tab" type="button" class="whitespace-nowrap border-b-2 px-4 py-3 text-sm" :class="activeTab === tab ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500'" :aria-pressed="activeTab === tab" :disabled="busy" @click="activeTab = tab">{{ t(`accountRefill.${tab}`) }}</button>
       </nav>
       <ImportSchedulingThreshold v-if="activeTab === 'rules'" :disabled="busy" />
-      <form v-admin-read-only-form id="refill-settings" class="space-y-5" @submit.prevent="save">
+      <form v-admin-read-only-form id="refill-settings" class="space-y-5" @submit.prevent="save" @invalid.capture.prevent="revealInvalidField">
         <fieldset :disabled="busy" class="space-y-5">
-          <div v-show="activeTab === 'connection'" class="space-y-5">
+          <div v-show="activeTab === 'connection'" data-refill-tab="connection" class="space-y-5">
             <label class="block"><span class="input-label">{{ t('accountRefill.token') }} · {{ t(view.token_configured ? 'accountRefill.configured' : 'accountRefill.unconfigured') }}</span>
               <input v-model="token" type="password" autocomplete="new-password" class="input" placeholder="rst_…" data-testid="refill-token" />
               <span class="input-hint">{{ t('accountRefill.tokenHint') }}</span>
@@ -29,7 +29,7 @@
             <div><p class="input-label">{{ t('accountRefill.deliveryGroups') }}</p><div class="grid gap-3 sm:grid-cols-2"><label v-for="group in openAIGroups" :key="group.id" class="flex items-center gap-2 rounded-lg border border-gray-200 p-3 text-sm dark:border-dark-700"><input v-model="form.delivery_group_ids" type="checkbox" :value="group.id" :disabled="group.id === form.group_id" />{{ group.name }} (#{{ group.id }})</label></div><p class="input-hint">{{ t('accountRefill.groupsHint') }}</p></div>
             <p class="rounded-lg bg-primary-50 p-4 text-sm leading-6 text-primary-800 dark:bg-primary-900/20 dark:text-primary-200">{{ t('accountRefill.importHint', { minutes: form.import_expiry_grace_minutes }) }}</p>
           </div>
-          <div v-show="activeTab === 'rules'" class="space-y-5">
+          <div v-show="activeTab === 'rules'" data-refill-tab="rules" class="space-y-5">
             <div class="flex flex-wrap gap-6"><label class="flex items-center gap-2 text-sm"><input v-model="form.enabled" type="checkbox" data-testid="refill-enabled" />{{ t('accountRefill.enabled') }}</label><label class="flex items-center gap-2 text-sm"><input v-model="form.monitor_enabled" type="checkbox" />{{ t('accountRefill.monitor_enabled') }}</label></div>
             <p class="text-sm leading-6 text-amber-700 dark:text-amber-300">{{ t('accountRefill.enableHint') }}</p>
             <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
@@ -143,7 +143,7 @@
             <div v-if="form.window_enabled" class="grid gap-4 sm:grid-cols-2"><label><span class="input-label">{{ t('accountRefill.window_start') }}</span><input v-model="form.window_start" type="time" class="input" /></label><label><span class="input-label">{{ t('accountRefill.window_end') }}</span><input v-model="form.window_end" type="time" class="input" /></label></div>
             <p class="input-hint">{{ t('accountRefill.windowHint') }}</p>
           </div>
-          <div v-show="activeTab === 'delivery'" class="space-y-5">
+          <div v-show="activeTab === 'delivery'" data-refill-tab="delivery" class="space-y-5">
             <label class="block"><span class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</span><input v-model.number="form.delivery.same_account_retry_count" data-testid="refill-same-account-retries" type="number" min="0" :max="MAX_SAME_ACCOUNT_RETRY_COUNT" step="1" required class="input" /><p class="input-hint">{{ t('admin.accounts.sameAccountRetryCountHint', { default: DEFAULT_SAME_ACCOUNT_RETRY_COUNT, max: MAX_SAME_ACCOUNT_RETRY_COUNT }) }}</p></label>
             <OpenAIPrivacyControl :model-value="form.delivery.privacy_enabled !== false" @update:model-value="form.delivery.privacy_enabled = $event" />
             <div class="flex items-center justify-between gap-4">
@@ -165,11 +165,12 @@
               <label><span class="input-label">{{ t('accountRefill.fingerprint_mode') }}</span><select v-model="form.delivery.fingerprint_mode" class="input" data-testid="refill-fingerprint-mode"><option v-for="option in codexFingerprintModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
               <label>
                 <span class="input-label">{{ t('accountRefill.proxy_mode') }}</span>
-                <select v-model="form.delivery.proxy_mode" class="input" @change="form.delivery.proxy_id = null">
+                <select v-model="form.delivery.proxy_mode" class="input" data-testid="refill-proxy-mode" @change="form.delivery.proxy_id = null">
                   <option v-for="mode in deliveryProxyModes" :key="mode" :value="mode">{{ deliveryProxyLabel(mode) }}</option>
                 </select>
               </label>
               <div v-if="form.delivery.proxy_mode === 'specified'"><span class="input-label">{{ t('accountRefill.proxy_id') }}</span><ProxySelector :model-value="form.delivery.proxy_id" :proxies="manualProxies" :disabled="busy" @update:model-value="form.delivery.proxy_id = $event; if ($event === null) form.delivery.proxy_mode = 'direct'" /><p class="input-hint">{{ t('ovhIPv6.refillSpecifiedHint') }}</p></div>
+              <p v-if="form.delivery.proxy_mode === 'ovh_ipv6_backup' || form.delivery.proxy_mode === 'ovh_ipv6_next'" class="input-hint self-center">{{ t('accountRefill.backupPoolHint') }}</p>
               <label v-for="plan in ['pro5x', 'pro20x']" :key="plan"><span class="input-label">{{ plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }} · {{ t('accountRefill.import_concurrency') }}</span><input v-if="form.plan_import_concurrency" v-model.number="form.plan_import_concurrency[plan]" type="number" min="1" max="10000" step="1" class="input" :data-testid="`refill-concurrency-${plan}`" /></label>
               <label v-for="field in deliveryFields" :key="field.key"><span class="input-label">{{ t(`accountRefill.${field.key}`) }}</span><input v-model.number="form.delivery[field.key]" type="number" min="0" :max="field.max" :step="field.step" class="input" /></label>
               <label><span class="input-label">{{ t('accountRefill.status') }}</span><select v-model="form.delivery.status" class="input"><option value="active">{{ t('accountRefill.active') }}</option><option value="inactive">{{ t('accountRefill.inactive') }}</option></select></label>
@@ -188,7 +189,7 @@
             <p class="input-hint">{{ t('accountRefill.templateHint') }} <code v-pre>{name} {email} {id} {plan_type} {push_time} {expire_time}</code></p>
             <label class="block"><span class="input-label">{{ t('accountRefill.model_mapping') }}</span><textarea v-model="mapping" class="input font-mono text-sm" rows="4" spellcheck="false" placeholder='{"model-a": "model-b"}'></textarea></label>
           </div>
-          <div v-show="activeTab === 'notifications'" class="space-y-5">
+          <div v-show="activeTab === 'notifications'" data-refill-tab="notifications" class="space-y-5">
             <p class="text-sm leading-6 text-gray-500">{{ t('accountRefill.notificationsHint') }}</p>
             <label class="block"><span class="input-label">{{ t('accountRefill.notificationChannel') }}</span><select v-model="form.notifications.channel" class="input" data-testid="refill-notification-channel"><option value="wecom">{{ t('accountRefill.wecomChannel') }}</option><option value="qq">{{ t('accountRefill.qqChannel') }}</option></select></label>
             <template v-if="form.notifications.channel === 'qq'">
@@ -398,11 +399,11 @@
         <div class="overflow-x-auto" data-testid="refill-evaluation"><table class="w-full text-left text-sm"><thead class="border-b text-xs text-gray-500 dark:border-dark-700"><tr><th class="p-2">{{ t('accountRefill.account') }}</th><th class="p-2">{{ t('accountRefill.status') }}</th><th class="p-2">{{ t('accountRefill.sourceExpiry') }}</th><th class="p-2">{{ t('accountRefill.localExpiry') }}</th><th class="p-2">{{ t('accountRefill.remaining5h') }}</th><th class="p-2">{{ t('accountRefill.remaining7d') }}</th></tr></thead><tbody><tr v-for="account in pagedEvaluation" :key="account.id" class="border-b border-gray-100 dark:border-dark-800"><td class="max-w-48 break-all p-2">#{{ account.id }} {{ account.name }}<div v-if="account.plan" class="text-xs text-gray-500">{{ account.plan === 'pro5x' ? 'Pro5x' : 'Pro20x' }}</div></td><td class="p-2">{{ stateLabel(account.state) }}</td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.source_expires_at) }}<div class="mt-1 text-xs text-gray-500">{{ t(`accountRefill.expirySource_${account.expiry_source || 'local'}`) }}</div></td><td class="whitespace-nowrap p-2 text-xs">{{ date(account.expires_at) }}</td><td class="p-2">{{ account.remaining_5h == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_5h)}%` }}<div v-if="account.min_remaining_5h != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_5h) }) }}</div></td><td class="p-2">{{ account.remaining_7d == null ? t('accountRefill.quotaUnknown') : `${number(account.remaining_7d)}%` }}<div v-if="account.min_remaining_7d != null" class="text-xs text-gray-500">{{ t('accountRefill.quotaThreshold', { percent: number(account.min_remaining_7d) }) }}</div></td></tr></tbody></table><p v-if="!view.evaluation.accounts?.length" class="py-4 text-center text-sm text-gray-500">{{ t('accountRefill.noAccounts') }}</p></div>
         <Pagination v-if="evaluationAccounts.length" v-model:page="evaluationPage" :total="evaluationAccounts.length" :page-size="evaluationPageSize" :show-page-size-selector="false" data-testid="refill-evaluation-pagination" />
       </div>
-      <p v-if="conflict" class="text-sm text-amber-700" role="alert">{{ t('accountRefill.conflict') }}</p>
     </div>
-    <p v-if="error" class="mt-3 text-sm text-red-600 dark:text-red-400" role="alert">{{ error }}</p>
     <template #footer>
       <div class="flex w-full flex-wrap items-center justify-end gap-2">
+      <p v-if="conflict" class="w-full text-sm text-amber-700" role="alert">{{ t('accountRefill.conflict') }}</p>
+      <p v-if="error" class="w-full text-sm text-red-600 dark:text-red-400" role="alert">{{ error }}</p>
       <span class="mr-auto text-xs text-gray-500">{{ dirty ? t('accountRefill.dirty') : '' }}</span>
       <button type="button" class="btn btn-secondary whitespace-nowrap" :disabled="loading" @click="refresh(false)">{{ t('accountRefill.refresh') }}</button>
       <button type="button" class="btn btn-secondary whitespace-nowrap" :disabled="busy || !view || dirty" :title="t('accountRefill.checkHint')" @click="check">{{ t('accountRefill.check') }}</button>
@@ -698,8 +699,8 @@ async function refresh(reset: boolean) {
   if (fetching || switchingGroup.value) return
   const current = generation
   fetching = true
-  try { const data = await accountRefillAPI.get(selectedGroup.value || undefined); if (current === generation) { accept(data, reset); error.value = '' } }
-  catch { if (current === generation) error.value = t('accountRefill.loadError') }
+  try { const data = await accountRefillAPI.get(selectedGroup.value || undefined); if (current === generation) { accept(data, reset); if (error.value === t('accountRefill.loadError')) error.value = '' } }
+  catch { if (current === generation && !error.value) error.value = t('accountRefill.loadError') }
   finally { fetching = false }
 }
 function addDailySchedule() {
@@ -710,35 +711,56 @@ function addDailySchedule() {
 function dailyStatus(id: string) {
   return view.value?.daily_schedule_statuses?.[id] || (id === 'legacy' ? view.value?.daily_schedule_status : undefined)
 }
+function saveError(reason: string, tab?: typeof activeTab.value) {
+  if (tab) activeTab.value = tab
+  error.value = reason
+  app.showError(reason)
+}
+let revealingInvalid = false
+async function revealInvalidField(event: Event) {
+  const field = event.target
+  if (revealingInvalid || !(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)) return
+  // Native validation can report multiple fields for one click, including hidden tabs.
+  revealingInvalid = true
+  const tab = tabs.find(key => key === field.closest<HTMLElement>('[data-refill-tab]')?.dataset.refillTab)
+  const label = field.labels?.[0]?.querySelector('.input-label')?.textContent?.trim()
+  saveError([label, field.validationMessage].filter(Boolean).join(' · '), tab)
+  await nextTick()
+  field.focus()
+  revealingInvalid = false
+}
 async function save() {
   if (!form.value || busy.value || conflict.value) return
+  if (form.value.delivery.proxy_mode === 'specified' && !form.value.delivery.proxy_id) {
+    return saveError(t('accountRefill.specifiedProxyRequired'), 'delivery')
+  }
   if (form.value.delivery.expiry_mode === 'health_duration') {
     const minutes = form.value.delivery.health_duration_minutes
     if (!Number.isInteger(minutes) || minutes! < 1 || minutes! > 525600) {
-      error.value = t('accountRefill.healthDurationInvalid'); activeTab.value = 'delivery'; return
+      return saveError(t('accountRefill.healthDurationInvalid'), 'delivery')
     }
     form.value.delivery.auto_pause_on_expired = true
   }
   const alert = form.value.notifications.muze_remaining
   if (alert?.enabled && (!alert.products.length || alert.products.length > 64 || !Number.isInteger(alert.threshold) || alert.threshold < 0 || alert.threshold > 10000000)) {
-    error.value = t('accountRefill.muzeAlertInvalid'); activeTab.value = 'notifications'; return
+    return saveError(t('accountRefill.muzeAlertInvalid'), 'notifications')
   }
   const fallback = form.value.muze_fallback
   if (fallback && (!Number.isInteger(fallback.failure_threshold) || fallback.failure_threshold < 1 || fallback.failure_threshold > 100 || !Number.isInteger(fallback.timeout_minutes) || fallback.timeout_minutes < 1 || fallback.timeout_minutes > 1440)) {
-    error.value = t('accountRefill.fallbackInvalid'); activeTab.value = 'rules'; return
+    return saveError(t('accountRefill.fallbackInvalid'), 'rules')
   }
   if (fallback?.enabled && fallbackConnectionMissing.value) {
-    error.value = t('accountRefill.fallbackConnectionRequired'); activeTab.value = 'rules'; return
+    return saveError(t('accountRefill.fallbackConnectionRequired'), 'rules')
   }
   if (!Number.isInteger(form.value.timeout_retry_minutes) || form.value.timeout_retry_minutes! < 1 || form.value.timeout_retry_minutes! > 1440) {
-    error.value = t('accountRefill.timeoutRetryInvalid'); activeTab.value = 'rules'; return
+    return saveError(t('accountRefill.timeoutRetryInvalid'), 'rules')
   }
   if ((form.value.daily_schedules?.length || 0) > 20 || form.value.daily_schedules?.some(daily => !/^([01]\d|2[0-3]):[0-5]\d$/.test(daily.time) || !Number.isInteger(daily.quantity) || daily.quantity < 1 || daily.quantity > 100 || !['', 'pro5x', 'pro20x'].includes(daily.plan))) {
-    error.value = t('accountRefill.dailyInvalid'); activeTab.value = 'rules'; return
+    return saveError(t('accountRefill.dailyInvalid'), 'rules')
   }
   let parsed: unknown
   try { parsed = JSON.parse(mapping.value); if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(v => typeof v !== 'string')) throw new Error() }
-  catch { error.value = t('accountRefill.mappingError'); activeTab.value = 'delivery'; return }
+  catch { return saveError(t('accountRefill.mappingError'), 'delivery') }
   busy.value = true; error.value = ''
   try {
     const config = JSON.parse(JSON.stringify(form.value)) as RefillConfig
@@ -747,7 +769,7 @@ async function save() {
       ? await accountRefillAPI.save(config, token.value, revision, webhook.value, qqSecret.value)
       : await accountRefillAPI.save(config, token.value, revision, webhook.value)
     token.value = ''; webhook.value = ''; qqSecret.value = ''; accept(data, true); app.showSuccess(t('accountRefill.saved'))
-  } catch (e) { error.value = message(e) }
+  } catch (e) { saveError(message(e)) }
   finally { busy.value = false }
 }
 function onExpiryModeChange() {

@@ -8,7 +8,7 @@ const { get, manual, configure558669, catalog558669, save } = vi.hoisted(() => (
 vi.mock('@/api/admin/accountRefill', () => ({ accountRefillAPI: { get, manual, configure558669, catalog558669, save, getImportThreshold: async () => 99 } }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [{ id: 2, name: 'First', platform: 'openai', status: 'active' }, { id: 3, name: 'Second', platform: 'openai', status: 'active' }] }))
 vi.mock('@/api/admin', () => ({ adminAPI: { proxies: { testProxy: vi.fn() } } }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn() }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn(), showError: vi.fn() }) }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ te: () => true, t: (key: string, values: Record<string, string> = {}) => {
   const text = zh[key.replace('accountRefill.', '') as keyof typeof zh]

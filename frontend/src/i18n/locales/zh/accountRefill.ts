@@ -309,6 +309,8 @@ export default {
   "close": "关闭",
   "loadError": "加载失败，请重试。",
   "saved": "设置已保存",
+  "specifiedProxyRequired": "请选择要绑定的代理，再保存规则。",
+  "backupPoolHint": "规则可以先保存。开启备用池自动分配后，这条规则才能新增补号。",
   "dirty": "有未保存的更改",
   "conflict": "配置已被其他页面修改。重新打开后再编辑。",
   "error": "操作失败，请重试。",
