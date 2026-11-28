@@ -22,7 +22,11 @@ func (r *proxyRepository) ovhIPv6Enabled(ctx context.Context) (bool, error) {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		query = tx.Client()
 	}
-	err := scanSingleRow(ctx, query, `SELECT enabled FROM yoshub_ovh_ipv6_settings WHERE id=1`, nil, &enabled)
+	column := "enabled"
+	if ovhipv6.SelectedPool(ctx) == ovhipv6.Backup {
+		column = "backup_enabled"
+	}
+	err := scanSingleRow(ctx, query, "SELECT "+column+" FROM yoshub_ovh_ipv6_settings WHERE id=1", nil, &enabled)
 	return enabled, err
 }
 
@@ -31,16 +35,18 @@ func (r *proxyRepository) GetOVHIPv6(ctx context.Context) (*ovhipv6.Status, erro
 	if err != nil {
 		return nil, err
 	}
-	s := &ovhipv6.Status{Configured: r.ipv6 != nil, Enabled: enabled, Issued: "0"}
-	if r.ipv6 != nil {
-		if err := r.ipv6.Call(ctx, http.MethodGet, "/v1/status", nil, s); err != nil {
+	pool := ovhipv6.SelectedPool(ctx)
+	host := r.ipv6Client(pool)
+	s := &ovhipv6.Status{Configured: host != nil, Enabled: enabled, Issued: "0"}
+	if host != nil {
+		if err := host.Call(ctx, http.MethodGet, "/v1/status", nil, s); err != nil {
 			s.Error = err.Error()
 			s.Available = false
 		}
 		s.Configured, s.Enabled = true, enabled
 	}
 	if r.ipv6Supported {
-		err = scanSingleRow(ctx, r.sql, `SELECT COUNT(*) FILTER(WHERE state='bound'), COUNT(*) FILTER(WHERE state='retiring') FROM yoshub_ovh_ipv6_leases`, nil, &s.Bound, &s.Pending)
+		err = scanSingleRow(ctx, r.sql, `SELECT COUNT(*) FILTER(WHERE state='bound'), COUNT(*) FILTER(WHERE state='retiring') FROM yoshub_ovh_ipv6_leases WHERE (lease_id LIKE 'backup:%')=$1`, []any{pool == ovhipv6.Backup}, &s.Bound, &s.Pending)
 	}
 	return s, err
 }
@@ -55,7 +61,11 @@ func (r *proxyRepository) SetOVHIPv6(ctx context.Context, enabled bool) (*ovhipv
 			return nil, fmt.Errorf("OVH IPv6 出口服务未就绪，无法开启自动分配")
 		}
 	}
-	_, err := r.sql.ExecContext(ctx, `UPDATE yoshub_ovh_ipv6_settings SET enabled=$1, updated_at=NOW() WHERE id=1`, enabled)
+	column := "enabled"
+	if ovhipv6.SelectedPool(ctx) == ovhipv6.Backup {
+		column = "backup_enabled"
+	}
+	_, err := r.sql.ExecContext(ctx, "UPDATE yoshub_ovh_ipv6_settings SET "+column+"=$1, updated_at=NOW() WHERE id=1", enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +95,7 @@ func (r *proxyRepository) AllocateOVHIPv6(ctx context.Context, name string) (*se
 	}
 	out := proxyEntityToService(p)
 	out.ManagedIPv6State = "reserved"
+	out.ManagedIPv6Pool = string(ovhipv6.SelectedPool(ctx))
 	addresses, err := r.ManagedIPv6Addresses(txctx, []int64{id})
 	if err != nil {
 		return nil, err
@@ -101,12 +112,14 @@ func (r *proxyRepository) allocateOVHIPv6Lease(ctx context.Context, name string,
 	if tx == nil {
 		return 0, fmt.Errorf("OVH IPv6 分配需要账号写事务")
 	}
+	pool := ovhipv6.SelectedPool(ctx)
+	host := r.ipv6Client(pool)
 	var lease ovhipv6.Lease
-	if err := r.ipv6.Call(ctx, http.MethodPost, "/v1/leases", nil, &lease); err != nil {
+	if err := host.Call(ctx, http.MethodPost, "/v1/leases", nil, &lease); err != nil {
 		return 0, err
 	}
 	addr, err := netip.ParseAddr(lease.Address)
-	if err != nil || !addr.Is6() || addr.Is4In6() || !strings.HasPrefix(lease.Username, "ovh6_") || lease.Password == "" || lease.ID == "" || lease.Host == "" || lease.Port < 1 || lease.Port > 65535 {
+	if err != nil || !addr.Is6() || addr.Is4In6() || !strings.HasPrefix(lease.Username, "ovh6_") || lease.Password == "" || validateLocalLeaseID(lease.ID) != nil || lease.Host == "" || lease.Port < 1 || lease.Port > 65535 {
 		return 0, fmt.Errorf("OVH IPv6 出口服务返回无效的代理配置")
 	}
 	if name == "" {
@@ -123,7 +136,7 @@ func (r *proxyRepository) allocateOVHIPv6Lease(ctx context.Context, name string,
 	if reserved {
 		state = "reserved"
 	}
-	_, err = tx.Client().ExecContext(ctx, `INSERT INTO yoshub_ovh_ipv6_leases(proxy_id,lease_id,address,state) VALUES($1,$2,$3::inet,$4)`, p.ID, lease.ID, lease.Address, state)
+	_, err = tx.Client().ExecContext(ctx, `INSERT INTO yoshub_ovh_ipv6_leases(proxy_id,lease_id,address,state) VALUES($1,$2,$3::inet,$4)`, p.ID, ovhipv6.StoredID(pool, lease.ID), lease.Address, state)
 	if err != nil {
 		return 0, err
 	}
@@ -133,7 +146,7 @@ func (r *proxyRepository) allocateOVHIPv6Lease(ctx context.Context, name string,
 		claimCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		var activated ovhipv6.Lease
-		if r.ipv6.Call(claimCtx, http.MethodPost, "/v1/leases/"+lease.ID+"/activate", nil, &activated) == nil && activated.State == "active" {
+		if host.Call(claimCtx, http.MethodPost, "/v1/leases/"+lease.ID+"/activate", nil, &activated) == nil && activated.State == "active" {
 			_, _ = r.sql.ExecContext(claimCtx, `UPDATE yoshub_ovh_ipv6_leases SET confirmed=TRUE,last_error='' WHERE proxy_id=$1 AND state IN ('reserved','bound')`, p.ID)
 		}
 	})
@@ -159,7 +172,7 @@ func (r *proxyRepository) ManagedIPv6Details(ctx context.Context, ids []int64) (
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		query = tx.Client()
 	}
-	rows, err := query.QueryContext(ctx, `SELECT proxy_id,host(address),state FROM yoshub_ovh_ipv6_leases WHERE proxy_id IN (`+in+`)`, args...)
+	rows, err := query.QueryContext(ctx, `SELECT proxy_id,host(address),state,CASE WHEN lease_id LIKE 'backup:%' THEN 'backup' ELSE 'primary' END FROM yoshub_ovh_ipv6_leases WHERE proxy_id IN (`+in+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +180,7 @@ func (r *proxyRepository) ManagedIPv6Details(ctx context.Context, ids []int64) (
 	for rows.Next() {
 		var id int64
 		var detail service.ManagedIPv6Binding
-		if err := rows.Scan(&id, &detail.Address, &detail.State); err != nil {
+		if err := rows.Scan(&id, &detail.Address, &detail.State, &detail.Pool); err != nil {
 			return nil, err
 		}
 		out[id] = detail
@@ -176,7 +189,7 @@ func (r *proxyRepository) ManagedIPv6Details(ctx context.Context, ids []int64) (
 }
 
 // SyncOVHIPv6 only consumes durable unfinished work; it never enumerates the
-// address space or writes a historical row for every retired IPv6.
+// address space. Completed retirements are recorded by the database trigger.
 func (r *proxyRepository) SyncOVHIPv6(ctx context.Context) error {
 	if !r.ipv6Supported {
 		return nil
@@ -212,12 +225,16 @@ func (r *proxyRepository) SyncOVHIPv6(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		method, path := http.MethodPost, "/v1/leases/"+j.id+"/activate"
+		pool, localID := ovhipv6.SplitID(j.id)
+		if err := validateLocalLeaseID(localID); err != nil {
+			return err
+		}
+		method, path := http.MethodPost, "/v1/leases/"+localID+"/activate"
 		if j.state == "retiring" {
-			method, path = http.MethodDelete, "/v1/leases/"+j.id
+			method, path = http.MethodDelete, "/v1/leases/"+localID
 		}
 		var result ovhipv6.Lease
-		callErr := r.ipv6.Call(ctx, method, path, nil, &result)
+		callErr := r.ipv6Client(pool).Call(ctx, method, path, nil, &result)
 		if callErr != nil {
 			_, err = r.sql.ExecContext(ctx, `UPDATE yoshub_ovh_ipv6_leases SET last_error=$2,next_attempt_at=NOW()+INTERVAL '15 seconds' WHERE proxy_id=$1`, j.proxyID, callErr.Error())
 		} else if (j.state == "bound" || j.state == "reserved") && result.State == "active" {

@@ -30,12 +30,12 @@ func NormalizeAccountProxyMode(mode string, id *int64, random bool) (string, err
 		if id != nil && *id != 0 {
 			return "", infraerrors.BadRequest("PROXY_SELECTION_CONFLICT", "直连模式不能同时指定代理")
 		}
-	case "random", "least_used", "ovh_ipv6":
+	case "random", "least_used", "ovh_ipv6", "ovh_ipv6_backup", "ovh_ipv6_next":
 		if id != nil && *id != 0 {
 			return "", infraerrors.BadRequest("PROXY_SELECTION_CONFLICT", "自动选择不能同时指定代理")
 		}
 	default:
-		return "", infraerrors.BadRequest("PROXY_SELECTION_INVALID", "代理模式仅支持 direct、specified、random、least_used、ovh_ipv6")
+		return "", infraerrors.BadRequest("PROXY_SELECTION_INVALID", "代理模式仅支持 direct、specified、random、least_used、ovh_ipv6、ovh_ipv6_backup、ovh_ipv6_next")
 	}
 	return mode, nil
 }

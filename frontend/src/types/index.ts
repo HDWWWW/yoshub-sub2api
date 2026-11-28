@@ -975,6 +975,7 @@ export interface ClaudeModel {
 export interface Proxy {
   id: number
   managed_ipv6?: string
+  managed_ipv6_pool?: 'primary' | 'backup'
   managed_ipv6_state?: 'reserved' | 'bound' | 'retiring'
   name: string
   protocol: ProxyProtocol
@@ -1617,7 +1618,7 @@ export interface OpenAIResponsesState {
   openai_responses_supported?: boolean
 }
 
-export type AccountProxyMode = '' | 'direct' | 'specified' | 'random' | 'least_used' | 'ovh_ipv6'
+export type AccountProxyMode = '' | 'direct' | 'specified' | 'random' | 'least_used' | 'ovh_ipv6' | 'ovh_ipv6_backup' | 'ovh_ipv6_next'
 
 export interface CreateAccountRequest {
   name: string

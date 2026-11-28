@@ -79,7 +79,7 @@
             class="select-option w-full text-left" :class="proxyMode === mode && 'select-option-selected'"
             :data-proxy-mode="mode" @click="selectMode(mode)">
             <div><span class="font-medium">{{ t(`ovhIPv6.mode.${mode}`) }}</span>
-              <p v-if="mode === 'ovh_ipv6'" class="mt-0.5 text-xs text-gray-500">{{ t('ovhIPv6.allocateOnSave') }}</p></div>
+              <p v-if="mode === 'ovh_ipv6' || mode === 'ovh_ipv6_backup' || mode === 'ovh_ipv6_next'" class="mt-0.5 text-xs text-gray-500">{{ t('ovhIPv6.allocateOnSave') }}</p></div>
             <Icon v-if="proxyMode === mode" name="check" size="sm" class="text-primary-500" />
           </button>
 
@@ -93,7 +93,7 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="truncate font-medium">{{ proxy.name }}</span>
-                <span v-if="proxy.managed_ipv6" class="badge badge-primary">{{ t('ovhIPv6.source') }}</span>
+                <span v-if="proxy.managed_ipv6" class="badge badge-primary">{{ t(proxy.managed_ipv6_pool === 'backup' ? 'ovhIPv6.backup' : 'ovhIPv6.source') }}</span>
                 <span v-if="proxy.managed_ipv6_state === 'reserved'" class="text-xs text-gray-500">{{ t('ovhIPv6.reserved') }}</span>
                 <!-- Account count badge -->
                 <span
@@ -202,6 +202,7 @@ interface Props {
   disabled?: boolean
   proxyMode?: AccountProxyMode
   allowAutomatic?: boolean
+  allowPoolPicker?: boolean
   allowReserved?: boolean
 }
 
@@ -217,7 +218,7 @@ const emit = defineEmits<{
   'update:proxyMode': [value: AccountProxyMode]
 }>()
 
-const automaticModes = computed<AccountProxyMode[]>(() => props.allowAutomatic ? ['ovh_ipv6', 'random', 'least_used'] : [])
+const automaticModes = computed<AccountProxyMode[]>(() => props.allowAutomatic ? (props.allowPoolPicker ? ['ovh_ipv6', 'ovh_ipv6_backup', 'ovh_ipv6_next', 'random', 'least_used'] : ['ovh_ipv6', 'random', 'least_used']) : [])
 
 const isOpen = ref(false)
 const searchQuery = ref('')

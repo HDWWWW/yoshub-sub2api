@@ -15,6 +15,7 @@ const (
 
 type Proxy struct {
 	ManagedIPv6State string
+	ManagedIPv6Pool  string
 	ManagedIPv6      string
 	ID               int64
 	Name             string

@@ -3,10 +3,10 @@ package repository
 import (
 	"context"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 	"net/http"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 )
 
 const freeAccountProxyPredicate = `p.deleted_at IS NULL AND p.status='active'
@@ -45,6 +45,20 @@ func (r *proxyRepository) HasFreeAccountProxy(ctx context.Context) (bool, error)
 // 二开自动分配只使用未达绑定上限的代理。随机与最空闲共用事务锁，持有到账号绑定提交，
 // 避免跨实例的推送和补号同时拿到同一个空闲代理；不改变原生显式绑定语义。
 func (r *proxyRepository) SelectAccountProxy(ctx context.Context, mode string) (int64, error) {
+	if mode == "ovh_ipv6_backup" || mode == "ovh_ipv6_next" {
+		if !ovhipv6.IsAccountEdit(ctx) {
+			return 0, fmt.Errorf("请在单个账号的编辑页选择地址池")
+		}
+		pool := ovhipv6.Backup
+		if mode == "ovh_ipv6_next" {
+			var err error
+			pool, err = r.nextManualIPv6Pool(ctx)
+			if err != nil {
+				return 0, err
+			}
+		}
+		return r.allocateOVHIPv6(ovhipv6.WithPool(ctx, pool))
+	}
 	if mode == "ovh_ipv6" {
 		return r.allocateOVHIPv6(ctx)
 	}

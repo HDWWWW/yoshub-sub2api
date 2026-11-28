@@ -1,6 +1,9 @@
 import { apiClient } from '../client'
 import type { Proxy } from '@/types'
 
+export type OvhPool = 'primary' | 'backup'
+export interface Retirement { id: number; pool: OvhPool; address: string; retired_at: string }
+
 export interface OvhIPv6Status {
   configured: boolean
   available: boolean
@@ -70,24 +73,34 @@ function storeAllocationKey(name: string, key: string | null): void {
 }
 
 export const ovhIPv6API = {
-  async allocate(name?: string): Promise<Proxy> {
+  async allocate(name?: string, pool: OvhPool = 'primary'): Promise<Proxy> {
     const normalizedName = name?.trim() || ''
-    let key = allocationOperationKeys.get(normalizedName) ?? storedAllocationKey(normalizedName)
+    const operation = pool === 'primary' ? normalizedName : JSON.stringify([pool, normalizedName])
+    let key = allocationOperationKeys.get(operation) ?? storedAllocationKey(operation)
     if (!key) {
       const requestID = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
       key = `ovh-ipv6-allocate-${requestID}`
     }
-    allocationOperationKeys.set(normalizedName, key)
-    storeAllocationKey(normalizedName, key)
-    const { data } = await apiClient.post<Proxy>('/admin/proxies/ovh-ipv6/allocate', { name: normalizedName || undefined }, {
+    allocationOperationKeys.set(operation, key)
+    storeAllocationKey(operation, key)
+    const { data } = await apiClient.post<Proxy>('/admin/proxies/ovh-ipv6/allocate', { name: normalizedName || undefined, ...(pool === 'backup' ? { pool } : {}) }, {
       headers: { 'Idempotency-Key': key }
     })
-    allocationOperationKeys.delete(normalizedName)
-    storeAllocationKey(normalizedName, null)
+    allocationOperationKeys.delete(operation)
+    storeAllocationKey(operation, null)
     return data
   },
   async get(signal?: AbortSignal): Promise<OvhIPv6Status> {
     return (await apiClient.get<OvhIPv6Status>('/admin/proxies/ovh-ipv6', { signal })).data
+  },
+  async getBackup(signal?: AbortSignal): Promise<OvhIPv6Status> {
+    return (await apiClient.get<OvhIPv6Status>('/admin/proxies/ovh-ipv6', { signal, params: { pool: 'backup' } })).data
+  },
+  async setBackup(enabled: boolean): Promise<OvhIPv6Status> {
+    return (await apiClient.put<OvhIPv6Status>('/admin/proxies/ovh-ipv6', { enabled }, { params: { pool: 'backup' } })).data
+  },
+  async retirements(before = 0): Promise<Retirement[]> {
+    return (await apiClient.get<Retirement[]>('/admin/proxies/ovh-ipv6/retirements', { params: { before } })).data
   },
   async getStorage(signal?: AbortSignal): Promise<OvhIPv6StorageStats> {
     return (await apiClient.get<OvhIPv6StorageStats>('/admin/proxies/ovh-ipv6/storage', { signal })).data

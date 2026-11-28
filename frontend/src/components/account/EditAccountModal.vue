@@ -1902,8 +1902,8 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" v-model:proxy-mode="proxyMode" :proxies="editProxies" allow-automatic allow-reserved />
-        <p v-if="proxyMode === 'ovh_ipv6'" class="input-hint">{{ t('ovhIPv6.allocateOnSave') }}</p>
+        <ProxySelector v-model="form.proxy_id" v-model:proxy-mode="proxyMode" :proxies="editProxies" allow-automatic allow-reserved allow-pool-picker />
+        <p v-if="proxyMode === 'ovh_ipv6' || proxyMode === 'ovh_ipv6_backup' || proxyMode === 'ovh_ipv6_next'" class="input-hint">{{ t('ovhIPv6.allocateOnSave') }}</p>
         <p v-else-if="currentManagedIPv6" data-testid="account-managed-ipv6" class="input-hint break-all">{{ t('ovhIPv6.currentBinding', { address: currentManagedIPv6 }) }}</p>
       </div>
 

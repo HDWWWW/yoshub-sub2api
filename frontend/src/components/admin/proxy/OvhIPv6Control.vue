@@ -45,6 +45,7 @@
     </p>
     <p v-if="error" class="mt-2 text-xs text-red-600 dark:text-red-400" role="alert">{{ error }}</p>
     <p v-else-if="availabilityMessage" class="mt-2 text-xs text-amber-600 dark:text-amber-400" role="status">{{ availabilityMessage }}</p>
+    <OvhIPv6BackupControl />
     <OvhIPv6StorageDialog :show="showStorage" @close="showStorage = false" />
   </div>
 </template>
@@ -54,6 +55,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ovhIPv6API, type OvhIPv6Status } from '@/api/admin/ovhIPv6'
 import Icon from '@/components/icons/Icon.vue'
+import OvhIPv6BackupControl from './OvhIPv6BackupControl.vue'
 import OvhIPv6StorageDialog from './OvhIPv6StorageDialog.vue'
 import { extractApiErrorMessage } from '@/utils/apiError'
 

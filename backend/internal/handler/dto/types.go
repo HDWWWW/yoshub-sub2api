@@ -446,6 +446,7 @@ type AccountGroup struct {
 
 type Proxy struct {
 	ManagedIPv6State string    `json:"managed_ipv6_state,omitempty"`
+	ManagedIPv6Pool  string    `json:"managed_ipv6_pool,omitempty"`
 	ManagedIPv6      string    `json:"managed_ipv6,omitempty"`
 	ID               int64     `json:"id"`
 	Name             string    `json:"name"`

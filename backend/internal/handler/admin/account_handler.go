@@ -27,6 +27,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ovhipv6"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
@@ -151,7 +152,7 @@ type CreateAccountRequest struct {
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateAccountRequest struct {
 	HealthDurationMinutes   *int           `json:"health_duration_minutes" binding:"omitempty,min=1,max=525600"`
-	ProxyMode               string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6"`
+	ProxyMode               string         `json:"proxy_mode" binding:"omitempty,oneof=direct specified random least_used ovh_ipv6 ovh_ipv6_backup ovh_ipv6_next"`
 	PrivacyEnabled          *bool          `json:"privacy_enabled"`
 	SchedulingPriorityMode  string         `json:"yoshub_priority_mode"`
 	Name                    string         `json:"name"`
@@ -1197,7 +1198,15 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
-	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
+	updateCtx := c.Request.Context()
+	if req.ProxyMode == "ovh_ipv6_next" || req.ProxyMode == "ovh_ipv6_backup" {
+		if adminaccess.RestrictedFromContext(updateCtx) != nil {
+			response.Error(c, 403, "地址池选择仅限完整管理员")
+			return
+		}
+		updateCtx = ovhipv6.AccountEdit(updateCtx)
+	}
+	account, err := h.adminService.UpdateAccount(updateCtx, accountID, &service.UpdateAccountInput{
 		HealthDurationMinutes:  req.HealthDurationMinutes,
 		PrivacyEnabled:         req.PrivacyEnabled,
 		SchedulingPriorityMode: req.SchedulingPriorityMode,

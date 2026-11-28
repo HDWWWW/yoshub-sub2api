@@ -23,6 +23,7 @@ type proxyRepository struct {
 	client        *dbent.Client
 	sql           sqlExecutor
 	ipv6          *ovhipv6.Client
+	ipv6Backup    *ovhipv6.Client
 	ipv6Supported bool
 }
 
@@ -30,7 +31,7 @@ const proxyProbeOutboxAccountChunkSize = 500
 
 func NewProxyRepository(client *dbent.Client, sqlDB *sql.DB) service.ProxyRepository {
 	r := newProxyRepositoryWithSQL(client, sqlDB)
-	r.ipv6, r.ipv6Supported = ovhipv6.FromEnv(), true
+	r.ipv6, r.ipv6Backup, r.ipv6Supported = ovhipv6.FromEnv(), ovhipv6.BackupFromEnv(), true
 	return r
 }
 

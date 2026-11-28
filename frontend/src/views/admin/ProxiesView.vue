@@ -123,7 +123,7 @@
           <template #cell-name="{ row, value }">
             <div class="flex flex-col items-start gap-1">
               <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
-              <span v-if="row.managed_ipv6" class="badge badge-primary" :title="t('ovhIPv6.managedHint')">{{ t('ovhIPv6.source') }}</span>
+              <span v-if="row.managed_ipv6" class="badge badge-primary" :title="t('ovhIPv6.managedHint')">{{ t(row.managed_ipv6_pool === 'backup' ? 'ovhIPv6.backup' : 'ovhIPv6.source') }}</span>
             </div>
           </template>
 
@@ -616,6 +616,9 @@
       </div>
 
       <form v-admin-read-only-form v-else id="allocate-ovh-ipv6-form" class="space-y-4" @submit.prevent="handleAllocateIPv6">
+        <label class="block"><span class="input-label">{{ t('ovhIPv6.pool') }}</span>
+          <select v-model="allocateIPv6Pool" :disabled="submitting" class="input"><option value="primary">{{ t('ovhIPv6.primary') }}</option><option value="backup">{{ t('ovhIPv6.backup') }}</option></select>
+        </label>
         <p class="text-sm text-gray-600 dark:text-gray-300">{{ t('ovhIPv6.addSingleHint') }}</p>
         <label class="block"><span class="input-label">{{ t('ovhIPv6.optionalName') }}</span><input v-model="allocateIPv6Name" type="text" maxlength="100" :disabled="submitting" class="input" /></label>
         <p v-if="allocateIPv6Error" class="text-sm text-red-600 dark:text-red-400" role="alert">{{ allocateIPv6Error }}</p>
@@ -1169,6 +1172,7 @@ const qualityReport = ref<ProxyQualityCheckResult | null>(null)
 // Batch import state
 const createMode = ref<'standard' | 'batch' | 'ovh_ipv6'>('standard')
 const allocateIPv6Name = ref('')
+const allocateIPv6Pool = ref<'primary' | 'backup'>('primary')
 const allocateIPv6Error = ref('')
 const batchInput = ref('')
 const batchParseResult = reactive({
@@ -1338,6 +1342,7 @@ const closeCreateModal = () => {
   showCreateModal.value = false
   createMode.value = 'standard'
   allocateIPv6Name.value = ''
+  allocateIPv6Pool.value = 'primary'
   allocateIPv6Error.value = ''
   createForm.name = ''
   createForm.protocol = 'http'
@@ -1464,7 +1469,8 @@ const handleAllocateIPv6 = async () => {
   submitting.value = true
   allocateIPv6Error.value = ''
   try {
-    await ovhIPv6API.allocate(allocateIPv6Name.value)
+    if (allocateIPv6Pool.value === 'backup') await ovhIPv6API.allocate(allocateIPv6Name.value, 'backup')
+    else await ovhIPv6API.allocate(allocateIPv6Name.value)
     appStore.showSuccess(t('ovhIPv6.allocated'))
     closeCreateModal()
     await loadProxies()

@@ -14,7 +14,7 @@ type OVHIPv6Admin interface {
 	SetOVHIPv6(context.Context, bool) (*ovhipv6.Status, error)
 }
 
-type ManagedIPv6Binding struct{ Address, State string }
+type ManagedIPv6Binding struct{ Address, State, Pool string }
 
 func (s *adminServiceImpl) AllocateOVHIPv6(ctx context.Context, name string) (*Proxy, error) {
 	name = strings.TrimSpace(name)
@@ -46,6 +46,16 @@ func (s *adminServiceImpl) SetOVHIPv6(ctx context.Context, enabled bool) (*ovhip
 	return r.SetOVHIPv6(ctx, enabled)
 }
 
+func (s *adminServiceImpl) ListIPv6Retirements(ctx context.Context, before int64) ([]ovhipv6.Retirement, error) {
+	r, ok := s.proxyRepo.(interface {
+		ListIPv6Retirements(context.Context, int64) ([]ovhipv6.Retirement, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("IPv6 退役记录不可用")
+	}
+	return r.ListIPv6Retirements(ctx, before)
+}
+
 func (s *adminServiceImpl) attachManagedIPv6(ctx context.Context, proxies ...*Proxy) error {
 	r, ok := s.proxyRepo.(interface {
 		ManagedIPv6Addresses(context.Context, []int64) (map[int64]string, error)
@@ -68,7 +78,7 @@ func (s *adminServiceImpl) attachManagedIPv6(ctx context.Context, proxies ...*Pr
 		}
 		for _, p := range proxies {
 			if p != nil {
-				p.ManagedIPv6, p.ManagedIPv6State = details[p.ID].Address, details[p.ID].State
+				p.ManagedIPv6, p.ManagedIPv6State, p.ManagedIPv6Pool = details[p.ID].Address, details[p.ID].State, details[p.ID].Pool
 			}
 		}
 		return nil

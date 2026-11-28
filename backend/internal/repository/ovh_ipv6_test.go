@@ -49,12 +49,21 @@ CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxie
 	}
 	_, err := client.Proxy.Create().SetName("manual").SetProtocol("http").SetHost("192.0.2.1").SetPort(8080).Save(context.Background())
 	require.NoError(t, err)
-	for _, file := range []string{"250_yoshub_proxy_binding_limits.sql", "251_ovh_ipv6_egress.sql", "252_ovh_ipv6_reserved.sql", "256_content_moderation_ipv6.sql"} {
+	for _, file := range []string{"250_yoshub_proxy_binding_limits.sql", "251_ovh_ipv6_egress.sql", "252_ovh_ipv6_reserved.sql", "256_content_moderation_ipv6.sql", "263_ovh_ipv6_backup_pool.sql"} {
 		source, err := os.ReadFile(filepath.Join("..", "..", "migrations", file))
 		require.NoError(t, err)
 		_, err = db.Exec(string(source))
 		require.NoError(t, err)
 	}
+	repo := newProxyRepositoryWithSQL(client, db)
+	repo.ipv6Supported = true
+	var host *ovhTestHost
+	repo.ipv6, host = newTestPoolHost(t, "2604:2dc0:205:b900::/56", 11880)
+	return db, repo, host
+}
+
+func newTestPoolHost(t *testing.T, prefix string, port int) (*ovhipv6.Client, *ovhTestHost) {
+	t.Helper()
 	host := &ovhTestHost{active: map[string]bool{}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host.mu.Lock()
@@ -70,13 +79,13 @@ CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxie
 		var out any
 		switch {
 		case r.URL.Path == "/v1/status":
-			out = ovhipv6.Status{Available: true, Prefix: "2604:2dc0:205:b900::/56", Issued: strconv.Itoa(host.issued)}
+			out = ovhipv6.Status{Available: true, Prefix: prefix, Issued: strconv.Itoa(host.issued)}
 		case r.Method == "POST" && r.URL.Path == "/v1/leases":
 			host.issued++
 			id := strconv.Itoa(host.issued)
-			addr, _ := ovhipv6.Address("2604:2dc0:205:b900::/56", id)
+			addr, _ := ovhipv6.Address(prefix, id)
 			host.active[id] = true
-			out = ovhipv6.Lease{ID: id, Address: addr.String(), Username: "ovh6_" + id, Password: "test-only-password", State: "pending", Host: "127.0.0.1", Port: 11880}
+			out = ovhipv6.Lease{ID: id, Address: addr.String(), Username: "ovh6_" + id, Password: "test-only-password", State: "pending", Host: "127.0.0.1", Port: port}
 		case strings.HasSuffix(r.URL.Path, "/activate"):
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/leases/"), "/activate")
 			if !host.active[id] {
@@ -100,10 +109,7 @@ CREATE TABLE accounts(id BIGSERIAL PRIMARY KEY,proxy_id BIGINT REFERENCES proxie
 		_ = json.NewEncoder(w).Encode(out)
 	}))
 	t.Cleanup(server.Close)
-	repo := newProxyRepositoryWithSQL(client, db)
-	repo.ipv6Supported = true
-	repo.ipv6 = &ovhipv6.Client{BaseURL: server.URL, Token: "test-control", HTTP: server.Client()}
-	return db, repo, host
+	return &ovhipv6.Client{BaseURL: server.URL, Token: "test-control", HTTP: server.Client()}, host
 }
 
 func allocateOvhAccount(t *testing.T, repo *proxyRepository, accountID int64) int64 {

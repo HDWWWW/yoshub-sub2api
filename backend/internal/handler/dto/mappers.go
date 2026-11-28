@@ -535,6 +535,7 @@ func ProxyFromService(p *service.Proxy) *Proxy {
 	return &Proxy{
 		ManagedIPv6:      p.ManagedIPv6,
 		ManagedIPv6State: p.ManagedIPv6State,
+		ManagedIPv6Pool:  p.ManagedIPv6Pool,
 		ID:               p.ID,
 		Name:             p.Name,
 		Protocol:         p.Protocol,

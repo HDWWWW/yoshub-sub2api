@@ -14,7 +14,7 @@ const status = (overrides: Partial<OvhIPv6Status> = {}): OvhIPv6Status => ({
   prefix: '2001:db8:1234::/64', issued: '1000', bound: 2, pending_cleanup: 0,
   ...overrides
 })
-const mountControl = () => mount(OvhIPv6Control, { global: { stubs: { Icon: true } } })
+const mountControl = () => mount(OvhIPv6Control, { global: { stubs: { Icon: true, OvhIPv6BackupControl: true } } })
 
 beforeEach(() => {
   vi.clearAllMocks()

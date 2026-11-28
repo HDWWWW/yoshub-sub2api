@@ -43,7 +43,13 @@ type Client struct {
 }
 
 func FromEnv() *Client {
-	base, token := strings.TrimRight(os.Getenv("OVH_IPV6_CONTROL_URL"), "/"), os.Getenv("OVH_IPV6_CONTROL_TOKEN")
+	return fromEnv("OVH_IPV6_CONTROL")
+}
+
+func BackupFromEnv() *Client { return fromEnv("OVH_IPV6_BACKUP_CONTROL") }
+
+func fromEnv(key string) *Client {
+	base, token := strings.TrimRight(os.Getenv(key+"_URL"), "/"), os.Getenv(key+"_TOKEN")
 	if base == "" || token == "" {
 		return nil
 	}
